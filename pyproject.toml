@@ -32,6 +32,9 @@ dependencies = [
 # Shapefile / GeoPackage reading. Pulls fiona (GDAL binding). GeoJSON works
 # without this.
 shapefile = ["fiona>=1.8"]
+# Static trafficability map rendering (roadtraffic.mapping.plot_speed_map).
+# roadtraffic.mapping.to_geojson needs no extra dependency.
+mapping = ["matplotlib>=3.5"]
 # Development / testing.
 dev = ["pytest>=7.0"]
 # Documentation site build.

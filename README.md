@@ -19,9 +19,13 @@ support is an opt-in extra.
 - **Bring your own data.** Road network as GeoJSON (native) or Shapefile/GPKG
   (optional extra). GPS points as CSV/TSV or GeoJSON, with auto-detected
   columns.
-- **No speed column? Derive it.** Opt-in `derive_speed=True` reconstructs speed
-  per unit from successive GPS positions (geodesic distance / time), and
-  `save_points` writes the result back out.
+- **No speed column? Two ways to get one.** Opt-in `derive_speed=True`
+  reconstructs a per-point speed from successive GPS positions (geodesic
+  distance / time); `save_points` writes the result back out. Or, for
+  noisy/sparse GPS, match first and call `derive_speeds` to reconstruct speed
+  from **on-road displacement** after map matching — more accurate, and
+  robust to the matcher flip-flopping between the two directions of a
+  two-way road.
 - **Units handled for you.** Input speed in mph, kph, or m/s; everything is
   computed internally in m/s and reported in the unit you choose.
 - **Two GPS-to-road matchers, one interface.**
@@ -39,6 +43,9 @@ support is an opt-in extra.
 - **Routing.** Shortest path by time (per overall/peak/off-peak regime),
   distance, or a user-supplied cost function, using Dijkstra on a NetworkX graph,
   with actionable errors when no route exists.
+- **Mapping.** Export a speed-annotated network as GeoJSON for QGIS / Kepler /
+  Leaflet / Mapbox, or render a quick static PNG trafficability map
+  (`pip install roadtraffic[mapping]`).
 
 See [`docs/statistics.md`](docs/statistics.md) for the full statistical
 methodology behind every number this package reports.
@@ -53,6 +60,9 @@ pip install roadtraffic
 
 # With Shapefile / GeoPackage network support (pulls fiona / GDAL)
 pip install roadtraffic[shapefile]
+
+# With static trafficability map rendering (pulls matplotlib)
+pip install roadtraffic[mapping]
 ```
 
 From source:
@@ -97,7 +107,10 @@ result = router.route((-77.30, 38.68), (-77.27, 38.71), mode="time")
 print(result["travel_time_s"], "seconds over", result["distance_m"], "m")
 ```
 
-More worked examples are in [`examples/`](examples/).
+No speed column in your GPS data? `load_points` doesn't require one — see
+[Quickstart §2a](docs/quickstart.md#2a-no-speed-yet-derive-it-from-the-match)
+for the match-then-`derive_speeds` pipeline. More worked examples are in
+[`examples/`](examples/).
 
 ---
 

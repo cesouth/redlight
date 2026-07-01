@@ -2,19 +2,20 @@
 
 ## The pipeline
 
-`roadtraffic` follows a fixed five-stage flow. Every stage hands a clean object
-to the next:
+`roadtraffic` follows a fixed flow. Every stage hands a clean object to the
+next:
 
 ```
-network + points  →  match  →  clean  →  aggregate  →  peaks / route
+network + points  →  match  →  (derive speed)  →  clean  →  aggregate  →  peaks / route / map
 ```
 
 1. **Load** a road network and a GPS point file.
 2. **Match** each GPS point to a network edge.
-3. **Clean** the matched observations (speed bounds + robust outlier removal).
-4. **Aggregate** speeds into time bins (hour or N-hour block).
-5. **Analyse** — rank peak/off-peak periods, and/or assign edge speeds and
-   route.
+3. **Derive speed** from the match, if the points had none (§2a below).
+4. **Clean** the matched observations (speed bounds + robust outlier removal).
+5. **Aggregate** speeds into time bins (hour or N-hour block).
+6. **Analyse** — rank peak/off-peak periods, assign edge speeds and route,
+   and/or export a speed map.
 
 ---
 
@@ -54,14 +55,23 @@ pts = rt.load_points(
 
 If timestamps are numeric epochs, pass `timestamp_unit="s"` (or `ms`/`us`/`ns`).
 
-**No speed column?** Set `derive_speed=True` to compute speed per unit from
-successive GPS positions (requires `id_col`). Persist the result with
-`rt.save_points(pts, "with_speed.csv")`. Method: [statistics §7](statistics.md).
+**No speed column?** You have two options, in order of preference:
 
-```python
-pts = rt.load_points("points.csv", derive_speed=True, id_col="vehicle_id")
-rt.save_points(pts, "points_with_speed.csv", speed_unit="mph")
-```
+1. **Match first, then derive speed on-road** (recommended for noisy/sparse
+   GPS — see step 2 and [statistics §10](statistics.md#10-on-road-speed-derivation-from-matched-trajectories)).
+   Just omit `speed_col` — `load_points` doesn't require it:
+   ```python
+   pts = rt.load_points("points.csv", id_col="vehicle_id")  # no speed_col needed
+   ```
+2. **`derive_speed=True`** computes a per-point speed directly from successive
+   straight-line GPS positions (requires `id_col`), without needing a network
+   or a matching step first. Simpler, but biased low on curves and by noise
+   over short gaps — see [statistics §7](statistics.md). Persist the result
+   with `rt.save_points(pts, "with_speed.csv")`.
+   ```python
+   pts = rt.load_points("points.csv", derive_speed=True, id_col="vehicle_id")
+   rt.save_points(pts, "points_with_speed.csv", speed_unit="mph")
+   ```
 
 ---
 
@@ -81,6 +91,39 @@ matched = rt.HMMMatcher(net, sigma_z=6, beta=30).match(pts)
 ```
 
 Both return the same columns, so everything after this point is identical.
+`matched` always carries `lon`/`lat`; it carries `speed_mps` too, but only if
+`pts` had one. For noisy GPS (1–100 m accuracy), raise `HMMMatcher`'s
+`sigma_z` (try 15–25 m) and `max_dist` (try 100–150 m) so poor fixes still
+match.
+
+---
+
+## 2a. No speed yet? Derive it from the match
+
+If `pts` had no speed column, `matched` doesn't either — derive it from
+on-road displacement between consecutive matched fixes
+([statistics §10](statistics.md#10-on-road-speed-derivation-from-matched-trajectories)):
+
+```python
+res = rt.derive_speeds(
+    net, matched, pts,
+    pos_accuracy_col="accuracy",   # per-fix metres, if you have it
+    default_pos_sigma_m=20.0,      # fallback if you don't
+    min_baseline_m=100.0,          # important for noisy/dense fixes -- see below
+    max_speed_mps=60.0,
+)
+intervals = res["intervals"]           # per-point speed record
+edge_obs  = res["edge_observations"]   # long: one row per (interval, edge) --
+                                        # feed this into filter_by_speed / aggregate_speeds
+```
+
+If fixes are close together in time and GPS is noisy, single-interval
+displacement can be dominated by noise, which biases naive per-fix speed
+*high*, not just scattered. `min_baseline_m` merges consecutive hops until
+their summed on-road distance clears a baseline (roughly 5–10× your GPS
+sigma) before computing a speed — set it whenever fixes are dense and noisy.
+`edge_obs` is schema-compatible with the cleaning/aggregation steps below;
+use it in place of `matched` from here on when you derived speed this way.
 
 ---
 
@@ -152,6 +195,21 @@ def risk_weight(u, v, data):
     return base * (2.0 if data.get("highway") == "motorway" else 1.0)
 
 res = router.route(o, d, mode="cost", cost_func=risk_weight)
+```
+
+---
+
+## 6. Mapping
+
+Once `assign_speeds` (or `assign_segment_speeds`) has written `obs_speed_mps`
+onto the graph, export it as a map:
+
+```python
+# GeoJSON for QGIS / Kepler / Leaflet / Mapbox -- no extra dependency
+rt.to_geojson(net, "speeds.geojson", speed_unit="mph")
+
+# Quick static PNG, coloured by speed (needs: pip install roadtraffic[mapping])
+rt.plot_speed_map(net, "speeds.png", speed_unit="mph")
 ```
 
 ---

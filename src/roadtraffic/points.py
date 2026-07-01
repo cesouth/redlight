@@ -5,7 +5,7 @@ of Point geometries carrying, per observation:
 
   - longitude / latitude (WGS84 degrees),
   - a timestamp,
-  - a speed value (mph, kph or m/s) -- optional if ``derive_speed=True``,
+  - a speed value (mph, kph or m/s) -- optional,
   - optionally a unique trajectory id (required for HMM map matching, and for
     deriving speed from positions).
 
@@ -13,7 +13,22 @@ The loader normalises these into a pandas DataFrame with canonical columns:
 
   ``point_id`` (int, row index), ``traj_id`` (object, optional),
   ``lon`` (float), ``lat`` (float), ``time`` (datetime64[ns, UTC] or naive),
-  ``speed_mps`` (float).
+  ``speed_mps`` (float, optional).
+
+Speed is not always required at load time. Three ways to end up with a
+:class:`PointSet`:
+
+1. **Speed column present** (default). Read and converted to m/s.
+2. ``derive_speed=True``. No speed column needed; speed is reconstructed
+   per point from the *straight-line* (geodesic) distance to the previous
+   same-trajectory fix. Cheap, but biased low on curves and by GPS noise
+   over short gaps -- see ``docs/statistics.md`` §7.
+3. **Neither.** Position + time only. ``speed_mps`` is omitted entirely from
+   ``.df``. Pair this with a matcher (:mod:`roadtraffic.matching`) and
+   :func:`roadtraffic.speeds.derive_speeds`, which reconstructs speed from
+   *on-road* displacement after map matching -- more accurate than (2) for
+   noisy/sparse fixes, at the cost of needing a network and a matching step
+   first. See ``docs/statistics.md`` §10.
 """
 from __future__ import annotations
 
@@ -36,7 +51,8 @@ class PointSet:
     ----------
     df : pandas.DataFrame
         Canonical columns: point_id, traj_id (optional), lon, lat, time,
-        speed_mps. Additional source columns are preserved.
+        speed_mps (optional -- absent when loaded with no speed column and
+        ``derive_speed=False``). Additional source columns are preserved.
     has_traj : bool
         Whether a trajectory-id column is present (needed for HMM matching).
     """
@@ -66,20 +82,26 @@ class PointSet:
         """Return a tidy DataFrame with speed in both m/s and ``speed_unit``.
 
         Columns: ``point_id``, ``traj_id`` (if present), ``lon``, ``lat``,
-        ``time`` (ISO 8601), ``speed_mps`` and ``speed_<unit>``. This is the
-        canonical, save-ready view -- handy after ``derive_speed=True`` to persist
-        the computed speeds.
+        ``time`` (ISO 8601), and -- if the set carries speed --  ``speed_mps``
+        and ``speed_<unit>``. This is the canonical, save-ready view -- handy
+        after ``derive_speed=True`` to persist the computed speeds. Sets loaded
+        with position+time only (no speed column, ``derive_speed=False``) omit
+        the speed columns.
         """
         unit = SpeedUnit.parse(speed_unit)
+        has_speed = "speed_mps" in self.df.columns
         cols = ["point_id"]
         if self.has_traj and "traj_id" in self.df.columns:
             cols.append("traj_id")
-        cols += ["lon", "lat", "time", "speed_mps"]
+        cols += ["lon", "lat", "time"]
+        if has_speed:
+            cols.append("speed_mps")
         out = self.df[cols].copy()
         out["time"] = pd.to_datetime(out["time"]).map(
             lambda x: x.isoformat() if pd.notna(x) else ""
         )
-        out[f"speed_{unit.value}"] = from_mps(out["speed_mps"].to_numpy(float), unit)
+        if has_speed:
+            out[f"speed_{unit.value}"] = from_mps(out["speed_mps"].to_numpy(float), unit)
         return out
 
     def to_csv(self, path: str, *, speed_unit="mph") -> str:
@@ -134,19 +156,23 @@ def load_points(
     speed_unit : str or SpeedUnit
         Unit the source speed column is expressed in: ``"mph"``, ``"kph"`` or
         ``"mps"``. Converted internally to m/s. Ignored when
-        ``derive_speed=True``.
+        ``derive_speed=True`` or no speed column is found.
     derive_speed : bool
         If True, compute speed from successive GPS positions instead of reading a
         speed column (opt-in). Requires a unique-id column (``id_col``) so speeds
         are never differenced across distinct movements, and timestamps. Speed is
         the ellipsoidal (geodesic) distance between consecutive same-id points
-        divided by their time gap; see ``docs/statistics.md`` for the method.
-        When False (default), a speed column must be present or a ``ValueError``
-        is raised.
+        divided by their time gap; see ``docs/statistics.md`` §7 for the method
+        and its limits, and §10 for the more accurate on-road alternative
+        (:func:`roadtraffic.speeds.derive_speeds`, used after map matching).
+        When False (default) and no speed column is found or given, the
+        returned ``PointSet`` simply has no ``speed_mps`` column -- position and
+        time are still valid on their own for matching.
     lon_col, lat_col, time_col, speed_col, id_col : str, optional
         Column names. If omitted, common names are auto-detected (e.g. ``lon``,
         ``longitude``, ``x``; ``timestamp``, ``time``, ``datetime``; ``speed``;
         ``id``, ``uid``, ``track_id``). For GeoJSON, geometry supplies lon/lat.
+        ``speed_col`` is optional -- position+time-only data is valid input.
     timestamp_unit : str, optional
         If timestamps are numeric epoch values, the unit to interpret them in
         (``"s"``, ``"ms"``, ``"us"``, ``"ns"``). Otherwise parsed as datetimes.
@@ -188,19 +214,14 @@ def load_points(
     if time_col is None:
         raise ValueError("Could not find a timestamp column. Pass time_col=.")
     has_traj = id_col is not None
-    if derive_speed:
-        if not has_traj:
-            raise ValueError(
-                "derive_speed=True needs a unique-id column so speeds are never "
-                "differenced across distinct movements. Pass id_col= (or include "
-                "a recognisable id column)."
-            )
-    elif speed_col is None:
+    if derive_speed and not has_traj:
         raise ValueError(
-            "Could not find a speed column. Pass speed_col=, or set "
-            "derive_speed=True to compute speed from successive GPS positions "
-            "(needs a unique-id column)."
+            "derive_speed=True needs a unique-id column so speeds are never "
+            "differenced across distinct movements. Pass id_col= (or include "
+            "a recognisable id column)."
         )
+    # speed_col is optional otherwise: position+time-only data is valid input
+    # (e.g. for HMMMatcher + roadtraffic.speeds.derive_speeds).
 
     out = pd.DataFrame()
     out["point_id"] = np.arange(len(df), dtype=np.int64)
@@ -222,12 +243,14 @@ def load_points(
 
     if derive_speed:
         out["speed_mps"] = _derive_speed_mps(out)
-    else:
+    elif speed_col is not None:
         raw_speed = pd.to_numeric(df[speed_col], errors="coerce").values
         out["speed_mps"] = to_mps(raw_speed, unit)
+    # else: position+time only -- no speed_mps column at all.
 
+    required = ["lon", "lat", "time"] + (["speed_mps"] if "speed_mps" in out.columns else [])
     n_before = len(out)
-    out = out.dropna(subset=["lon", "lat", "time", "speed_mps"]).reset_index(drop=True)
+    out = out.dropna(subset=required).reset_index(drop=True)
     out["point_id"] = np.arange(len(out), dtype=np.int64)
     dropped = n_before - len(out)
     if dropped:
@@ -235,7 +258,7 @@ def load_points(
 
         warnings.warn(
             f"Dropped {dropped} row(s) with missing/unparseable "
-            "lon/lat/time/speed.",
+            + ("lon/lat/time/speed." if "speed_mps" in out.columns else "lon/lat/time."),
             stacklevel=2,
         )
     return PointSet(out, has_traj)

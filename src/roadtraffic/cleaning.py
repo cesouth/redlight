@@ -69,6 +69,13 @@ def filter_by_speed(
     DataFrame
         Filtered copy with a reset index.
     """
+    if "speed_mps" not in matched.columns:
+        raise ValueError(
+            "filter_by_speed needs a 'speed_mps' column. If points were loaded "
+            "without a speed column, run a matcher then "
+            "roadtraffic.speeds.derive_speeds first and pass its "
+            "'edge_observations' frame here."
+        )
     unit = SpeedUnit.parse(unit)
     df = matched.copy()
 

@@ -271,6 +271,10 @@ result is only as fine-grained as the ping spacing:
 - Both effects shrink as ping frequency rises. Derived speed is best treated as a
   defensible estimate for trafficability patterns, not a calibrated speedometer.
 
+If you're matching anyway (§2), `roadtraffic.speeds.derive_speeds` (§10) fixes
+both limitations by measuring displacement on the road graph after matching,
+and is the recommended choice for noisy or sparsely-sampled GPS.
+
 ---
 
 ## 8. Trajectory-aware cleaning: dwell vs. congestion
@@ -327,6 +331,111 @@ regime's travel time per edge, falling back to the overall speed where a regime
 has no data for an edge, and to the default speed where the edge has no data at
 all. The fallback count (`n_edges_default`) is reported so a route built largely
 on defaults can be flagged rather than trusted blindly.
+
+---
+
+## 10. On-road speed derivation from matched trajectories
+
+Section 7 derives speed from the *straight-line* (geodesic) chord between
+consecutive fixes, before any matching. `roadtraffic.speeds.derive_speeds`
+instead derives speed **after** map matching, from **on-road displacement**
+between consecutive matched fixes:
+
+```
+speed over [t_i, t_{i+1}]  =  on-road distance(i -> i+1) / (t_{i+1} - t_i)
+```
+
+This is more accurate for noisy, sparsely-sampled GPS (the regime this method
+targets), at the cost of needing a network and a matching step first. Prefer
+it whenever you have both; fall back to `load_points(derive_speed=True)`
+(§7) when you don't want to match first, or have no network at all.
+
+**On-road distance is measured along the graph, not as the crow flies.**
+Given the matched edge and arc-length snap position of each fix, the distance
+from fix *i* to fix *i+1* is the remaining length of edge A after the snap,
+plus the graph shortest-path length from A's downstream node to B's upstream
+node, plus the length of edge B up to its snap (or just the difference of
+arc-length positions when both fixes land on the same directed edge).
+
+**Distance is measured on the *undirected* graph.** Speed is a magnitude, so
+direction is dropped for the distance calculation — this makes the estimate
+robust to the matcher flip-flopping between the two directed edges of a
+two-way road (a common ambiguity: identical geometry gives tied emission
+probabilities), which would otherwise inflate distance by a full edge length
+per fix. Direction still decides *which road* a fix is on; it no longer
+decides the distance. Each observation is attributed to **both** directed
+edges of every road it traverses (one edge for one-way roads), populating
+both directions for routing.
+
+**Speed is a property of the interval, not a fix.** The value above is the
+*mean* speed over the interval; it is not recovered as an instantaneous speed
+at either endpoint (differentiating a noisy trajectory to do that would
+amplify GPS error). Each interval's speed is attributed to every edge it
+traversed. `derive_speeds` returns two DataFrames:
+
+- `intervals` — one row per consecutive fix pair (per-point speed record),
+  with `time` set to the interval **midpoint** (when the speed applies).
+- `edge_observations` — long format, one row per (interval, traversed edge).
+  Schema-compatible with `filter_by_speed`, `aggregate_speeds` and
+  `assign_speeds` — feed it straight in.
+
+### Noise model and the quality flag
+
+The estimate's noise is dominated by GPS position error over the time gap:
+
+```
+sigma_v ≈ sqrt(sigma_i² + sigma_j²) / dt
+```
+
+where `sigma_i`, `sigma_j` are the two fixes' position sigmas (`pos_accuracy_col`
+if you have per-fix accuracy, else `default_pos_sigma_m` for all fixes). An
+interval is flagged `quality=False` — but still returned, for transparency —
+when any of the following hold:
+
+- the displacement is not clearly above the noise floor:
+  `distance_m < min_snr * sigma_combined` (default `min_snr=3`, i.e. roughly
+  ≤ 33% relative speed error is required to trust the interval);
+- `dt` falls outside `[min_dt_s, max_dt_s]`;
+- either fix's snap distance exceeds `max_snap_dist_m`;
+- the implied speed falls outside `[0, max_speed_mps]`.
+
+Keep `quality` rows for aggregation; `speed_var` (`= speed_sigma_mps ** 2`)
+also supports inverse-variance weighting downstream.
+
+### Adaptive baseline (`min_baseline_m`) — required for noisy, sparse fixes
+
+When fixes are close together in time and GPS is noisy, single-interval
+displacement can be comparable to the noise floor. In that regime the quality
+filter above *selects for* noise-inflated, too-fast intervals — a systematic
+bias, not just added scatter, because noise almost never displaces a fix
+*backwards* enough to cancel out.
+
+The fix is to merge consecutive hops until their summed on-road distance
+reaches `min_baseline_m`, then compute `speed = Σdistance / Σdt`. Pick the
+baseline at roughly **5–10× the GPS sigma**. Illustrative validation on 1 Hz
+fixes with 5 m noise (true speed 10.0 m/s):
+
+| baseline | derived median |
+|---|---|
+| none (per-fix) | 23.0 m/s ← biased high |
+| 50 m | 11.6 m/s |
+| 75 m | 10.2 m/s |
+| 100 m | 10.2 m/s |
+
+The cost of raising the baseline is coarser spatial resolution per speed
+sample (a longer span touches more edges) — an acceptable trade for
+edge-average trafficability. Leave `min_baseline_m=None` (the default, one
+interval per fix pair) only when fixes are already well separated relative to
+GPS noise.
+
+### Bounded transition search (`max_route_dist_factor`, `route_cutoff_floor_m`)
+
+The shortest-path search between a hop's exit and entry candidates is bounded
+at `max(max_route_dist_factor * straight_step, route_cutoff_floor_m)`; beyond
+that the hop is treated as unreachable rather than paying an unbounded
+Dijkstra per candidate. This guards both compute cost on large networks and
+against silently bridging real gaps (e.g. a missing road segment) with an
+implausible detour.
 
 ---
 

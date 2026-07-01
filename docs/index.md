@@ -19,6 +19,10 @@ support is an opt-in extra.
 - **Bring your own data.** Road network as GeoJSON (native) or Shapefile/GPKG
   (optional extra). GPS points as CSV/TSV or GeoJSON, with auto-detected
   columns.
+- **No speed column? Two ways to get one.** `derive_speed=True` reconstructs a
+  per-point speed from successive GPS positions; or, for noisy/sparse GPS,
+  match first and call `derive_speeds` to reconstruct speed from on-road
+  displacement after map matching.
 - **Units handled for you.** Input speed in mph, kph, or m/s; everything is
   computed internally in m/s and reported in the unit you choose.
 - **Two GPS-to-road matchers, one interface.**
@@ -33,6 +37,8 @@ support is an opt-in extra.
 - **Peak / off-peak detection.** Rank time bins by congestion.
 - **Routing.** Shortest path by time, distance, or a user-supplied cost
   function, using Dijkstra on a NetworkX graph.
+- **Mapping.** Export a speed-annotated network as GeoJSON, or render a quick
+  static PNG trafficability map (`roadtraffic[mapping]`).
 
 See [`statistics.md`](statistics.md) for the full statistical
 methodology behind every number this package reports.
@@ -47,6 +53,9 @@ pip install roadtraffic
 
 # With Shapefile / GeoPackage network support (pulls fiona / GDAL)
 pip install roadtraffic[shapefile]
+
+# With static trafficability map rendering (pulls matplotlib)
+pip install roadtraffic[mapping]
 ```
 
 From source:

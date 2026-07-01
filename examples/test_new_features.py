@@ -75,12 +75,23 @@ def test_derive_speed_computes_expected_value():
     assert 4.0 < speeds[0] < 4.7                     # ~4.34 m/s
 
 
-def test_missing_speed_without_derive_raises():
+def test_missing_speed_without_derive_loads_position_only():
+    # No speed column and derive_speed=False is valid: position+time-only data
+    # for a matcher + roadtraffic.speeds.derive_speeds pipeline.
     tmp = tempfile.mkdtemp()
     p = os.path.join(tmp, "pts.csv")
     pd.DataFrame([{"uid": "A", "lon": -77.3, "lat": 38.68,
                    "timestamp": "2024-06-01T08:00:00"}]).to_csv(p, index=False)
-    with pytest.raises(ValueError, match="speed"):
+    pts = rt.load_points(p)
+    assert "speed_mps" not in pts.df.columns
+    assert len(pts) == 1
+
+
+def test_missing_lonlat_still_raises():
+    tmp = tempfile.mkdtemp()
+    p = os.path.join(tmp, "pts.csv")
+    pd.DataFrame([{"uid": "A", "timestamp": "2024-06-01T08:00:00"}]).to_csv(p, index=False)
+    with pytest.raises(ValueError, match="longitude/latitude"):
         rt.load_points(p)
 
 

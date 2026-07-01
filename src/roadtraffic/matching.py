@@ -6,8 +6,11 @@ which matcher is used.
 Output: a pandas DataFrame indexed like the input points, with columns
 ``point_id``, ``edge_id`` (matched edge, or -1 if unmatched), ``snap_dist_m``
 (perpendicular distance to the matched edge, metres), plus the carried-through
-``lon``, ``lat``, ``time`` and ``speed_mps`` columns (``lon``/``lat`` let
-trajectory-aware cleaning measure displacement without the original PointSet).
+``lon``, ``lat`` and ``time`` columns (``lon``/``lat`` let trajectory-aware
+cleaning measure displacement without the original PointSet). ``speed_mps`` is
+carried through too, but only if the input ``PointSet`` has one -- points
+loaded position+time-only (no speed column, ``derive_speed=False``) match the
+same way and feed straight into :func:`roadtraffic.speeds.derive_speeds`.
 
 NearestMatcher
     Snaps each point independently to its closest edge within a tolerance.
@@ -61,8 +64,9 @@ class NearestMatcher:
             "lon": df["lon"].values,
             "lat": df["lat"].values,
             "time": df["time"].values,
-            "speed_mps": df["speed_mps"].values,
         })
+        if "speed_mps" in df.columns:
+            out["speed_mps"] = df["speed_mps"].values
         if "traj_id" in df.columns:
             out["traj_id"] = df["traj_id"].values
         return out
@@ -228,7 +232,8 @@ class HMMMatcher:
             "lon": lon,
             "lat": lat,
             "time": sub["time"].values,
-            "speed_mps": sub["speed_mps"].values,
         })
+        if "speed_mps" in sub.columns:
+            out["speed_mps"] = sub["speed_mps"].values
         out["traj_id"] = tid
         return out
