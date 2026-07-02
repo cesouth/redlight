@@ -10,14 +10,21 @@ Statistical notes
   outlier-light data; pair with ``filter_by_speed(mad_outliers=True)``.
 - The standard error of the mean, SEM = s / sqrt(n), quantifies uncertainty in
   the *mean* speed of a bin; a 95% normal-approx CI is mean +/- 1.96 * SEM.
+  Bins with a single observation report NaN std/SEM/CI -- one observation
+  carries no information about spread.
 - The median and interquartile range (IQR = Q3 - Q1) are robust alternatives
   recommended when speed distributions are skewed (common in congested flow).
 - Bins with few observations are statistically weak. ``min_samples`` lets you
   suppress under-sampled bins; ``n`` is always reported so users can judge.
+- Rows with ``edge_id == -1`` (points that snapped to nothing) are excluded.
+- Network-wide statistics deduplicate ``derive_speeds`` edge observations on
+  ``interval_id`` when present, so an interval that traversed many edges still
+  counts as one measurement.
 """
 from __future__ import annotations
 
-from typing import Optional
+import warnings
+from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
@@ -35,6 +42,13 @@ def _require_speed_mps(df: pd.DataFrame, fn_name: str) -> None:
         )
 
 
+def _drop_unmatched(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove edge_id == -1 sentinel rows (points that snapped to nothing)."""
+    if "edge_id" in df.columns:
+        return df[df["edge_id"] != -1]
+    return df
+
+
 def aggregate_speeds(
     matched: pd.DataFrame,
     *,
@@ -43,6 +57,7 @@ def aggregate_speeds(
     output_unit="mph",
     by_edge: bool = False,
     min_samples: int = 1,
+    dedup_intervals: bool = True,
 ) -> pd.DataFrame:
     """Aggregate speeds into time bins.
 
@@ -50,7 +65,7 @@ def aggregate_speeds(
     ----------
     matched : DataFrame
         Must contain ``time`` (datetime) and ``speed_mps``. ``edge_id`` needed
-        if ``by_edge=True``.
+        if ``by_edge=True``. Rows with ``edge_id == -1`` are excluded.
     block_hours : int
         Width of each time bin in hours. 1 -> hour-of-day (24 bins). 2, 3, 4, 6,
         8, 12 -> blocks; must divide 24 evenly for clean coverage (a warning is
@@ -64,6 +79,12 @@ def aggregate_speeds(
         If True, aggregate per (edge_id, time-bin) instead of network-wide.
     min_samples : int
         Bins with fewer than this many observations are dropped.
+    dedup_intervals : bool
+        When aggregating network-wide (``by_edge=False``) and the input carries
+        an ``interval_id`` column (from :func:`roadtraffic.speeds.derive_speeds`),
+        drop duplicate rows of the same interval first, so an interval that
+        traversed many edges counts once. Default True. Ignored for
+        ``by_edge=True``, where the per-edge duplication is the point.
 
     Returns
     -------
@@ -75,7 +96,6 @@ def aggregate_speeds(
     if statistic not in {"mean", "median", "both"}:
         raise ValueError("statistic must be 'mean', 'median' or 'both'.")
     if 24 % block_hours != 0:
-        import warnings
         warnings.warn(
             f"block_hours={block_hours} does not divide 24 evenly; the last "
             "block will be narrower.",
@@ -83,8 +103,11 @@ def aggregate_speeds(
         )
 
     _require_speed_mps(matched, "aggregate_speeds")
-    df = matched.copy()
+    df = _drop_unmatched(matched)
     df = df[~df["speed_mps"].isna()]
+    if not by_edge and dedup_intervals and "interval_id" in df.columns:
+        df = df.drop_duplicates(subset="interval_id")
+    df = df.copy()
     t = pd.to_datetime(df["time"])
     hour = t.dt.hour.values
     df["block_start_hour"] = (hour // block_hours) * block_hours
@@ -109,13 +132,21 @@ def aggregate_speeds(
         rec["block_label"] = f"{bs:02d}:00-{be:02d}:00"
         if statistic in {"mean", "both"}:
             m = float(np.mean(sp))
-            s = float(np.std(sp, ddof=1)) if n > 1 else 0.0
-            sem = s / np.sqrt(n) if n > 0 else np.nan
             rec["mean_speed"] = from_mps(m, unit)
-            rec["std_speed"] = from_mps(s, unit)
-            rec["sem_speed"] = from_mps(sem, unit)
-            rec["ci95_low"] = from_mps(m - 1.96 * sem, unit)
-            rec["ci95_high"] = from_mps(m + 1.96 * sem, unit)
+            if n > 1:
+                s = float(np.std(sp, ddof=1))
+                sem = s / np.sqrt(n)
+                rec["std_speed"] = from_mps(s, unit)
+                rec["sem_speed"] = from_mps(sem, unit)
+                rec["ci95_low"] = from_mps(m - 1.96 * sem, unit)
+                rec["ci95_high"] = from_mps(m + 1.96 * sem, unit)
+            else:
+                # a single observation carries no spread information; a
+                # zero-width CI would claim perfect certainty
+                rec["std_speed"] = np.nan
+                rec["sem_speed"] = np.nan
+                rec["ci95_low"] = np.nan
+                rec["ci95_high"] = np.nan
         if statistic in {"median", "both"}:
             med = float(np.median(sp))
             q1 = float(np.percentile(sp, 25))
@@ -157,6 +188,16 @@ def peak_analysis(
     n_peak, n_offpeak : int
         How many peak / off-peak bins to return.
     """
+    if len(aggregated) == 0:
+        raise ValueError(
+            "peak_analysis: the aggregation is empty (no observations survived "
+            "filtering, or min_samples suppressed every bin)."
+        )
+    if "edge_id" in aggregated.columns:
+        raise ValueError(
+            "peak_analysis needs a network-wide aggregation; re-run "
+            "aggregate_speeds with by_edge=False (this input is per-edge)."
+        )
     col = "mean_speed" if statistic == "mean" else "median_speed"
     if col not in aggregated.columns:
         raise ValueError(
@@ -164,6 +205,13 @@ def peak_analysis(
             f"statistic='{statistic}' or 'both'."
         )
     ordered = aggregated.sort_values(col).reset_index(drop=True)
+    if n_peak + n_offpeak > len(ordered):
+        warnings.warn(
+            f"n_peak + n_offpeak = {n_peak + n_offpeak} exceeds the "
+            f"{len(ordered)} available bins; the peak and off-peak lists will "
+            "overlap.",
+            stacklevel=2,
+        )
     peak = ordered.head(n_peak)          # slowest = peak congestion
     offpeak = ordered.tail(n_offpeak)    # fastest = free flow
     return {
@@ -174,41 +222,94 @@ def peak_analysis(
     }
 
 
+def _validate_hours(hours: Iterable, name: str) -> set:
+    out = {int(h) for h in hours}
+    bad = {h for h in out if not 0 <= h <= 23}
+    if bad:
+        raise ValueError(f"{name} contains invalid hours {sorted(bad)}; use 0-23.")
+    return out
+
+
+def _best_window(hour_speeds: dict, width: int, *, minimize: bool,
+                 exclude: frozenset = frozenset()):
+    """Best contiguous ``width``-hour window over the 24-hour clock (wrapping).
+
+    ``hour_speeds`` maps hour-of-day -> representative speed (m/s) for hours
+    with data. A window is scored by the mean speed of its observed hours;
+    windows containing no observed hour, or any excluded hour, are ineligible.
+    Ties break toward the earliest start hour. Returns (hours, score) or None.
+    """
+    best = None
+    for start in range(24):
+        hrs = [(start + k) % 24 for k in range(width)]
+        if any(h in exclude for h in hrs):
+            continue
+        vals = [hour_speeds[h] for h in hrs if h in hour_speeds]
+        if not vals:
+            continue
+        score = float(np.mean(vals))
+        key = (score if minimize else -score, start)
+        if best is None or key < best[0]:
+            best = (key, hrs, score)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
 def classify_hours(
     matched: pd.DataFrame,
     *,
     statistic: str = "median",
     peak_hours=None,
     offpeak_hours=None,
+    n_peak: Optional[int] = None,
+    n_offpeak: Optional[int] = None,
     min_samples: int = 1,
 ) -> dict:
     """Split the 24 hours of the day into a peak and an off-peak block.
 
-    By default the split is **data-driven**: each hour-of-day's network-wide
-    representative speed (median or mean) is computed, and hours at or below the
-    median of those hourly speeds are labelled *peak* (slower = busier), the rest
-    *off-peak*. Hours with no observations are left unassigned.
+    Three modes, in order of precedence:
 
-    Pass ``peak_hours`` and/or ``offpeak_hours`` (iterables of 0-23) to override.
-    If only one is given, the other becomes the remaining hours of the day.
+    1. **Explicit override** -- pass ``peak_hours`` and/or ``offpeak_hours``
+       (iterables of 0-23). If only one is given, the other becomes the
+       remaining hours of the day. The two sets must be disjoint.
+    2. **Contiguous windows** -- pass ``n_peak`` and ``n_offpeak``. The peak
+       block is the contiguous ``n_peak``-hour window (wrapping midnight) with
+       the *lowest* network-wide representative speed (peak = most congested);
+       the off-peak block is the contiguous ``n_offpeak``-hour window with the
+       *highest* speed among windows disjoint from the peak block. Windows are
+       scored on the mean of their observed hourly speeds.
+    3. **Data-driven median split** (default) -- each hour-of-day's
+       network-wide representative speed (median or mean) is computed, and
+       hours at or below the median of those hourly speeds are labelled *peak*
+       (slower = busier), the rest *off-peak*. Hours with no observations are
+       left unassigned.
 
     Returns
     -------
     dict
         ``peak_hours`` (sorted list), ``offpeak_hours`` (sorted list),
-        ``threshold_speed_mps`` (the split point, or None when overridden), and
-        ``source`` (``"override"`` or ``"auto"``).
+        ``threshold_speed_mps`` (median-split point, or None otherwise),
+        ``source`` (``"override"``, ``"window"`` or ``"auto"``), and -- in
+        window mode -- ``peak_speed_mps`` / ``offpeak_speed_mps`` (the window
+        scores).
     """
     if peak_hours is not None or offpeak_hours is not None:
         all_h = set(range(24))
         if peak_hours is not None and offpeak_hours is not None:
-            peak = {int(h) for h in peak_hours}
-            off = {int(h) for h in offpeak_hours}
+            peak = _validate_hours(peak_hours, "peak_hours")
+            off = _validate_hours(offpeak_hours, "offpeak_hours")
+            overlap = peak & off
+            if overlap:
+                raise ValueError(
+                    f"peak_hours and offpeak_hours overlap on {sorted(overlap)}; "
+                    "an hour cannot belong to both regimes."
+                )
         elif peak_hours is not None:
-            peak = {int(h) for h in peak_hours}
+            peak = _validate_hours(peak_hours, "peak_hours")
             off = all_h - peak
         else:
-            off = {int(h) for h in offpeak_hours}
+            off = _validate_hours(offpeak_hours, "offpeak_hours")
             peak = all_h - off
         return {
             "peak_hours": sorted(peak),
@@ -216,6 +317,12 @@ def classify_hours(
             "threshold_speed_mps": None,
             "source": "override",
         }
+
+    if (n_peak is None) != (n_offpeak is None):
+        raise ValueError(
+            "Pass both n_peak and n_offpeak (window mode), or neither "
+            "(median split)."
+        )
 
     agg = aggregate_speeds(
         matched, block_hours=1, statistic=statistic, output_unit="mps",
@@ -229,9 +336,48 @@ def classify_hours(
     col = "median_speed" if statistic == "median" else "mean_speed"
     hours = agg["block_start_hour"].to_numpy()
     speeds = agg[col].to_numpy(dtype=float)
+
+    if n_peak is not None:
+        if not (1 <= n_peak <= 23 and 1 <= n_offpeak <= 23):
+            raise ValueError("n_peak and n_offpeak must each be between 1 and 23.")
+        if n_peak + n_offpeak > 24:
+            raise ValueError(
+                f"n_peak + n_offpeak = {n_peak + n_offpeak} exceeds 24 hours; "
+                "the windows cannot be disjoint."
+            )
+        hour_speeds = {int(h): float(s) for h, s in zip(hours, speeds)}
+        peak_win = _best_window(hour_speeds, n_peak, minimize=True)
+        if peak_win is None:  # pragma: no cover - agg non-empty implies a window
+            raise ValueError("classify_hours: no window with data found.")
+        peak_hrs, peak_score = peak_win
+        off_win = _best_window(hour_speeds, n_offpeak, minimize=False,
+                               exclude=frozenset(peak_hrs))
+        if off_win is None:
+            raise ValueError(
+                "classify_hours: no off-peak window disjoint from the peak "
+                "window contains data. Collect data across more of the day, or "
+                "reduce n_peak/n_offpeak."
+            )
+        off_hrs, off_score = off_win
+        return {
+            "peak_hours": sorted(peak_hrs),
+            "offpeak_hours": sorted(off_hrs),
+            "threshold_speed_mps": None,
+            "peak_speed_mps": peak_score,
+            "offpeak_speed_mps": off_score,
+            "source": "window",
+        }
+
     threshold = float(np.median(speeds))
     peak = sorted(int(h) for h, s in zip(hours, speeds) if s <= threshold)
     off = sorted(int(h) for h, s in zip(hours, speeds) if s > threshold)
+    if not off:
+        warnings.warn(
+            "classify_hours: every observed hour tied at or below the median "
+            "speed, so the off-peak set is empty. Consider window mode "
+            "(n_peak=/n_offpeak=) or explicit hour lists.",
+            stacklevel=2,
+        )
     return {
         "peak_hours": peak,
         "offpeak_hours": off,
@@ -257,6 +403,8 @@ def assign_segment_speeds(
     statistic: str = "median",
     peak_hours=None,
     offpeak_hours=None,
+    n_peak: Optional[int] = None,
+    n_offpeak: Optional[int] = None,
     default_speed_mps: Optional[float] = None,
     min_samples: int = 1,
 ) -> dict:
@@ -273,13 +421,17 @@ def assign_segment_speeds(
     it keeps far more observations per segment, which is what makes per-edge
     speeds -- and therefore time routing -- stable on sparse GPS data.
 
-    Peak/off-peak hours are auto-detected via :func:`classify_hours` unless you
-    pass ``peak_hours`` / ``offpeak_hours``.
+    Peak/off-peak hours come from :func:`classify_hours`: pass explicit
+    ``peak_hours``/``offpeak_hours``, or ``n_peak``/``n_offpeak`` for the
+    contiguous-window mode, or nothing for the automatic median split.
 
     Parameters
     ----------
     statistic : {"median", "mean"}
         Per-edge summary statistic.
+    n_peak, n_offpeak : int, optional
+        Widths (hours) of the contiguous peak and off-peak windows -- see
+        :func:`classify_hours`.
     default_speed_mps : float, optional
         Fallback speed for edges with no observations in a given regime.
     min_samples : int
@@ -288,18 +440,19 @@ def assign_segment_speeds(
     Returns
     -------
     dict
-        ``peak_hours``, ``offpeak_hours``, ``threshold_speed_mps``,
+        ``peak_hours``, ``offpeak_hours``, ``threshold_speed_mps``, ``source``,
         ``n_edges_total`` and ``coverage`` (observed-edge counts per regime).
     """
     cls = classify_hours(
         matched, statistic=statistic, peak_hours=peak_hours,
-        offpeak_hours=offpeak_hours, min_samples=min_samples,
+        offpeak_hours=offpeak_hours, n_peak=n_peak, n_offpeak=n_offpeak,
+        min_samples=min_samples,
     )
     peak_set = set(cls["peak_hours"])
     off_set = set(cls["offpeak_hours"])
 
-    df = matched.copy()
-    df = df[(df["edge_id"] != -1) & (~df["speed_mps"].isna())]
+    df = _drop_unmatched(matched)
+    df = df[~df["speed_mps"].isna()]
     hod = pd.to_datetime(df["time"]).dt.hour.to_numpy()
 
     regimes = {
@@ -334,7 +487,6 @@ def assign_segment_speeds(
             data.pop("travel_time_s", None)
 
     if coverage["peak"] == 0 or coverage["offpeak"] == 0:
-        import warnings
         warnings.warn(
             "assign_segment_speeds: a regime has no observed edges "
             f"(coverage={coverage}). Routes in that period fall back to the "
@@ -347,6 +499,7 @@ def assign_segment_speeds(
         "peak_hours": cls["peak_hours"],
         "offpeak_hours": cls["offpeak_hours"],
         "threshold_speed_mps": cls["threshold_speed_mps"],
+        "source": cls["source"],
         "n_edges_total": network.graph.number_of_edges(),
         "coverage": coverage,
     }
@@ -383,11 +536,13 @@ def assign_speeds(
     Returns
     -------
     dict
-        ``{"n_edges_observed": int, "n_edges_total": int}``.
+        ``{"n_edges_observed": int, "n_edges_total": int}`` --
+        ``n_edges_observed`` counts only edges whose written speed came from
+        observations (not the default fallback).
     """
     _require_speed_mps(matched, "assign_speeds")
-    df = matched.copy()
-    df = df[(df["edge_id"] != -1) & (~df["speed_mps"].isna())]
+    df = _drop_unmatched(matched)
+    df = df[~df["speed_mps"].isna()]
     if target_hour is not None:
         t = pd.to_datetime(df["time"])
         bs = (target_hour // block_hours) * block_hours
@@ -395,21 +550,19 @@ def assign_speeds(
         h = t.dt.hour.values
         df = df[(h >= bs) & (h < be)]
 
-    agg_fn = np.median if statistic == "median" else np.mean
-    per_edge = df.groupby("edge_id")["speed_mps"].apply(
-        lambda s: float(agg_fn(s.values))
-    )
+    per_edge = _per_edge_speed(df, statistic)
 
     observed = 0
     for u, v, data in network.graph.edges(data=True):
         eid = data["edge_id"]
         spd = per_edge.get(eid, None)
-        if spd is None or spd <= 0:
+        from_observation = spd is not None and spd > 0
+        if not from_observation:
             spd = default_speed_mps
         if spd and spd > 0:
             data["obs_speed_mps"] = float(spd)
             data["travel_time_s"] = data["length_m"] / float(spd)
-            if eid in per_edge.index:
+            if from_observation:
                 observed += 1
         else:
             data.pop("obs_speed_mps", None)
