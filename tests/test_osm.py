@@ -4,7 +4,6 @@ import pytest
 import roadtraffic as rt
 from roadtraffic import osm
 
-
 CANNED = {
     "version": 0.6,
     "elements": [

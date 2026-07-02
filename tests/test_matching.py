@@ -2,7 +2,6 @@ import numpy as np
 import pytest
 
 import roadtraffic as rt
-
 from conftest import drive_along_road
 
 

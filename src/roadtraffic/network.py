@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import math
 import warnings
-from typing import Optional
 
 import numpy as np
 from pyproj import CRS, Transformer
@@ -106,11 +105,11 @@ class Network:
 
     # ------------------------------------------------------------------ loaders
     @classmethod
-    def from_geojson(cls, path: str, *, metric_epsg: Optional[int] = None,
+    def from_geojson(cls, path: str, *, metric_epsg: int | None = None,
                      directed: bool = True, oneway_attr: str = "oneway",
-                     length_attr: Optional[str] = None) -> "Network":
+                     length_attr: str | None = None) -> Network:
         """Load a network from a GeoJSON LineString FeatureCollection."""
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             gj = json.load(fh)
         feats = gj.get("features", []) if isinstance(gj, dict) else []
         records = []
@@ -128,9 +127,9 @@ class Network:
         return cls._build(records, metric_epsg, directed, oneway_attr, length_attr)
 
     @classmethod
-    def from_file(cls, path: str, *, metric_epsg: Optional[int] = None,
+    def from_file(cls, path: str, *, metric_epsg: int | None = None,
                   directed: bool = True, oneway_attr: str = "oneway",
-                  length_attr: Optional[str] = None) -> "Network":
+                  length_attr: str | None = None) -> Network:
         """Load a network from Shapefile or GPKG (requires the 'shapefile' extra).
 
         GeoJSON files are dispatched to :meth:`from_geojson`.
@@ -172,11 +171,11 @@ class Network:
         return cls._build(records, metric_epsg, directed, oneway_attr, length_attr)
 
     @classmethod
-    def from_overpass(cls, bbox, *, metric_epsg: Optional[int] = None,
+    def from_overpass(cls, bbox, *, metric_epsg: int | None = None,
                       directed: bool = True, oneway_attr: str = "oneway",
-                      highway_regex: Optional[str] = None,
-                      url: Optional[str] = None,
-                      timeout: float = 90.0) -> "Network":
+                      highway_regex: str | None = None,
+                      url: str | None = None,
+                      timeout: float = 90.0) -> Network:
         """Fetch an OSM road network for a bounding box via the Overpass API.
 
         Requires network access; no extra dependencies (stdlib urllib).

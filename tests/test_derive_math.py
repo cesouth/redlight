@@ -99,8 +99,8 @@ def test_derive_speeds_turn_across_shared_node():
     n00, n10, n11 = (0.0, 0.0), (0.001, 0.0), (0.001, 0.001)
     east_fwd = _find_edge(net, n00, n10)
     north_fwd = _find_edge(net, n10, n11)
-    L_east = net.graph[n00][n10]["length_m"]
-    L_north = net.graph[n10][n11]["length_m"]
+    L_east = net.edge_length(east_fwd)
+    L_north = net.edge_length(north_fwd)
 
     # true on-road distance = remaining half of east leg + full turn + half of north leg
     true_dist = (1 - 0.5) * L_east + 0.5 * L_north
@@ -118,7 +118,7 @@ def test_derive_speeds_same_edge_forward():
     net = _l_shaped_network(tmp)
     n00, n10 = (0.0, 0.0), (0.001, 0.0)
     east_fwd = _find_edge(net, n00, n10)
-    L_east = net.graph[n00][n10]["length_m"]
+    L_east = net.edge_length(east_fwd)
 
     true_dist = (0.75 - 0.25) * L_east
     iv, eo = _run_case(net, east_fwd, 0.25, "y", east_fwd, 0.75, "y",
@@ -223,8 +223,9 @@ def _assigned_grid_network(tmp):
         json.dump({"type": "FeatureCollection", "features": feats}, fh)
     net = rt.Network.from_geojson(net_path)
     rows = []
-    for u, v, d in net.graph.edges(data=True):
-        rows.append({"edge_id": d["edge_id"], "speed_mps": 10.0, "time": "2024-06-01T08:00:00"})
+    for _u, _v, d in net.graph.edges(data=True):
+        rows.append({"edge_id": d["edge_id"], "speed_mps": 10.0,
+                     "time": "2024-06-01T08:00:00"})
     matched = pd.DataFrame(rows)
     rt.assign_speeds(net, matched, statistic="median", output_unit="mps")
     return net

@@ -2,7 +2,6 @@ import networkx as nx
 import pytest
 
 import roadtraffic as rt
-
 from conftest import line_feature, write_geojson
 
 

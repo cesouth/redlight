@@ -1,12 +1,9 @@
 import networkx as nx
 import numpy as np
-import pandas as pd
-import pytest
 
 import roadtraffic as rt
-from roadtraffic.speeds import _SourceDistCache
-
 from conftest import drive_along_road
+from roadtraffic.speeds import _SourceDistCache
 
 
 def _match(net, make_points_csv, rows):

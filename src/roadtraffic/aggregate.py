@@ -24,7 +24,7 @@ Statistical notes
 from __future__ import annotations
 
 import warnings
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -262,8 +262,8 @@ def classify_hours(
     statistic: str = "median",
     peak_hours=None,
     offpeak_hours=None,
-    n_peak: Optional[int] = None,
-    n_offpeak: Optional[int] = None,
+    n_peak: int | None = None,
+    n_offpeak: int | None = None,
     min_samples: int = 1,
 ) -> dict:
     """Split the 24 hours of the day into a peak and an off-peak block.
@@ -403,9 +403,9 @@ def assign_segment_speeds(
     statistic: str = "median",
     peak_hours=None,
     offpeak_hours=None,
-    n_peak: Optional[int] = None,
-    n_offpeak: Optional[int] = None,
-    default_speed_mps: Optional[float] = None,
+    n_peak: int | None = None,
+    n_offpeak: int | None = None,
+    default_speed_mps: float | None = None,
     min_samples: int = 1,
 ) -> dict:
     """Write three representative speeds per edge: overall, peak, off-peak.
@@ -511,9 +511,9 @@ def assign_speeds(
     *,
     statistic: str = "median",
     output_unit="mps",
-    default_speed_mps: Optional[float] = None,
+    default_speed_mps: float | None = None,
     block_hours: int = 24,
-    target_hour: Optional[int] = None,
+    target_hour: int | None = None,
 ) -> dict:
     """Compute a representative speed per edge and write it onto the graph.
 
@@ -553,7 +553,7 @@ def assign_speeds(
     per_edge = _per_edge_speed(df, statistic)
 
     observed = 0
-    for u, v, data in network.graph.edges(data=True):
+    for _u, _v, data in network.graph.edges(data=True):
         eid = data["edge_id"]
         spd = per_edge.get(eid, None)
         from_observation = spd is not None and spd > 0

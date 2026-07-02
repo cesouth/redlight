@@ -49,8 +49,9 @@ def _write_points_no_speed(path, lon0=-77.30, lat0=38.68, spacing=0.005, n=4):
                 for frac in (0.25, 0.5, 0.75):
                     lon = lon0 + (j + frac) * spacing
                     lat = lat0
+                    ts = (t0 + pd.Timedelta(seconds=int(sec))).isoformat()
                     rows.append({"uid": tid, "lon": lon, "lat": lat,
-                                 "timestamp": (t0 + pd.Timedelta(seconds=int(sec))).isoformat()})
+                                 "timestamp": ts})
                     seg_m = 0.25 * spacing * 86900.0
                     sec += max(1, round(seg_m / base_mps))
     pd.DataFrame(rows).to_csv(path, index=False)
@@ -205,7 +206,7 @@ def test_segment_speeds_and_period_routing():
         warnings.simplefilter("ignore")
         info = rt.assign_segment_speeds(net, clean, statistic="median")
     assert info["coverage"]["overall"] > 0
-    for u, v, d in net.graph.edges(data=True):
+    for _u, _v, d in net.graph.edges(data=True):
         if d.get("obs_speed_mps_peak") and d.get("obs_speed_mps_offpeak"):
             break
 

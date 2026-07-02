@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
-from typing import Optional
 
 from shapely.geometry import LineString
 
@@ -28,7 +27,7 @@ DEFAULT_HIGHWAY_REGEX = (
 )
 
 
-def build_query(bbox, highway_regex: Optional[str] = None,
+def build_query(bbox, highway_regex: str | None = None,
                 timeout: float = 90.0) -> str:
     """Build the Overpass QL query for drivable ways in a bounding box.
 
@@ -74,8 +73,8 @@ def ways_to_records(overpass_json: dict) -> list:
     return records
 
 
-def fetch_network_records(bbox, *, highway_regex: Optional[str] = None,
-                          url: Optional[str] = None,
+def fetch_network_records(bbox, *, highway_regex: str | None = None,
+                          url: str | None = None,
                           timeout: float = 90.0) -> list:
     """Query Overpass and return network records for the bounding box.
 

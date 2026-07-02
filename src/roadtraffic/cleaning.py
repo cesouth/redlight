@@ -20,8 +20,6 @@ Two complementary strategies:
 """
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 
@@ -33,8 +31,8 @@ from .units import SpeedUnit, to_mps
 def filter_by_speed(
     matched: pd.DataFrame,
     *,
-    min_speed: Optional[float] = None,
-    max_speed: Optional[float] = None,
+    min_speed: float | None = None,
+    max_speed: float | None = None,
     unit="mph",
     drop_unmatched: bool = True,
     mad_outliers: bool = False,
@@ -101,7 +99,7 @@ def filter_trajectory_speed(
     drop_missing_speed: bool = True,
     dwell_radius_m: float = 25.0,
     dwell_min_s: float = 120.0,
-    max_speed: Optional[float] = None,
+    max_speed: float | None = None,
     unit="mph",
 ) -> pd.DataFrame:
     """Trajectory-aware cleaning for HMM-matched observations.

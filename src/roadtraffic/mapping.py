@@ -21,7 +21,6 @@ the API (``"km/h"``, ``"m/s"``, ...) works here too and unknown units raise.
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 import numpy as np
 
@@ -76,12 +75,12 @@ def _collect_edges(network, directional: bool, attr: str):
 
 def to_geojson(
     network,
-    path: Optional[str] = None,
+    path: str | None = None,
     *,
     directional: bool = False,
     period: str = "overall",
     speed_unit: str = "mph",
-    keep_tags: Optional[list] = ("name", "highway", "maxspeed", "oneway", "ref"),
+    keep_tags: list | None = ("name", "highway", "maxspeed", "oneway", "ref"),
 ) -> dict:
     """Export the speed-annotated network as a GeoJSON FeatureCollection.
 
@@ -156,13 +155,13 @@ def to_geojson(
 
 def plot_speed_map(
     network,
-    path: Optional[str] = None,
+    path: str | None = None,
     *,
     period: str = "overall",
     speed_unit: str = "mph",
     cmap: str = "RdYlGn",
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
     no_data_color: str = "#cccccc",
     linewidth: float = 2.0,
     figsize=(10, 10),
@@ -179,8 +178,8 @@ def plot_speed_map(
     if path:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.collections import LineCollection
     from matplotlib.cm import ScalarMappable
+    from matplotlib.collections import LineCollection
     from matplotlib.colors import Normalize
 
     unit = SpeedUnit.parse(speed_unit)
@@ -211,13 +210,15 @@ def plot_speed_map(
                             linewidths=linewidth, zorder=2)
         lc.set_array(speeds)
         ax.add_collection(lc)
-        sm = ScalarMappable(cmap=cmap, norm=norm); sm.set_array([])
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
         cb = fig.colorbar(sm, ax=ax, shrink=0.6, pad=0.02)
         cb.set_label(f"average speed ({unit.value})")
 
     ax.autoscale()
     ax.set_aspect("equal", adjustable="datalim")
-    ax.set_xlabel("longitude"); ax.set_ylabel("latitude")
+    ax.set_xlabel("longitude")
+    ax.set_ylabel("latitude")
     title_period = "" if period == "overall" else f" — {period} hours"
     ax.set_title(f"Road network trafficability — average speed per segment{title_period}")
     fig.tight_layout()

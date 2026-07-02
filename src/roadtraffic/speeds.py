@@ -64,8 +64,6 @@ column also supports inverse-variance weighting.
 """
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 from shapely.geometry import Point
@@ -202,7 +200,7 @@ def derive_speeds(
     matched: pd.DataFrame,
     points,
     *,
-    pos_accuracy_col: Optional[str] = None,
+    pos_accuracy_col: str | None = None,
     default_pos_sigma_m: float = 15.0,
     min_dt_s: float = 0.5,
     max_dt_s: float = 120.0,
@@ -211,7 +209,7 @@ def derive_speeds(
     min_snr: float = 3.0,
     max_route_dist_factor: float = 6.0,
     route_cutoff_floor_m: float = 300.0,
-    min_baseline_m: Optional[float] = None,
+    min_baseline_m: float | None = None,
 ) -> dict:
     """Compute per-interval and per-edge speeds from matched trajectories.
 

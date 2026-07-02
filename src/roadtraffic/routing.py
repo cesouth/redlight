@@ -20,7 +20,7 @@ cost of the cheapest acceptable parallel edge.
 """
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 
@@ -86,7 +86,7 @@ class Router:
         return min(edges.values(),
                    key=lambda a: self._edge_travel_time(a, period)[0])
 
-    def _weight_func(self, mode: str, cost_func: Optional[Callable], period: str):
+    def _weight_func(self, mode: str, cost_func: Callable | None, period: str):
         if mode == "distance":
             return lambda u, v, d: self._min_length_attrs(d).get("length_m", 1.0)
         if mode == "time":
@@ -111,7 +111,7 @@ class Router:
         destination,
         *,
         mode: str = "time",
-        cost_func: Optional[Callable] = None,
+        cost_func: Callable | None = None,
         snap: bool = True,
         period: str = "overall",
     ) -> dict:

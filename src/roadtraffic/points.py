@@ -53,8 +53,8 @@ from __future__ import annotations
 
 import json
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -95,7 +95,7 @@ class PointSet:
         else:
             yield None, self.df.sort_values("time").reset_index(drop=True)
 
-    def copy(self) -> "PointSet":
+    def copy(self) -> PointSet:
         return PointSet(self.df.copy(), self.has_traj)
 
     def to_frame(self, *, speed_unit="mph") -> pd.DataFrame:
@@ -146,7 +146,7 @@ class PointSet:
         return path
 
 
-def _autodetect(columns: Sequence[str], candidates: Sequence[str]) -> Optional[str]:
+def _autodetect(columns: Sequence[str], candidates: Sequence[str]) -> str | None:
     lower = {c.lower(): c for c in columns}
     for cand in candidates:
         if cand in lower:
@@ -154,7 +154,7 @@ def _autodetect(columns: Sequence[str], candidates: Sequence[str]) -> Optional[s
     return None
 
 
-def _infer_speed_unit(colname: str) -> Optional[str]:
+def _infer_speed_unit(colname: str) -> str | None:
     """Infer the unit embedded in a speed column name, if any."""
     low = colname.strip().lower()
     for u in ("mph", "kph", "mps"):
@@ -163,7 +163,7 @@ def _infer_speed_unit(colname: str) -> Optional[str]:
     return None
 
 
-def _parse_times(values, timestamp_unit: Optional[str], tz: Optional[str]) -> pd.Series:
+def _parse_times(values, timestamp_unit: str | None, tz: str | None) -> pd.Series:
     """Parse timestamps to a timezone-naive local-clock datetime Series.
 
     See the module docstring ("Timezones") for the exact semantics.
@@ -207,14 +207,14 @@ def load_points(
     path: str,
     *,
     speed_unit=None,
-    lon_col: Optional[str] = None,
-    lat_col: Optional[str] = None,
-    time_col: Optional[str] = None,
-    speed_col: Optional[str] = None,
-    id_col: Optional[str] = None,
-    timestamp_unit: Optional[str] = None,
-    tz: Optional[str] = None,
-    sep: Optional[str] = None,
+    lon_col: str | None = None,
+    lat_col: str | None = None,
+    time_col: str | None = None,
+    speed_col: str | None = None,
+    id_col: str | None = None,
+    timestamp_unit: str | None = None,
+    tz: str | None = None,
+    sep: str | None = None,
     derive_speed: bool = False,
 ) -> PointSet:
     """Load a GPS point file into a :class:`PointSet`.
@@ -386,7 +386,7 @@ def save_points(points: PointSet, path: str, *, speed_unit="mph") -> str:
 
 
 def _read_geojson_points(path: str):
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         gj = json.load(fh)
     feats = gj.get("features", []) if isinstance(gj, dict) else []
     rows = []

@@ -20,7 +20,7 @@ class SpeedUnit(str, Enum):
     MPS = "mps"
 
     @classmethod
-    def parse(cls, value) -> "SpeedUnit":
+    def parse(cls, value) -> SpeedUnit:
         if isinstance(value, cls):
             return value
         v = str(value).strip().lower()

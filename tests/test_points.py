@@ -1,11 +1,9 @@
-import warnings
 
 import numpy as np
 import pandas as pd
 import pytest
 
 import roadtraffic as rt
-
 from conftest import drive_along_road
 
 

@@ -40,9 +40,11 @@ def main():
               f"({r['distance_m']:.0f} m); edges with data: "
               f"{info['n_edges_observed']}/{info['n_edges_total']}")
 
-    # Custom cost: penalise longer edges quadratically (toy example)
-    def cost(u, v, data):
-        return data["length_m"] ** 1.5
+    # Custom cost: penalise longer edges quadratically (toy example).
+    # The graph is a MultiDiGraph: `edges` maps edge key -> attribute dict,
+    # one entry per parallel road; cost the cheapest acceptable one.
+    def cost(u, v, edges):
+        return min(a["length_m"] for a in edges.values()) ** 1.5
     r_cost = router.route(ORIGIN, DEST, mode="cost", cost_func=cost)
     print(f"Custom-cost route: {r_cost['distance_m']:.0f} m, "
           f"{r_cost['n_edges']} edges")
