@@ -1,9 +1,17 @@
 """Road network container.
 
-Loads a road network from GeoJSON (native, no extra deps), or Shapefile/GPKG
-(optional, requires the ``shapefile`` extra -> fiona). Builds a NetworkX graph
+Loads a road network from GeoJSON (native, no extra deps), Shapefile/GPKG
+(optional, requires the ``shapefile`` extra -> fiona), or the Overpass API
+(:meth:`Network.from_overpass`, stdlib only). Builds a NetworkX multigraph
 whose nodes are endpoint coordinates and whose edges carry geometry, length,
 and any source attributes (e.g. OSM ``highway``, ``maxspeed``, ``oneway``).
+
+The graph is a :class:`networkx.MultiDiGraph` keyed by ``edge_id``, so two
+distinct roads that happen to share both endpoints (dual carriageways,
+service loops) coexist instead of overwriting each other. Two-way roads get
+one directed edge per direction; the pair is linked via
+:meth:`Network.road_edge_ids`. OSM ``oneway`` semantics are honoured,
+including ``oneway=-1`` (one-way *against* the digitized direction).
 
 Coordinates are stored in WGS84 (EPSG:4326) and also projected to a local
 metric CRS (auto UTM, or user-specified) for distance-correct snapping and
@@ -13,7 +21,8 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Iterable, Optional
+import warnings
+from typing import Optional
 
 import numpy as np
 from pyproj import CRS, Transformer
@@ -37,8 +46,33 @@ def _round_node(x: float, y: float, ndigits: int = 7):
 
     7 decimal degrees ~ 1.1 cm at the equator: enough to merge endpoints that
     are meant to be identical without collapsing genuinely distinct nodes.
+    Note that endpoints serialized with different float noise can still
+    straddle a rounding boundary; if two features are meant to connect, make
+    sure they share exact endpoint coordinates in the source data.
     """
     return (round(x, ndigits), round(y, ndigits))
+
+
+# Edge attributes the builder itself writes; colliding source properties are
+# preserved under "<name>_src" instead of crashing add_edge.
+_RESERVED_EDGE_ATTRS = frozenset({"edge_id", "length_m", "geometry"})
+
+# OSM oneway values. Forward = travel only in the digitized direction;
+# reverse (oneway=-1) = travel only AGAINST the digitized direction.
+_ONEWAY_FORWARD = frozenset({"yes", "true", "1", "t"})
+_ONEWAY_REVERSE = frozenset({"-1", "reverse"})
+
+
+def _sanitize_props(props: dict):
+    """Rename source properties that collide with reserved edge attributes."""
+    out, renamed = {}, []
+    for k, v in props.items():
+        if k in _RESERVED_EDGE_ATTRS:
+            out[f"{k}_src"] = v
+            renamed.append(k)
+        else:
+            out[k] = v
+    return out, renamed
 
 
 class Network:
@@ -46,16 +80,18 @@ class Network:
 
     Attributes
     ----------
-    graph : networkx.DiGraph
-        Directed graph. Each edge has attrs: ``geometry`` (projected
-        LineString, metres), ``length_m`` (float), ``edge_id`` (int), plus
-        source attributes. Two-way roads get edges in both directions.
+    graph : networkx.MultiDiGraph
+        Directed multigraph, edge key == ``edge_id``. Each edge has attrs:
+        ``geometry`` (projected LineString, metres), ``length_m`` (float),
+        ``edge_id`` (int), plus source attributes. Two-way roads get edges in
+        both directions (linked via :meth:`road_edge_ids`).
     crs_metric : pyproj.CRS
         Projected CRS used for all distance math.
     """
 
     def __init__(self, graph, crs_metric, edge_index, edge_geoms_proj,
-                 edge_ids, transformer_fwd, transformer_inv):
+                 edge_ids, transformer_fwd, transformer_inv,
+                 edge_lengths=None, reverse_of=None):
         self.graph = graph
         self.crs_metric = crs_metric
         self._edge_index = edge_index          # edge_id -> (u, v)
@@ -63,6 +99,8 @@ class Network:
         self._edge_ids = edge_ids              # ordered array of edge_ids
         self._transformer_fwd = transformer_fwd  # wgs84 -> metric
         self._transformer_inv = transformer_inv  # metric -> wgs84
+        self._edge_lengths = edge_lengths or {}  # edge_id -> length (m)
+        self._reverse_of = reverse_of or {}    # edge_id -> opposite-direction id or None
         self._kdtree = None
         self._seg_table = None  # (edge_id, x0, y0, x1, y1) per segment for snap
 
@@ -133,10 +171,42 @@ class Network:
             raise ValueError("File contained no LineString features.")
         return cls._build(records, metric_epsg, directed, oneway_attr, length_attr)
 
+    @classmethod
+    def from_overpass(cls, bbox, *, metric_epsg: Optional[int] = None,
+                      directed: bool = True, oneway_attr: str = "oneway",
+                      highway_regex: Optional[str] = None,
+                      url: Optional[str] = None,
+                      timeout: float = 90.0) -> "Network":
+        """Fetch an OSM road network for a bounding box via the Overpass API.
+
+        Requires network access; no extra dependencies (stdlib urllib).
+
+        Parameters
+        ----------
+        bbox : tuple of float
+            ``(min_lon, min_lat, max_lon, max_lat)`` in WGS84 degrees.
+        highway_regex : str, optional
+            Regex of OSM ``highway`` values to include. Defaults to drivable
+            road classes (see :data:`roadtraffic.osm.DEFAULT_HIGHWAY_REGEX`).
+        url : str, optional
+            Overpass endpoint (default: the public overpass-api.de instance).
+        timeout : float
+            HTTP + Overpass query timeout in seconds.
+        """
+        from .osm import fetch_network_records
+        records = fetch_network_records(
+            bbox, highway_regex=highway_regex, url=url, timeout=timeout,
+        )
+        if not records:
+            raise ValueError(
+                "Overpass returned no ways for that bounding box / highway filter."
+            )
+        return cls._build(records, metric_epsg, directed, oneway_attr, None)
+
     # ------------------------------------------------------------------ builder
     @classmethod
     def _build(cls, records, metric_epsg, directed, oneway_attr, length_attr):
-        # Pick a metric CRS from the centroid of the first geometry.
+        # Pick a metric CRS from the first coordinate of the first geometry.
         first = records[0][0]
         c = first.coords[0]
         if metric_epsg is None:
@@ -145,9 +215,27 @@ class Network:
         fwd = Transformer.from_crs(CRS.from_epsg(4326), crs_metric, always_xy=True)
         inv = Transformer.from_crs(crs_metric, CRS.from_epsg(4326), always_xy=True)
 
-        graph = nx.DiGraph()
+        graph = nx.MultiDiGraph()
         edge_index, edge_geoms_proj = {}, {}
-        edge_id = 0
+        edge_lengths, reverse_of = {}, {}
+        next_id = 0
+        n_loops = 0
+        renamed_keys = set()
+
+        def _add(a, b, line, length_m, attrs):
+            nonlocal next_id
+            eid = next_id
+            next_id += 1
+            graph.add_node(a, lon=a[0], lat=a[1])
+            graph.add_node(b, lon=b[0], lat=b[1])
+            graph.add_edge(a, b, key=eid, edge_id=eid, length_m=length_m,
+                           geometry=line, **attrs)
+            edge_index[eid] = (a, b)
+            edge_geoms_proj[eid] = line
+            edge_lengths[eid] = float(length_m)
+            reverse_of[eid] = None
+            return eid
+
         for geom_wgs, props in records:
             xs, ys = zip(*[(pt[0], pt[1]) for pt in geom_wgs.coords])
             px, py = fwd.transform(np.asarray(xs), np.asarray(ys))
@@ -157,34 +245,43 @@ class Network:
             u = _round_node(xs[0], ys[0])
             v = _round_node(xs[-1], ys[-1])
             if u == v:
-                continue  # skip degenerate zero-length edges
+                n_loops += 1  # closed ways (roundabouts/loops) cannot be modelled
+                continue
 
-            oneway = str(props.get(oneway_attr, "")).strip().lower() in {
-                "yes", "true", "1", "-1", "t"
-            }
-            base_attrs = dict(props)
+            oneway_val = str(props.get(oneway_attr, "")).strip().lower()
+            base_attrs, renamed = _sanitize_props(props)
+            renamed_keys.update(renamed)
+            rev_line = LineString(list(proj_line.coords)[::-1])
 
-            def _add(a, b, line, eid):
-                graph.add_node(a, lon=a[0], lat=a[1])
-                graph.add_node(b, lon=b[0], lat=b[1])
-                graph.add_edge(a, b, edge_id=eid, length_m=length_m,
-                               geometry=line, **base_attrs)
-                edge_index[eid] = (a, b)
-                edge_geoms_proj[eid] = line
+            if directed and oneway_val in _ONEWAY_FORWARD:
+                _add(u, v, proj_line, length_m, base_attrs)
+            elif directed and oneway_val in _ONEWAY_REVERSE:
+                # OSM oneway=-1: travel is legal only AGAINST the digitized
+                # direction, so the only edge runs v -> u.
+                _add(v, u, rev_line, length_m, base_attrs)
+            else:
+                e_fwd = _add(u, v, proj_line, length_m, base_attrs)
+                e_rev = _add(v, u, rev_line, length_m, base_attrs)
+                reverse_of[e_fwd] = e_rev
+                reverse_of[e_rev] = e_fwd
 
-            _add(u, v, proj_line, edge_id)
-            edge_id += 1
-            if directed and not oneway:
-                rev = LineString(list(proj_line.coords)[::-1])
-                _add(v, u, rev, edge_id)
-                edge_id += 1
-            elif not directed:
-                rev = LineString(list(proj_line.coords)[::-1])
-                _add(v, u, rev, edge_id)
-                edge_id += 1
+        if n_loops:
+            warnings.warn(
+                f"Skipped {n_loops} closed-loop feature(s) whose endpoints "
+                "coincide (e.g. roundabouts digitized as one closed way). "
+                "Split closed ways into open segments to include them.",
+                stacklevel=3,
+            )
+        if renamed_keys:
+            warnings.warn(
+                "Source properties colliding with reserved edge attributes were "
+                f"renamed with an '_src' suffix: {sorted(renamed_keys)}.",
+                stacklevel=3,
+            )
 
         edge_ids = np.array(sorted(edge_index.keys()), dtype=np.int64)
-        net = cls(graph, crs_metric, edge_index, edge_geoms_proj, edge_ids, fwd, inv)
+        net = cls(graph, crs_metric, edge_index, edge_geoms_proj, edge_ids,
+                  fwd, inv, edge_lengths, reverse_of)
         net._build_segment_table()
         return net
 
@@ -222,6 +319,12 @@ class Network:
                     ys = y0 + ts * (y1 - y0)
                     for j in range(n_sub):
                         rows.append((eid, xs[j], ys[j], xs[j + 1], ys[j + 1]))
+        if not rows:
+            raise ValueError(
+                "Network has no usable edges: every feature was degenerate "
+                "(zero length, or a closed loop whose endpoints coincide). "
+                "Split closed ways into open segments before loading."
+            )
         self._seg_table = np.array(rows, dtype=float)  # cols: eid,x0,y0,x1,y1
         mids = np.column_stack([
             (self._seg_table[:, 1] + self._seg_table[:, 3]) / 2.0,
@@ -239,7 +342,8 @@ class Network:
 
         ``t`` is the fractional position (0..1) of the foot of the perpendicular
         along the matched segment. ``max_dist`` is the snap tolerance in metres.
-        Results are unique per edge_id, keeping the closest segment.
+        Results are unique per edge_id, keeping the closest segment, and are
+        ordered by increasing perpendicular distance.
         """
         k = min(k, len(self._seg_table))
         dists, idxs = self._kdtree.query([px, py], k=k)
@@ -266,7 +370,51 @@ class Network:
 
     # ------------------------------------------------------------- convenience
     def edge_endpoints(self, edge_id: int):
+        """Return the (u, v) node tuple of a directed edge."""
         return self._edge_index[edge_id]
+
+    def edge_length(self, edge_id: int) -> float:
+        """Length in metres of one directed edge."""
+        return self._edge_lengths[edge_id]
+
+    def edge_geometry(self, edge_id: int):
+        """Projected (metric CRS) LineString geometry of one directed edge."""
+        return self._edge_geoms_proj[edge_id]
+
+    def edge_data(self, edge_id: int) -> dict:
+        """The attribute dict of one directed edge (mutating it updates the graph)."""
+        u, v = self._edge_index[edge_id]
+        return self.graph[u][v][edge_id]
+
+    def edge_coords_lonlat(self, edge_id: int):
+        """Edge geometry as a list of (lon, lat) pairs (WGS84)."""
+        geom = self._edge_geoms_proj[edge_id]
+        xs, ys = np.asarray(geom.coords)[:, 0], np.asarray(geom.coords)[:, 1]
+        lon, lat = self._transformer_inv.transform(xs, ys)
+        return [(float(a), float(b)) for a, b in zip(lon, lat)]
+
+    def road_edge_ids(self, edge_id: int):
+        """All directed edge ids of the physical road ``edge_id`` belongs to.
+
+        One id for a one-way road, two (the edge and its opposite direction)
+        for a two-way road. Distinct parallel roads between the same nodes are
+        NOT conflated.
+        """
+        rev = self._reverse_of.get(edge_id)
+        return [edge_id] if rev is None else sorted((edge_id, rev))
+
+    def edges_between(self, x, y):
+        """All directed edges between nodes ``x`` and ``y`` in either direction.
+
+        Returns a list of ``(edge_id, length_m)`` covering parallel roads too.
+        """
+        out = []
+        for a, b in ((x, y), (y, x)):
+            data = self.graph.get_edge_data(a, b)
+            if data:
+                for attrs in data.values():
+                    out.append((int(attrs["edge_id"]), float(attrs["length_m"])))
+        return out
 
     def number_of_edges(self) -> int:
         return self.graph.number_of_edges()
