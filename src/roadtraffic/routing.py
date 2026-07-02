@@ -10,6 +10,13 @@ Supports shortest path by:
 All use Dijkstra (networkx), which is correct for non-negative weights -- always
 true for distance and time. Nodes are coordinate tuples; helper methods locate
 the nearest graph node to an arbitrary lon/lat.
+
+The network graph is a :class:`networkx.MultiDiGraph`, so parallel roads
+between the same node pair are distinct edges; routing picks the cheapest
+parallel edge under the active weight. A custom ``cost_func`` therefore
+receives ``(u, v, edges)`` where ``edges`` is a dict keyed by edge key
+(= ``edge_id``) mapping to each parallel edge's attribute dict -- return the
+cost of the cheapest acceptable parallel edge.
 """
 from __future__ import annotations
 
@@ -55,7 +62,7 @@ class Router:
     _PERIODS = ("overall", "peak", "offpeak")
 
     def _edge_travel_time(self, d, period: str):
-        """Period-aware travel time for one edge; returns (seconds, used_default).
+        """Period-aware travel time for one edge's attrs; returns (seconds, used_default).
 
         Prefers ``travel_time_s_<period>``, falls back to the overall
         ``travel_time_s``, then to ``length_m / default_speed_mps``.
@@ -69,18 +76,32 @@ class Router:
             return d.get("length_m", 0.0) / self.default_speed_mps, True
         return tt, False
 
+    # ------------------------------------------------- multigraph edge selection
+    # networkx passes a *keyed* dict (edge key -> attrs) to weight callables on
+    # multigraphs; the cheapest parallel edge wins.
+    def _min_length_attrs(self, edges: dict) -> dict:
+        return min(edges.values(), key=lambda a: a.get("length_m", 1.0))
+
+    def _min_time_attrs(self, edges: dict, period: str) -> dict:
+        return min(edges.values(),
+                   key=lambda a: self._edge_travel_time(a, period)[0])
+
     def _weight_func(self, mode: str, cost_func: Optional[Callable], period: str):
         if mode == "distance":
-            return lambda u, v, d: d.get("length_m", 1.0)
+            return lambda u, v, d: self._min_length_attrs(d).get("length_m", 1.0)
         if mode == "time":
             if period not in self._PERIODS:
                 raise ValueError(
                     f"period must be one of {self._PERIODS}, got {period!r}."
                 )
-            return lambda u, v, d: self._edge_travel_time(d, period)[0]
+            return lambda u, v, d: self._edge_travel_time(
+                self._min_time_attrs(d, period), period)[0]
         if mode == "cost":
             if cost_func is None:
-                raise ValueError("mode='cost' requires cost_func=callable(u,v,data).")
+                raise ValueError(
+                    "mode='cost' requires cost_func=callable(u, v, edges) where "
+                    "edges is a dict of edge_id -> attribute dict."
+                )
             return cost_func
         raise ValueError("mode must be 'distance', 'time' or 'cost'.")
 
@@ -100,7 +121,9 @@ class Router:
         ----------
         origin, destination : (lon, lat) tuples, or graph nodes.
         mode : {"distance", "time", "cost"}
-        cost_func : callable(u, v, data) -> float, required if mode='cost'.
+        cost_func : callable(u, v, edges) -> float, required if mode='cost'.
+            ``edges`` is a dict keyed by edge key (= edge_id) of parallel-edge
+            attribute dicts (the graph is a MultiDiGraph).
         snap : bool
             If True, treat origin/destination as lon/lat and snap to the nearest
             node. If False, they must already be graph nodes.
@@ -153,8 +176,6 @@ class Router:
 
         try:
             path = nx.shortest_path(graph, src, dst, weight=weight)
-        except nx.NodeNotFound as exc:  # pragma: no cover - guarded above
-            raise ValueError(f"Routing endpoint not found in the network: {exc}")
         except nx.NetworkXNoPath:
             reachable_undirected = nx.has_path(graph.to_undirected(as_view=True),
                                                src, dst)
@@ -173,7 +194,12 @@ class Router:
         time_period = period if mode == "time" else "overall"
         edge_ids, dist_m, time_s, n_default = [], 0.0, 0.0, 0
         for u, v in zip(path[:-1], path[1:]):
-            d = graph.get_edge_data(u, v)
+            edges = graph.get_edge_data(u, v)
+            # pick the same parallel edge the active weight would have chosen
+            if mode == "distance":
+                d = self._min_length_attrs(edges)
+            else:
+                d = self._min_time_attrs(edges, time_period)
             edge_ids.append(d.get("edge_id"))
             dist_m += d.get("length_m", 0.0)
             tt, used_default = self._edge_travel_time(d, time_period)
@@ -192,12 +218,8 @@ class Router:
     def route_geometry_lonlat(self, route_result):
         """Return the route as a list of (lon, lat) coordinates for plotting."""
         coords = []
-        for u, v in zip(route_result["path"][:-1], route_result["path"][1:]):
-            d = self.network.graph.get_edge_data(u, v)
-            geom = d.get("geometry")
-            if geom is None:
+        for eid in route_result["edge_ids"]:
+            if eid is None:
                 continue
-            xs, ys = np.asarray(geom.coords)[:, 0], np.asarray(geom.coords)[:, 1]
-            lon, lat = self.network._transformer_inv.transform(xs, ys)
-            coords.extend(list(zip(lon, lat)))
+            coords.extend(self.network.edge_coords_lonlat(int(eid)))
         return coords

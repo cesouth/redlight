@@ -1,8 +1,9 @@
 """Turn a speed-annotated road network into a trafficability map.
 
-After running the pipeline up through :func:`roadtraffic.aggregate.assign_speeds`,
-every edge of ``network.graph`` carries ``obs_speed_mps`` (and ``travel_time_s``).
-This module exposes those per-edge speeds as map output:
+After running the pipeline up through :func:`roadtraffic.aggregate.assign_speeds`
+or :func:`roadtraffic.aggregate.assign_segment_speeds`, edges of
+``network.graph`` carry per-edge observed speeds. This module exposes those
+speeds as map output:
 
 * :func:`to_geojson` — write a GeoJSON ``FeatureCollection`` of the road segments,
   each with its average speed and retained OSM tags, ready to style by speed in
@@ -10,8 +11,12 @@ This module exposes those per-edge speeds as map output:
 * :func:`plot_speed_map` — render a quick static PNG coloured by speed (no map
   tiles or network needed), for an immediate look.
 
-The network's stored edge geometry is in the projected (metric) CRS, so both
-functions reproject back to lon/lat with the network's inverse transformer.
+Both accept ``period={"overall", "peak", "offpeak"}`` to export one of the three
+regimes written by ``assign_segment_speeds`` (default: overall, which also works
+with plain ``assign_speeds``).
+
+Units go through :mod:`roadtraffic.units`, so every alias accepted elsewhere in
+the API (``"km/h"``, ``"m/s"``, ...) works here too and unknown units raise.
 """
 from __future__ import annotations
 
@@ -20,26 +25,17 @@ from typing import Optional
 
 import numpy as np
 
-_MPS_TO_MPH = 1.0 / 0.44704
-_MPS_TO_KPH = 3.6
+from .units import SpeedUnit, from_mps
+
+_PERIODS = ("overall", "peak", "offpeak")
 
 
-def _speed_in_unit(mps: Optional[float], unit: str) -> Optional[float]:
-    if mps is None:
-        return None
-    if unit == "mph":
-        return mps * _MPS_TO_MPH
-    if unit == "kph":
-        return mps * _MPS_TO_KPH
-    return mps
-
-
-def _edge_lonlat(network, eid: int):
-    """Reproject one edge's projected geometry back to (lon, lat) coordinate pairs."""
-    geom = network._edge_geoms_proj[eid]
-    xs, ys = np.asarray(geom.coords)[:, 0], np.asarray(geom.coords)[:, 1]
-    lon, lat = network._transformer_inv.transform(xs, ys)
-    return list(zip([float(a) for a in lon], [float(b) for b in lat]))
+def _speed_attr(period: str) -> str:
+    if period not in _PERIODS:
+        raise ValueError(f"period must be one of {_PERIODS}, got {period!r}.")
+    # plain obs_speed_mps is written by both assign_speeds and
+    # assign_segment_speeds (as the overall regime)
+    return "obs_speed_mps" if period == "overall" else f"obs_speed_mps_{period}"
 
 
 def _jsonable(v):
@@ -52,25 +48,30 @@ def _jsonable(v):
     return str(v)
 
 
-def _collect_edges(network, directional: bool):
-    """Yield (edge_ids, representative_data, obs_speed_mps_or_None) per feature.
+def _collect_edges(network, directional: bool, attr: str):
+    """Yield (edge_ids, representative_data, speed_mps_or_None) per feature.
 
     When ``directional`` is False, the two directed edges of a two-way road are
-    merged into one feature (speed = mean of whichever directions were observed).
+    merged into one feature (speed = mean of whichever directions carry the
+    requested regime). Roads are paired via
+    :meth:`~roadtraffic.network.Network.road_edge_ids`, so distinct parallel
+    roads between the same nodes are NOT conflated.
     """
     if directional:
-        for u, v, data in network.graph.edges(data=True):
-            yield [int(data["edge_id"])], data, data.get("obs_speed_mps")
+        for _u, _v, data in network.graph.edges(data=True):
+            yield [int(data["edge_id"])], data, data.get(attr)
         return
 
-    seen: dict = {}
-    for u, v, data in network.graph.edges(data=True):
-        key = frozenset((u, v))
-        seen.setdefault(key, []).append(data)
-    for key, datas in seen.items():
-        speeds = [d["obs_speed_mps"] for d in datas if d.get("obs_speed_mps") is not None]
+    groups: dict = {}
+    for _u, _v, data in network.graph.edges(data=True):
+        eid = int(data["edge_id"])
+        rid = min(network.road_edge_ids(eid))  # canonical id of the physical road
+        groups.setdefault(rid, []).append(data)
+    for rid in sorted(groups):
+        datas = groups[rid]
+        speeds = [d[attr] for d in datas if d.get(attr) is not None]
         spd = float(np.mean(speeds)) if speeds else None
-        yield [int(d["edge_id"]) for d in datas], datas[0], spd
+        yield sorted(int(d["edge_id"]) for d in datas), datas[0], spd
 
 
 def to_geojson(
@@ -78,6 +79,7 @@ def to_geojson(
     path: Optional[str] = None,
     *,
     directional: bool = False,
+    period: str = "overall",
     speed_unit: str = "mph",
     keep_tags: Optional[list] = ("name", "highway", "maxspeed", "oneway", "ref"),
 ) -> dict:
@@ -89,9 +91,15 @@ def to_geojson(
         If given, write the GeoJSON to this file.
     directional : bool
         ``True`` keeps one feature per directed edge (two overlapping lines per
-        two-way road). ``False`` (default) emits one feature per physical road.
-    speed_unit : {"mph", "kph", "mps"}
-        Unit for the ``speed`` property.
+        two-way road). ``False`` (default) emits one feature per physical road,
+        with the mean of the observed directions' speeds and a travel time
+        recomputed from that merged speed (so the two properties always agree).
+    period : {"overall", "peak", "offpeak"}
+        Which regime's speeds to export (see
+        :func:`~roadtraffic.aggregate.assign_segment_speeds`).
+    speed_unit : str or SpeedUnit
+        Unit for the ``speed`` property. Any alias `units.SpeedUnit.parse`
+        accepts (``"mph"``, ``"km/h"``, ``"m/s"``, ...).
     keep_tags : list of str
         Original OSM tags to copy into each feature's properties when present.
 
@@ -100,21 +108,29 @@ def to_geojson(
     dict
         The GeoJSON FeatureCollection (also written to ``path`` if provided).
     """
+    unit = SpeedUnit.parse(speed_unit)
+    attr = _speed_attr(period)
     feats = []
     n_obs = n_total = 0
-    for eids, data, spd_mps in _collect_edges(network, directional):
+    for eids, data, spd_mps in _collect_edges(network, directional, attr):
         n_total += 1
-        if spd_mps is not None and spd_mps > 0:
+        has_speed = spd_mps is not None and spd_mps > 0
+        if has_speed:
             n_obs += 1
-        coords = _edge_lonlat(network, eids[0])
+        coords = network.edge_coords_lonlat(eids[0])
+        length_m = data.get("length_m")
         props = {
             "edge_id": eids[0],
             "edge_ids": eids,
-            "has_speed": bool(spd_mps),
-            "speed": _speed_in_unit(spd_mps, speed_unit),
-            "speed_unit": speed_unit,
-            "length_m": _jsonable(data.get("length_m")),
-            "travel_time_s": _jsonable(data.get("travel_time_s")),
+            "has_speed": has_speed,
+            "speed": from_mps(float(spd_mps), unit) if has_speed else None,
+            "speed_unit": unit.value,
+            "period": period,
+            "length_m": _jsonable(length_m),
+            # recomputed from the (possibly direction-merged) speed so speed
+            # and travel time never contradict each other
+            "travel_time_s": (float(length_m) / float(spd_mps)
+                              if has_speed and length_m else None),
         }
         if keep_tags:
             for tag in keep_tags:
@@ -130,7 +146,7 @@ def to_geojson(
         "type": "FeatureCollection",
         "features": feats,
         "properties": {"n_edges_observed": n_obs, "n_edges_total": n_total,
-                       "speed_unit": speed_unit},
+                       "speed_unit": unit.value, "period": period},
     }
     if path:
         with open(path, "w") as fh:
@@ -142,6 +158,7 @@ def plot_speed_map(
     network,
     path: Optional[str] = None,
     *,
+    period: str = "overall",
     speed_unit: str = "mph",
     cmap: str = "RdYlGn",
     vmin: Optional[float] = None,
@@ -156,6 +173,7 @@ def plot_speed_map(
     Observed edges are coloured on ``cmap`` (green = fast/free-flowing, red =
     slow by default); unobserved edges are drawn in ``no_data_color``. Requires
     matplotlib. Returns the matplotlib Figure (and saves to ``path`` if given).
+    ``period`` selects the overall / peak / off-peak regime.
     """
     import matplotlib
     if path:
@@ -165,15 +183,17 @@ def plot_speed_map(
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 
+    unit = SpeedUnit.parse(speed_unit)
+    attr = _speed_attr(period)
+
     lines_obs, speeds, lines_nodata = [], [], []
-    for eids, data, spd_mps in _collect_edges(network, directional=False):
-        coords = _edge_lonlat(network, eids[0])
-        val = _speed_in_unit(spd_mps, speed_unit) if spd_mps and spd_mps > 0 else None
-        if val is None:
-            lines_nodata.append(coords)
-        else:
+    for eids, _data, spd_mps in _collect_edges(network, False, attr):
+        coords = network.edge_coords_lonlat(eids[0])
+        if spd_mps is not None and spd_mps > 0:
             lines_obs.append(coords)
-            speeds.append(val)
+            speeds.append(from_mps(float(spd_mps), unit))
+        else:
+            lines_nodata.append(coords)
 
     speeds = np.array(speeds, dtype=float)
     if vmin is None:
@@ -193,12 +213,13 @@ def plot_speed_map(
         ax.add_collection(lc)
         sm = ScalarMappable(cmap=cmap, norm=norm); sm.set_array([])
         cb = fig.colorbar(sm, ax=ax, shrink=0.6, pad=0.02)
-        cb.set_label(f"average speed ({speed_unit})")
+        cb.set_label(f"average speed ({unit.value})")
 
     ax.autoscale()
     ax.set_aspect("equal", adjustable="datalim")
     ax.set_xlabel("longitude"); ax.set_ylabel("latitude")
-    ax.set_title("Road network trafficability — average speed per segment")
+    title_period = "" if period == "overall" else f" — {period} hours"
+    ax.set_title(f"Road network trafficability — average speed per segment{title_period}")
     fig.tight_layout()
     if path:
         fig.savefig(path, dpi=dpi, bbox_inches="tight")
