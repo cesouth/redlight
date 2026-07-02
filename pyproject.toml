@@ -1,19 +1,26 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "roadtraffic"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Lightweight, bring-your-own-data trafficability analysis for road networks."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
-authors = [{ name = "Cory" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Cory Southall" }]
 keywords = ["trafficability", "road network", "GPS", "OSM", "map matching", "routing"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: GIS",
 ]
@@ -29,23 +36,42 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Shapefile / GeoPackage reading. Pulls fiona (GDAL binding). GeoJSON works
-# without this.
+# Shapefile / GeoPackage reading. Pulls fiona (GDAL binding). GeoJSON and
+# Overpass work without this.
 shapefile = ["fiona>=1.8"]
 # Static trafficability map rendering (roadtraffic.mapping.plot_speed_map).
 # roadtraffic.mapping.to_geojson needs no extra dependency.
 mapping = ["matplotlib>=3.5"]
 # Development / testing.
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.4"]
 # Documentation site build.
 docs = ["mkdocs>=1.5", "mkdocs-material>=9.0"]
 
 [project.urls]
-Documentation = "https://example.gitlab.io/roadtraffic"
-Source = "https://gitlab.com/your-namespace/roadtraffic"
+Source = "https://github.com/cesouth/roadtraffic"
+Issues = "https://github.com/cesouth/roadtraffic/issues"
+Changelog = "https://github.com/cesouth/roadtraffic/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+# Single source of truth for the version: roadtraffic.__version__
+[tool.setuptools.dynamic]
+version = { attr = "roadtraffic.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 95
+src = ["src", "tests"]
+extend-exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E741",  # ambiguous variable names: the math uses V, L, s per the papers
+]
