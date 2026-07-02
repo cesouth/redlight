@@ -87,10 +87,17 @@ the expensive part — it requires shortest-path queries on the graph — but ad
 **no new dependency** beyond `networkx`.
 
 The most probable edge sequence is recovered by **Viterbi decoding** in log
-space (sums of log-probabilities, avoiding underflow). Transitions whose network
-distance exceeds `max_route_dist_factor × straight-line step` are skipped to
-guard against absurd detours and disconnected components; if a point has no
-reachable predecessor, the chain restarts at that point rather than failing.
+space (sums of log-probabilities, avoiding underflow). The transition
+shortest-path search is bounded at `max(max_route_dist_factor × straight-line
+step, max_dist × 4)` — the floor keeps slow-moving (small-step) trajectories
+from pruning every transition — and staying on the same edge is always allowed.
+When no predecessor is reachable within that bound, the chain connects to the
+best prior state with a *saturating* penalty (a free restart would outscore any
+long continuous chain and truncate the decode); when there is no prior state at
+all (the leading fixes had no candidate edges), the chain restarts fresh at the
+first fix that has candidates. Fixes with no candidate edge within `max_dist`
+are always reported as `edge_id = -1` — the HMM never fabricates a match for
+them.
 
 - **Assumption.** Points within a trajectory are time-ordered and reasonably
   frequent relative to the network's edge lengths.

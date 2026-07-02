@@ -16,9 +16,12 @@ support is an opt-in extra.
 
 ## Features
 
-- **Bring your own data.** Road network as GeoJSON (native) or Shapefile/GPKG
-  (optional extra). GPS points as CSV/TSV or GeoJSON, with auto-detected
-  columns.
+- **Bring your own data — or fetch it.** Road network as GeoJSON (native),
+  Shapefile/GPKG (optional extra), or straight from OpenStreetMap via
+  `Network.from_overpass(bbox)` (stdlib only). GPS points as CSV/TSV or
+  GeoJSON, with auto-detected columns, unit-aware speed parsing
+  (`speed_kph` columns convert as kph), and timezone handling (`tz=`) so
+  peak hours are computed on the local clock.
 - **No speed column? Two ways to get one.** Opt-in `derive_speed=True`
   reconstructs a per-point speed from successive GPS positions (geodesic
   distance / time); `save_points` writes the result back out. Or, for
@@ -38,14 +41,20 @@ support is an opt-in extra.
 - **Temporal aggregation.** Average speed by hour or by an N-hour block, with
   your choice of **mean** (with standard error and 95% CI) or **median**
   (with IQR).
-- **Peak / off-peak detection.** Rank time bins by congestion, and assign three
-  speeds per segment — overall, peak block, and off-peak block.
+- **Peak / off-peak detection, your way.** Rank time bins by congestion
+  (peak = slowest), pick contiguous peak/off-peak windows of user-selected
+  width (`n_peak=` / `n_offpeak=`, wrapping midnight), pass explicit hour
+  lists, or let the automatic median split decide — then assign three speeds
+  per segment: overall, peak block, and off-peak block.
 - **Routing.** Shortest path by time (per overall/peak/off-peak regime),
-  distance, or a user-supplied cost function, using Dijkstra on a NetworkX graph,
-  with actionable errors when no route exists.
+  distance, or a user-supplied cost function, using Dijkstra on a NetworkX
+  multigraph (parallel roads and OSM one-way semantics — including
+  `oneway=-1` — handled correctly), with actionable errors when no route
+  exists.
 - **Mapping.** Export a speed-annotated network as GeoJSON for QGIS / Kepler /
   Leaflet / Mapbox, or render a quick static PNG trafficability map
-  (`pip install roadtraffic[mapping]`).
+  (`pip install roadtraffic[mapping]`) — for any of the three time regimes
+  (`period="peak"`).
 
 See [`docs/statistics.md`](docs/statistics.md) for the full statistical
 methodology behind every number this package reports.
@@ -68,9 +77,10 @@ pip install roadtraffic[mapping]
 From source:
 
 ```bash
-git clone https://gitlab.com/your-namespace/roadtraffic.git
+git clone https://github.com/cesouth/roadtraffic.git
 cd roadtraffic
-pip install -e .
+pip install -e .[dev]
+pytest  # 94 offline tests, ~2 s
 ```
 
 ---
@@ -80,11 +90,12 @@ pip install -e .
 ```python
 import roadtraffic as rt
 
-# 1. Load a road network (GeoJSON here; .shp/.gpkg via Network.from_file)
+# 1. Load a road network (GeoJSON here; .shp/.gpkg via Network.from_file;
+#    or fetch OSM directly: rt.Network.from_overpass((-77.31, 38.67, -77.26, 38.72)))
 net = rt.Network.from_geojson("network.geojson")
 
-# 2. Load GPS points (speed in mph, columns auto-detected)
-pts = rt.load_points("points.csv", speed_unit="mph")
+# 2. Load GPS points (columns auto-detected; tz makes peak hours local-clock)
+pts = rt.load_points("points.csv", tz="America/New_York")
 
 # 3. Match points to edges (fast) — or HMMMatcher for accuracy
 matched = rt.NearestMatcher(net, max_dist=50).match(pts)
@@ -100,10 +111,12 @@ agg = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
 # 6. Find peak (slowest) and off-peak (fastest) hours
 peaks = rt.peak_analysis(agg, statistic="median", n_peak=3, n_offpeak=3)
 
-# 7. Route by time of day
-rt.assign_speeds(net, clean, statistic="median", target_hour=8, block_hours=1)
+# 7. Assign per-segment speeds: overall + a 3-hour peak window + a 4-hour
+#    off-peak window (contiguous, chosen from the data), then map and route
+rt.assign_segment_speeds(net, clean, n_peak=3, n_offpeak=4)
+rt.to_geojson(net, "trafficability_peak.geojson", period="peak")
 router = rt.Router(net)
-result = router.route((-77.30, 38.68), (-77.27, 38.71), mode="time")
+result = router.route((-77.30, 38.68), (-77.27, 38.71), mode="time", period="peak")
 print(result["travel_time_s"], "seconds over", result["distance_m"], "m")
 ```
 
@@ -119,6 +132,7 @@ for the match-then-`derive_speeds` pipeline. More worked examples are in
 - [Quickstart & concepts](docs/quickstart.md)
 - [Statistical methodology](docs/statistics.md)
 - [API reference](docs/api.md)
+- [Changelog](CHANGELOG.md)
 - Build the docs site: `pip install roadtraffic[docs] && mkdocs serve`
 
 ---

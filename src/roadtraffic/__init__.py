@@ -2,7 +2,8 @@
 
 Public API
 ----------
-Network               : road graph container (load from GeoJSON / Shapefile / GPKG).
+Network               : road graph container (load from GeoJSON / Shapefile /
+                        GPKG, or fetch from OSM via ``Network.from_overpass``).
 load_points           : read a GPS point file into a normalised PointSet
                         (position+time only is valid; ``derive_speed=True``
                         reconstructs a per-point speed from positions).
@@ -24,23 +25,23 @@ to_geojson            : export a speed-annotated network as a GeoJSON map.
 plot_speed_map        : render a quick static PNG map coloured by speed.
 """
 
-from .units import SpeedUnit, to_mps, from_mps
-from .points import PointSet, load_points, save_points
-from .network import Network
-from .matching import NearestMatcher, HMMMatcher
-from .speeds import derive_speeds
-from .cleaning import filter_by_speed, filter_trajectory_speed
 from .aggregate import (
     aggregate_speeds,
-    peak_analysis,
+    assign_segment_speeds,
     assign_speeds,
     classify_hours,
-    assign_segment_speeds,
+    peak_analysis,
 )
+from .cleaning import filter_by_speed, filter_trajectory_speed
+from .mapping import plot_speed_map, to_geojson
+from .matching import HMMMatcher, NearestMatcher
+from .network import Network
+from .points import PointSet, load_points, save_points
 from .routing import Router
-from .mapping import to_geojson, plot_speed_map
+from .speeds import derive_speeds
+from .units import SpeedUnit, from_mps, to_mps
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "SpeedUnit",
