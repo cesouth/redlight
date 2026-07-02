@@ -23,10 +23,8 @@ Two facts drive every design choice here:
      + (graph shortest-path length from A's downstream node to B's upstream node)
      + (length of edge B up to the snap)
 
-   When both fixes land on the same directed edge it collapses to the difference of
-   their arc-length positions. Because the graph is directed and the vehicle goes
-   A -> B, distances are measured *forward*: from the snap to A's end node, and from
-   B's start node to the snap.
+   When both fixes land on the same physical road it collapses to the difference of
+   their arc-length positions.
 
 Output
 ------
@@ -34,18 +32,23 @@ Output
 
 ``intervals``
     One row per consecutive fix pair (the per-point speed record). Columns:
-    ``traj_id, point_id_from, point_id_to, time, t_from, t_to, dt_s,
-    distance_m, speed_mps, edge_from, edge_to, n_edges, snap_dist_m,
+    ``interval_id, traj_id, point_id_from, point_id_to, time, t_from, t_to,
+    dt_s, distance_m, speed_mps, edge_from, edge_to, n_edges, snap_dist_m,
     speed_sigma_mps, speed_var, quality``. ``time`` is the interval *midpoint*
-    (when the speed physically applies).
+    (when the speed physically applies). **Use this frame for network-wide
+    statistics** -- each row is one independent measurement.
 
 ``edge_observations``
-    Long format, one row per (interval, traversed edge). Columns:
-    ``edge_id, speed_mps, time, traj_id, dt_s, distance_m, snap_dist_m,
-    speed_sigma_mps, speed_var, quality``. This is schema-compatible with
-    :func:`roadtraffic.cleaning.filter_by_speed`,
+    Long format, one row per (interval, traversed edge) -- deliberately
+    duplicated so per-edge statistics see every interval that crossed the
+    edge. Columns: ``interval_id, edge_id, speed_mps, time, traj_id, dt_s,
+    distance_m, snap_dist_m, speed_sigma_mps, speed_var, quality``. This is
+    schema-compatible with :func:`roadtraffic.cleaning.filter_by_speed`,
     :func:`roadtraffic.aggregate.aggregate_speeds` and
-    :func:`roadtraffic.aggregate.assign_speeds` -- feed it straight in.
+    :func:`roadtraffic.aggregate.assign_speeds`. Network-wide aggregations
+    deduplicate on ``interval_id`` automatically (see
+    :func:`roadtraffic.aggregate.aggregate_speeds`) so the duplication does
+    not inflate sample sizes.
 
 Quality
 -------
@@ -53,9 +56,11 @@ The estimate's noise is dominated by GPS position error over the time gap:
 ``sigma_v ~ sqrt(sigma_i^2 + sigma_j^2) / dt``. An interval is flagged
 ``quality=False`` (but still returned) when the displacement is not clearly above
 the noise floor (``distance_m < min_snr * sigma_combined``), when ``dt`` is outside
-``[min_dt_s, max_dt_s]``, when either snap distance exceeds ``max_snap_dist_m``, or
-when the implied speed is outside ``[0, max_speed_mps]``. Keep ``quality`` rows for
-aggregation; the ``speed_var`` column also supports inverse-variance weighting.
+``[min_dt_s, max_dt_s]``, when either snap distance exceeds ``max_snap_dist_m``
+(a non-finite snap distance also fails, unless the input carries no
+``snap_dist_m`` column at all), or when the implied speed is outside
+``[0, max_speed_mps]``. Keep ``quality`` rows for aggregation; the ``speed_var``
+column also supports inverse-variance weighting.
 """
 from __future__ import annotations
 
@@ -72,16 +77,11 @@ except ImportError as exc:  # pragma: no cover
 
 
 # --------------------------------------------------------------------------- util
-def _edge_length(network, edge_id: int) -> float:
-    u, v = network.edge_endpoints(edge_id)
-    return float(network.graph[u][v]["length_m"])
-
-
 def _arc_position(network, edge_id: int, px: float, py: float) -> float:
     """Arc-length (m) of the projection of metric point (px, py) onto ``edge_id``,
     measured from that *directed* edge's start node. Uses shapely's exact
     line-projection rather than the segment-local ``t`` from candidate_edges."""
-    geom = network._edge_geoms_proj[edge_id]
+    geom = network.edge_geometry(edge_id)
     return float(geom.project(Point(px, py)))
 
 
@@ -94,6 +94,10 @@ class _SourceDistCache:
     edges of a two-way road (a common HMM ambiguity that would otherwise inflate
     distances by a full edge length per fix). Direction still selects *which*
     road each fix sits on; it just no longer dictates the distance.
+
+    A cached result computed with a larger cutoff may be reused for a smaller
+    one, but the *requested* cutoff is always re-applied to the answer, so
+    results never depend on query order.
     """
 
     def __init__(self, undirected_graph, weight: str = "length_m"):
@@ -112,9 +116,10 @@ class _SourceDistCache:
             entry = (cutoff, dist, paths)
             self._cache[src] = entry
         _, dist, paths = entry
-        if dst not in dist:
+        d = dist.get(dst)
+        if d is None or d > cutoff:  # re-apply the caller's cutoff on cache hits
             return None, None
-        return dist[dst], paths[dst]
+        return d, paths[dst]
 
 
 def _build_undirected(graph):
@@ -130,22 +135,12 @@ def _build_undirected(graph):
     return ug
 
 
-def _directed_edge_ids_for_road(graph, x, y) -> list:
-    """All directed edge ids between physical endpoints x and y (1 if one-way, 2 if two-way)."""
-    out = []
-    for a, b in ((x, y), (y, x)):
-        d = graph.get_edge_data(a, b)
-        if d is not None:
-            out.append(int(d["edge_id"]))
-    return out
-
-
 def _canonical_arc(network, edge_id: int, s_dir: float):
     """Return (P, Q, L, arc_from_P): the road's endpoints in a canonical order and
     the snap's arc-length from P, so two opposite directed edges of one road share
     a frame. ``s_dir`` is arc-length from the *directed* edge's start node."""
     u, v = network.edge_endpoints(edge_id)
-    L = _edge_length(network, edge_id)
+    L = network.edge_length(edge_id)
     P, Q = (u, v) if u <= v else (v, u)
     arc_from_P = s_dir if u == P else (L - s_dir)
     return P, Q, L, arc_from_P
@@ -176,9 +171,11 @@ def _hop_distance(network, ucache, edge_a, s_a, edge_b, s_b, cutoff):
             if best is None or d < best:
                 best, best_path = d, node_path
 
-    # direct same-road traversal (no need to reach a node)
-    if {Pa, Qa} == {Pb, Qb}:
-        bP_in_a = bP if Pa == Pb else (Lb - bP)
+    # direct same-road traversal (no need to reach a node). Restricted to the
+    # SAME physical road (the edge or its reverse), not merely edges sharing
+    # endpoints -- parallel roads have different geometries and lengths.
+    if edge_b in network.road_edge_ids(edge_a):
+        bP_in_a = bP  # same road => same canonical frame (P, Q, L)
         d_direct = abs(aP - bP_in_a)
         if best is None or d_direct < best:
             best, best_path = d_direct, "same"
@@ -187,11 +184,15 @@ def _hop_distance(network, ucache, edge_a, s_a, edge_b, s_b, cutoff):
         return None, [edge_a, edge_b], False
 
     # attribute to both directions of every traversed road (one-way roads have one)
-    eids = set(_directed_edge_ids_for_road(network.graph, *network.edge_endpoints(edge_a)))
-    eids |= set(_directed_edge_ids_for_road(network.graph, *network.edge_endpoints(edge_b)))
+    eids = set(network.road_edge_ids(edge_a))
+    eids |= set(network.road_edge_ids(edge_b))
     if isinstance(best_path, list) and len(best_path) > 1:
         for x, y in zip(best_path[:-1], best_path[1:]):
-            eids |= set(_directed_edge_ids_for_road(network.graph, x, y))
+            cands = network.edges_between(x, y)
+            if cands:
+                # the undirected view kept the min-length road between the pair
+                eid_min = min(cands, key=lambda c: c[1])[0]
+                eids |= set(network.road_edge_ids(eid_min))
     return best, sorted(eids), True
 
 
@@ -258,13 +259,13 @@ def derive_speeds(
         keep_cols.append(pos_accuracy_col)
     df = matched.merge(pdf[keep_cols], on="point_id", how="left", suffixes=("", "_pt"))
 
-    # resolve trajectory grouping
-    if "traj_id" in df.columns:
-        group_iter = df.groupby("traj_id", sort=False)
-    else:
+    # resolve trajectory grouping; dropna=False keeps a missing/None traj_id as
+    # one group (a point set with no id column is a single trajectory)
+    if "traj_id" not in df.columns:
         df["traj_id"] = None
-        group_iter = df.groupby("traj_id", sort=False)
+    group_iter = df.groupby("traj_id", sort=False, dropna=False)
 
+    has_snap_col = "snap_dist_m" in matched.columns
     cache = _SourceDistCache(_build_undirected(network.graph), weight="length_m")
     interval_rows: list[dict] = []
     edge_rows: list[dict] = []
@@ -282,7 +283,7 @@ def derive_speeds(
         pid = sub["point_id"].to_numpy()
         tstamp = pd.to_datetime(sub["time"]).to_numpy()
         snapd = (sub["snap_dist_m"].to_numpy(dtype=float)
-                 if "snap_dist_m" in sub.columns else np.full(n, np.nan))
+                 if has_snap_col else np.full(n, np.nan))
         if pos_accuracy_col is not None and pos_accuracy_col in sub.columns:
             sigma = pd.to_numeric(sub[pos_accuracy_col], errors="coerce").to_numpy(dtype=float)
             sigma = np.where(np.isfinite(sigma) & (sigma > 0), sigma, default_pos_sigma_m)
@@ -330,7 +331,7 @@ def derive_speeds(
 
             if not ok:
                 # advance past the offending fix; do not bridge a gap silently
-                i = max(last, i + 1) if last > i else i + 1
+                i = last if last > i else i + 1
                 continue
 
             a, b = i, last
@@ -344,20 +345,27 @@ def derive_speeds(
             sigma_comb = float(np.hypot(sigma[a], sigma[b]))
             speed_sigma = sigma_comb / dt_s
             speed_var = speed_sigma ** 2
-            snap_pair = float(np.nanmax([snapd[a], snapd[b]]))
+            finite_snaps = [x for x in (snapd[a], snapd[b]) if np.isfinite(x)]
+            snap_pair = float(max(finite_snaps)) if finite_snaps else np.nan
+            # A non-finite snap means the match quality is unknown at best; only
+            # inputs with no snap column at all get the benefit of the doubt.
+            snap_ok = (snap_pair <= max_snap_dist_m if np.isfinite(snap_pair)
+                       else not has_snap_col)
 
             quality = bool(
                 (distance_m >= min_snr * sigma_comb)
                 and (min_dt_s <= dt_s <= max_dt_s)
                 and (0.0 <= speed_mps <= max_speed_mps)
-                and (not np.isfinite(snap_pair) or snap_pair <= max_snap_dist_m)
+                and snap_ok
             )
 
             # interval midpoint time = when this average speed applies
             mid_time = tstamp[a] + (tstamp[b] - tstamp[a]) / 2
             uniq_edges = list(dict.fromkeys(int(e) for e in acc_edges))
+            interval_id = len(interval_rows)
 
             interval_rows.append({
+                "interval_id": interval_id,
                 "traj_id": tid,
                 "point_id_from": int(pid[a]),
                 "point_id_to": int(pid[b]),
@@ -377,6 +385,7 @@ def derive_speeds(
             })
             for e in uniq_edges:
                 edge_rows.append({
+                    "interval_id": interval_id,
                     "edge_id": e,
                     "speed_mps": float(speed_mps),
                     "time": mid_time,
