@@ -12,13 +12,32 @@ of Point geometries carrying, per observation:
 The loader normalises these into a pandas DataFrame with canonical columns:
 
   ``point_id`` (int, row index), ``traj_id`` (object, optional),
-  ``lon`` (float), ``lat`` (float), ``time`` (datetime64[ns, UTC] or naive),
+  ``lon`` (float), ``lat`` (float), ``time`` (datetime64, timezone-naive),
   ``speed_mps`` (float, optional).
 
+Timezones
+---------
+Hour-of-day statistics (peak / off-peak detection) are only meaningful on the
+**local clock** of the study area. ``load_points`` therefore normalises times
+to timezone-naive values:
+
+  - timezone-aware timestamps (e.g. ISO strings with ``Z`` or an offset, or
+    numeric epochs, which are UTC by definition) are converted to the zone
+    given by ``tz=`` and the zone info is dropped;
+  - if aware timestamps arrive and no ``tz`` is given, a warning explains that
+    hour-of-day statistics will use that clock (usually UTC);
+  - naive timestamps are assumed to already be local, unless ``tz`` is given,
+    in which case they are treated as UTC and converted.
+
+Speed
+-----
 Speed is not always required at load time. Three ways to end up with a
 :class:`PointSet`:
 
-1. **Speed column present** (default). Read and converted to m/s.
+1. **Speed column present** (default). Read and converted to m/s. If the
+   column name embeds a unit (``speed_kph``, ``speed_mps``, ``speed_mph``)
+   that unit is used automatically; an explicit ``speed_unit=`` always wins
+   (with a warning if the two disagree).
 2. ``derive_speed=True``. No speed column needed; speed is reconstructed
    per point from the *straight-line* (geodesic) distance to the previous
    same-trajectory fix. Cheap, but biased low on curves and by GPS noise
@@ -33,13 +52,14 @@ Speed is not always required at load time. Three ways to end up with a
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
-from pyproj import Geod
 
+from ._geo import GEOD_WGS84
 from .units import SpeedUnit, from_mps, to_mps
 
 
@@ -134,16 +154,66 @@ def _autodetect(columns: Sequence[str], candidates: Sequence[str]) -> Optional[s
     return None
 
 
+def _infer_speed_unit(colname: str) -> Optional[str]:
+    """Infer the unit embedded in a speed column name, if any."""
+    low = colname.strip().lower()
+    for u in ("mph", "kph", "mps"):
+        if low == u or low.endswith(f"_{u}") or low.endswith(f"({u})"):
+            return u
+    return None
+
+
+def _parse_times(values, timestamp_unit: Optional[str], tz: Optional[str]) -> pd.Series:
+    """Parse timestamps to a timezone-naive local-clock datetime Series.
+
+    See the module docstring ("Timezones") for the exact semantics.
+    """
+    if timestamp_unit is not None:
+        # numeric epochs are UTC by definition
+        t = pd.to_datetime(
+            pd.to_numeric(values, errors="coerce"), unit=timestamp_unit, utc=True
+        )
+        if tz is not None:
+            t = t.dt.tz_convert(tz)
+        return t.dt.tz_localize(None)
+
+    try:
+        t = pd.to_datetime(values, errors="coerce", utc=False)
+    except (ValueError, TypeError):
+        # mixed UTC offsets (e.g. a DST change): parse as UTC, convert below
+        t = pd.to_datetime(values, errors="coerce", utc=True)
+    if t.dtype == object:  # older pandas: mixed offsets degrade to object
+        t = pd.to_datetime(values, errors="coerce", utc=True)
+
+    aware = getattr(t.dt, "tz", None) is not None
+    if aware:
+        if tz is not None:
+            t = t.dt.tz_convert(tz)
+        else:
+            warnings.warn(
+                f"Timestamps are timezone-aware ({t.dt.tz}); hour-of-day "
+                "statistics (peak/off-peak) will use that clock. Pass tz= to "
+                "convert to the study area's local time.",
+                stacklevel=3,
+            )
+        t = t.dt.tz_localize(None)
+    elif tz is not None:
+        # naive input with an explicit tz: treat the values as UTC and convert
+        t = t.dt.tz_localize("UTC").dt.tz_convert(tz).dt.tz_localize(None)
+    return t
+
+
 def load_points(
     path: str,
     *,
-    speed_unit="mph",
+    speed_unit=None,
     lon_col: Optional[str] = None,
     lat_col: Optional[str] = None,
     time_col: Optional[str] = None,
     speed_col: Optional[str] = None,
     id_col: Optional[str] = None,
     timestamp_unit: Optional[str] = None,
+    tz: Optional[str] = None,
     sep: Optional[str] = None,
     derive_speed: bool = False,
 ) -> PointSet:
@@ -153,10 +223,13 @@ def load_points(
     ----------
     path : str
         CSV/TSV (``.csv``/``.tsv``/``.txt``) or GeoJSON (``.geojson``/``.json``).
-    speed_unit : str or SpeedUnit
+    speed_unit : str or SpeedUnit, optional
         Unit the source speed column is expressed in: ``"mph"``, ``"kph"`` or
-        ``"mps"``. Converted internally to m/s. Ignored when
-        ``derive_speed=True`` or no speed column is found.
+        ``"mps"``. If omitted (default), the unit is inferred from the column
+        name when it embeds one (``speed_kph`` -> kph) and falls back to mph
+        otherwise. An explicit value always wins; a warning is emitted if it
+        contradicts the column name. Ignored when ``derive_speed=True`` or no
+        speed column is found.
     derive_speed : bool
         If True, compute speed from successive GPS positions instead of reading a
         speed column (opt-in). Requires a unique-id column (``id_col``) so speeds
@@ -176,14 +249,26 @@ def load_points(
     timestamp_unit : str, optional
         If timestamps are numeric epoch values, the unit to interpret them in
         (``"s"``, ``"ms"``, ``"us"``, ``"ns"``). Otherwise parsed as datetimes.
+    tz : str, optional
+        IANA timezone of the study area (e.g. ``"America/New_York"``). Aware
+        timestamps and numeric epochs are converted to it; naive timestamps
+        are treated as UTC and converted. Stored times are always naive local
+        clock -- which is what hour-of-day statistics need. If omitted, naive
+        input is used as-is and aware input triggers a warning.
     sep : str, optional
         Delimiter for text files; inferred from extension if omitted.
 
     Returns
     -------
     PointSet
+
+    Notes
+    -----
+    Rows with a missing trajectory id (when an id column is present) are
+    dropped with a warning: an unknown mover cannot be assigned to any
+    trajectory, and keeping such rows previously made the two matchers return
+    different row counts for the same input.
     """
-    unit = SpeedUnit.parse(speed_unit)
     lower = path.lower()
     if lower.endswith((".geojson",)) or lower.endswith(".json"):
         df, has_geom_coords = _read_geojson_points(path)
@@ -223,6 +308,20 @@ def load_points(
     # speed_col is optional otherwise: position+time-only data is valid input
     # (e.g. for HMMMatcher + roadtraffic.speeds.derive_speeds).
 
+    # resolve the unit of the source speed column
+    inferred = _infer_speed_unit(speed_col) if speed_col is not None else None
+    if speed_unit is None:
+        unit = SpeedUnit.parse(inferred) if inferred else SpeedUnit.MPH
+    else:
+        unit = SpeedUnit.parse(speed_unit)
+        if inferred is not None and SpeedUnit.parse(inferred) is not unit:
+            warnings.warn(
+                f"speed_unit={unit.value!r} contradicts the detected column "
+                f"name {speed_col!r} (which implies {inferred!r}); using the "
+                f"explicit speed_unit={unit.value!r}.",
+                stacklevel=2,
+            )
+
     out = pd.DataFrame()
     out["point_id"] = np.arange(len(df), dtype=np.int64)
     if has_traj:
@@ -234,17 +333,27 @@ def load_points(
         out["lon"] = pd.to_numeric(df[lon_col], errors="coerce").values
         out["lat"] = pd.to_numeric(df[lat_col], errors="coerce").values
 
-    if timestamp_unit is not None:
-        out["time"] = pd.to_datetime(
-            pd.to_numeric(df[time_col], errors="coerce"), unit=timestamp_unit
-        )
-    else:
-        out["time"] = pd.to_datetime(df[time_col], errors="coerce", utc=False)
+    out["time"] = _parse_times(df[time_col], timestamp_unit, tz)
+
+    if has_traj:
+        # a row with no id cannot belong to any trajectory; keeping it would
+        # make matcher outputs inconsistent and silently corrupt derived speeds
+        missing_id = out["traj_id"].isna()
+        if missing_id.any():
+            warnings.warn(
+                f"Dropped {int(missing_id.sum())} row(s) with a missing id in "
+                f"column {id_col!r}: ids are required to separate movers.",
+                stacklevel=2,
+            )
+            out = out[~missing_id].reset_index(drop=True)
 
     if derive_speed:
         out["speed_mps"] = _derive_speed_mps(out)
     elif speed_col is not None:
-        raw_speed = pd.to_numeric(df[speed_col], errors="coerce").values
+        # rows may have been dropped above; re-read speeds aligned via index
+        raw = pd.to_numeric(df[speed_col], errors="coerce")
+        raw_speed = raw.iloc[out["point_id"].values].to_numpy() \
+            if len(out) != len(df) else raw.values
         out["speed_mps"] = to_mps(raw_speed, unit)
     # else: position+time only -- no speed_mps column at all.
 
@@ -254,8 +363,6 @@ def load_points(
     out["point_id"] = np.arange(len(out), dtype=np.int64)
     dropped = n_before - len(out)
     if dropped:
-        import warnings
-
         warnings.warn(
             f"Dropped {dropped} row(s) with missing/unparseable "
             + ("lon/lat/time/speed." if "speed_mps" in out.columns else "lon/lat/time."),
@@ -297,9 +404,6 @@ def _read_geojson_points(path: str):
     return pd.DataFrame(rows), True
 
 
-_GEOD_WGS84 = Geod(ellps="WGS84")
-
-
 def _derive_speed_mps(out: pd.DataFrame) -> np.ndarray:
     """Speed (m/s) at each point, differenced within each trajectory.
 
@@ -334,7 +438,7 @@ def _derive_speed_mps(out: pd.DataFrame) -> np.ndarray:
             continue
         order = np.argsort(t[idx], kind="stable")  # time order; NaN sorts last
         sidx = idx[order]
-        _, _, dist = _GEOD_WGS84.inv(
+        _, _, dist = GEOD_WGS84.inv(
             lon[sidx[:-1]], lat[sidx[:-1]], lon[sidx[1:]], lat[sidx[1:]]
         )
         dt = (t[sidx[1:]] - t[sidx[:-1]]) / 1e9  # ns -> s

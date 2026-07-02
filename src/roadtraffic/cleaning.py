@@ -24,11 +24,10 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from pyproj import Geod
 
+from ._geo import GEOD_WGS84
+from .aggregate import _require_speed_mps
 from .units import SpeedUnit, to_mps
-
-_GEOD_WGS84 = Geod(ellps="WGS84")
 
 
 def filter_by_speed(
@@ -69,13 +68,7 @@ def filter_by_speed(
     DataFrame
         Filtered copy with a reset index.
     """
-    if "speed_mps" not in matched.columns:
-        raise ValueError(
-            "filter_by_speed needs a 'speed_mps' column. If points were loaded "
-            "without a speed column, run a matcher then "
-            "roadtraffic.speeds.derive_speeds first and pass its "
-            "'edge_observations' frame here."
-        )
+    _require_speed_mps(matched, "filter_by_speed")
     unit = SpeedUnit.parse(unit)
     df = matched.copy()
 
@@ -206,7 +199,7 @@ def _dwell_mask(lon, lat, t, radius_m, min_s) -> np.ndarray:
     while i < n:
         j = i
         while j + 1 < n:
-            _, _, dist = _GEOD_WGS84.inv(lon[i], lat[i], lon[j + 1], lat[j + 1])
+            _, _, dist = GEOD_WGS84.inv(lon[i], lat[i], lon[j + 1], lat[j + 1])
             if not np.isfinite(dist) or dist > radius_m:
                 break
             j += 1
