@@ -1,0 +1,30 @@
+# Lint + tests across supported Python versions (mirror of the former
+# GitHub Actions matrix). Pipelines run on branch pushes and merge requests,
+# without duplicating both for the same commit.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+stages:
+  - test
+
+test:
+  stage: test
+  image: python:${PYTHON_VERSION}
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.9", "3.11", "3.13"]
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  cache:
+    key: "pip-py${PYTHON_VERSION}"
+    paths:
+      - .cache/pip
+  script:
+    - pip install -e .[dev,mapping]
+    - ruff check src tests
+    - pytest -q

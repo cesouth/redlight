@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CI moved to GitLab CI (`.gitlab-ci.yml`, same ruff + pytest matrix on
+  Python 3.9/3.11/3.13) ahead of the repository's migration to GitLab; the
+  GitHub Actions workflow was removed.
+
 - **Matching is 10-30x faster, with identical results.** NearestMatcher is
   fully vectorised (one batch KDTree query + one vectorised
   foot-of-perpendicular pass for the whole point set): ~13k -> ~400k points/s
