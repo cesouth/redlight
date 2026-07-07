@@ -102,6 +102,9 @@ class Network:
         self._reverse_of = reverse_of or {}    # edge_id -> opposite-direction id or None
         self._kdtree = None
         self._seg_table = None  # (edge_id, x0, y0, x1, y1) per segment for snap
+        self._csr = None        # scipy CSR adjacency (lazy, see csgraph())
+        self._node_int = None   # node tuple -> integer index into _csr
+        self._int_node = None   # integer index -> node tuple
 
     # ------------------------------------------------------------------ loaders
     @classmethod
@@ -366,6 +369,108 @@ class Network:
             if e not in best:
                 best[e] = (perp[j], float(t[j]))
         return [(e, d, tt) for e, (d, tt) in best.items()]
+
+    # -------------------------------------------------------- batch snapping
+    def _candidates_matrix(self, px, py, k: int):
+        """Vectorised candidate retrieval for many points at once.
+
+        One batch KDTree query plus one vectorised foot-of-perpendicular
+        computation over the whole (n, k) candidate matrix — the same math as
+        :meth:`candidate_edges`, minus the per-point Python overhead. Returns
+        ``(edge_ids, perp_dists, ts)``, each of shape ``(n, k)``.
+        """
+        pts = np.column_stack([np.asarray(px, dtype=float),
+                               np.asarray(py, dtype=float)])
+        k = min(k, len(self._seg_table))
+        _, idxs = self._kdtree.query(pts, k=k)
+        idxs = np.asarray(idxs).reshape(len(pts), -1)  # k=1 gives (n,) -> (n,1)
+        seg = self._seg_table[idxs]                    # (n, k, 5)
+        x0, y0, x1, y1 = seg[..., 1], seg[..., 2], seg[..., 3], seg[..., 4]
+        dx, dy = x1 - x0, y1 - y0
+        seg_len2 = dx * dx + dy * dy
+        seg_len2 = np.where(seg_len2 == 0, 1e-12, seg_len2)
+        qx, qy = pts[:, :1], pts[:, 1:2]
+        t = np.clip(((qx - x0) * dx + (qy - y0) * dy) / seg_len2, 0.0, 1.0)
+        fx, fy = x0 + t * dx, y0 + t * dy
+        perp = np.hypot(qx - fx, qy - fy)
+        return seg[..., 0].astype(np.int64), perp, t
+
+    def nearest_edges(self, px, py, *, k: int = 10, max_dist: float = 50.0,
+                      chunk_size: int = 200_000):
+        """Nearest edge per point, vectorised over many points.
+
+        Returns ``(edge_ids, snap_dists)`` arrays: ``edge_ids[i] == -1`` and
+        ``snap_dists[i] == NaN`` where no edge lies within ``max_dist``.
+        Identical results to calling :meth:`candidate_edges` per point and
+        taking the closest candidate; ``chunk_size`` only bounds peak memory.
+        """
+        px = np.asarray(px, dtype=float)
+        py = np.asarray(py, dtype=float)
+        n = px.size
+        edge_ids = np.full(n, -1, dtype=np.int64)
+        snap = np.full(n, np.nan)
+        for s in range(0, n, chunk_size):
+            e = min(s + chunk_size, n)
+            em, pm, _tm = self._candidates_matrix(px[s:e], py[s:e], k)
+            j = np.argmin(pm, axis=1)
+            rows = np.arange(e - s)
+            best = pm[rows, j]
+            ok = best <= max_dist
+            edge_ids[s:e][ok] = em[rows, j][ok]
+            snap[s:e][ok] = best[ok]
+        return edge_ids, snap
+
+    def candidate_edges_batch(self, px, py, *, k: int = 10,
+                              max_dist: float = 50.0):
+        """Per-point candidate lists for many points, in one vectorised pass.
+
+        Returns a list (one entry per point) of ``(edge_id, perp_dist, t)``
+        candidate lists with the same content and ordering as
+        :meth:`candidate_edges`.
+        """
+        em, pm, tm = self._candidates_matrix(px, py, k)
+        order_all = np.argsort(pm, axis=1, kind="stable")  # one call, all rows
+        out = []
+        for i in range(len(em)):
+            best = {}
+            for j in order_all[i]:
+                d = pm[i, j]
+                if d > max_dist:
+                    break  # sorted ascending: nothing further qualifies
+                e = int(em[i, j])
+                if e not in best:
+                    best[e] = (float(d), float(tm[i, j]))
+            out.append([(e, d, tt) for e, (d, tt) in best.items()])
+        return out
+
+    # ------------------------------------------------------------ CSR graph
+    def csgraph(self):
+        """The directed graph as a scipy CSR matrix, plus node index maps.
+
+        Returns ``(csr, node_to_int, int_to_node)`` where ``csr[i, j]`` is the
+        minimum ``length_m`` over parallel edges from node ``i`` to node ``j``
+        (the same distance Dijkstra would use on the multigraph). Built lazily
+        on first use and cached; scipy's C Dijkstra on this matrix replaces
+        pure-Python networkx searches in hot paths.
+        """
+        if self._csr is None:
+            nodes = list(self.graph.nodes())
+            node_int = {node: i for i, node in enumerate(nodes)}
+            best: dict = {}
+            for u, v, d in self.graph.edges(data=True):
+                key = (node_int[u], node_int[v])
+                length = float(d["length_m"])
+                if key not in best or length < best[key]:
+                    best[key] = length
+            from scipy.sparse import csr_matrix
+            rows = np.fromiter((k[0] for k in best), dtype=np.int64, count=len(best))
+            cols = np.fromiter((k[1] for k in best), dtype=np.int64, count=len(best))
+            vals = np.fromiter(best.values(), dtype=float, count=len(best))
+            self._csr = csr_matrix((vals, (rows, cols)),
+                                   shape=(len(nodes), len(nodes)))
+            self._node_int = node_int
+            self._int_node = nodes
+        return self._csr, self._node_int, self._int_node
 
     # ------------------------------------------------------------- convenience
     def edge_endpoints(self, edge_id: int):

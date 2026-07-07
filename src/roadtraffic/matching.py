@@ -20,25 +20,27 @@ never fabricates a match for them.
 
 NearestMatcher
     Snaps each point independently to its closest edge within a tolerance.
-    Fast, no sequence assumption. Noisy at intersections / parallel roads.
+    Fully vectorised (one batch KDTree query for the whole point set); fast,
+    no sequence assumption. Noisy at intersections / parallel roads.
 
 HMMMatcher
     Hidden Markov Model with Viterbi decoding over each trajectory
     (Newson & Krumm, 2009). Emission ~ Gaussian in snap distance; transition
     compares great-circle point step to network shortest-path distance between
-    candidates. Requires a trajectory id. No extra dependencies; costs compute.
+    candidates. Requires a trajectory id. Transition distances run on scipy's
+    C Dijkstra with cross-step caching, and independent trajectories can be
+    decoded in parallel processes (``n_jobs``). No extra dependencies.
 """
 from __future__ import annotations
 
 import math
+import os
+import pickle
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
-
-try:
-    import networkx as nx
-except ImportError as exc:  # pragma: no cover
-    raise ImportError("roadtraffic requires networkx.") from exc
+from scipy.sparse import csgraph as _csgraph
 
 
 def _match_frame(sub: pd.DataFrame, edge_ids, snap, *, traj_id=None) -> pd.DataFrame:
@@ -61,7 +63,7 @@ def _match_frame(sub: pd.DataFrame, edge_ids, snap, *, traj_id=None) -> pd.DataF
 
 
 class NearestMatcher:
-    """Independent nearest-edge snapping."""
+    """Independent nearest-edge snapping (vectorised)."""
 
     def __init__(self, network, *, max_dist: float = 50.0, k: int = 10):
         self.network = network
@@ -71,17 +73,51 @@ class NearestMatcher:
     def match(self, points) -> pd.DataFrame:
         df = points.df
         px, py = self.network.project_points(df["lon"].values, df["lat"].values)
-        edge_ids = np.full(len(df), -1, dtype=np.int64)
-        snap = np.full(len(df), np.nan)
-        for i in range(len(df)):
-            cands = self.network.candidate_edges(
-                px[i], py[i], k=self.k, max_dist=self.max_dist
-            )
-            if cands:
-                # candidate_edges returns candidates ordered by distance
-                edge_ids[i] = cands[0][0]
-                snap[i] = cands[0][1]
+        edge_ids, snap = self.network.nearest_edges(
+            px, py, k=self.k, max_dist=self.max_dist
+        )
         return _match_frame(df, edge_ids, snap)
+
+
+class _CSRDistCache:
+    """Bounded single-source shortest-path distances, cached per source node.
+
+    Runs scipy's C Dijkstra on the network's CSR adjacency (see
+    :meth:`roadtraffic.network.Network.csgraph`) instead of pure-Python
+    networkx searches. A result computed with a larger cutoff is reused for
+    smaller ones, and the *requested* cutoff is always re-applied to the
+    answer, so results never depend on query order. LRU-bounded: each cached
+    source holds only the nodes reachable within its cutoff.
+    """
+
+    def __init__(self, csr, node_int, maxsize: int = 10_000):
+        self._csr = csr
+        self._node_int = node_int
+        self._maxsize = maxsize
+        self._cache: OrderedDict = OrderedDict()
+
+    def lookup(self, src_node, dst_node, cutoff: float):
+        """Distance src -> dst if reachable within ``cutoff``, else None."""
+        si = self._node_int.get(src_node)
+        di = self._node_int.get(dst_node)
+        if si is None or di is None:
+            return None
+        entry = self._cache.get(si)
+        if entry is None or entry[0] < cutoff:
+            row = np.asarray(_csgraph.dijkstra(
+                self._csr, directed=True, indices=si, limit=cutoff
+            )).ravel()
+            finite = np.flatnonzero(np.isfinite(row))
+            entry = (cutoff, dict(zip(finite.tolist(), row[finite].tolist())))
+            self._cache[si] = entry
+        else:
+            self._cache.move_to_end(si)
+        if len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)
+        d = entry[1].get(di)
+        if d is None or d > cutoff:  # re-apply the caller's cutoff on cache hits
+            return None
+        return d
 
 
 class HMMMatcher:
@@ -110,6 +146,24 @@ class HMMMatcher:
         connects to the best prior state with a saturating penalty (see the
         inline note); when there is no prior state at all (leading fixes had
         no candidates), the chain restarts fresh at this fix.
+    n_jobs : int
+        Number of worker processes for decoding independent trajectories in
+        parallel. 1 (default) = serial; -1 = all CPU cores. Results are
+        identical to serial matching -- trajectories are independent; only
+        the schedule changes. **Measure before enabling**: the serial path
+        already sustains tens of thousands of points per second, so worker
+        start-up (fresh interpreter + network deserialisation per process
+        under the 'spawn' start method) and DataFrame transfer costs dominate
+        until jobs run for minutes -- on the development machine serial
+        matching stayed faster up to at least two million points. Workers
+        also each start with a cold shortest-path cache that the serial run
+        shares. As with any Python
+        multiprocessing, call ``match`` from inside an
+        ``if __name__ == "__main__":`` guard in scripts.
+    dist_cache_size : int
+        Max number of source nodes whose bounded shortest-path distances are
+        kept cached across steps (per process). Larger = faster on data that
+        revisits the same roads, at more memory (~tens of KB per entry).
 
     Notes
     -----
@@ -120,13 +174,24 @@ class HMMMatcher:
 
     def __init__(self, network, *, sigma_z: float = 6.0, beta: float = 30.0,
                  max_dist: float = 50.0, k: int = 8,
-                 max_route_dist_factor: float = 8.0):
+                 max_route_dist_factor: float = 8.0,
+                 n_jobs: int = 1, dist_cache_size: int = 10_000):
         self.network = network
         self.sigma_z = sigma_z
         self.beta = beta
         self.max_dist = max_dist
         self.k = k
         self.max_route_dist_factor = max_route_dist_factor
+        self.n_jobs = n_jobs
+        self.dist_cache_size = dist_cache_size
+        self._dist_cache: _CSRDistCache | None = None
+
+    def __getstate__(self):
+        # the distance cache is a per-process working set, not matcher state;
+        # dropping it keeps worker payloads small
+        state = self.__dict__.copy()
+        state["_dist_cache"] = None
+        return state
 
     # emission log-prob: Gaussian in perpendicular snap distance
     def _emission_logp(self, dist):
@@ -138,31 +203,43 @@ class HMMMatcher:
     def _transition_logp(self, delta):
         return -delta / self.beta - math.log(self.beta)
 
+    def _get_dist_cache(self) -> _CSRDistCache:
+        if self._dist_cache is None:
+            csr, node_int, _ = self.network.csgraph()
+            self._dist_cache = _CSRDistCache(csr, node_int,
+                                             maxsize=self.dist_cache_size)
+        return self._dist_cache
+
+    def _resolve_n_jobs(self) -> int:
+        if self.n_jobs == -1:
+            return os.cpu_count() or 1
+        return max(1, int(self.n_jobs))
+
     def match(self, points) -> pd.DataFrame:
         if not points.has_traj:
             raise ValueError(
                 "HMMMatcher requires a trajectory id column. Either provide one "
                 "via load_points(id_col=...) or use NearestMatcher."
             )
-        frames = []
-        for tid, sub in points.trajectories():
-            frames.append(self._match_one(tid, sub))
-        out = pd.concat(frames, ignore_index=True)
-        return out
+        trajs = list(points.trajectories())
+        n_jobs = self._resolve_n_jobs()
+        if n_jobs > 1 and len(trajs) > 1:
+            frames = _match_parallel(self, trajs, n_jobs)
+        else:
+            frames = [self._match_one(tid, sub) for tid, sub in trajs]
+        return pd.concat(frames, ignore_index=True)
 
     def _match_one(self, tid, sub) -> pd.DataFrame:
         n = len(sub)
         lon = sub["lon"].values
         lat = sub["lat"].values
         px, py = self.network.project_points(lon, lat)
+        dcache = self._get_dist_cache()
 
-        # candidate sets per observation
-        cand_list = []
-        for i in range(n):
-            cands = self.network.candidate_edges(
-                px[i], py[i], k=self.k, max_dist=self.max_dist
-            )
-            cand_list.append(cands)
+        # candidate sets for the whole trajectory in one vectorised pass
+        cand_list = self.network.candidate_edges_batch(
+            px, py, k=self.k, max_dist=self.max_dist
+        )
         has_cand = [bool(c) for c in cand_list]
 
         # great-circle metric step between consecutive points (projected dist)
@@ -190,17 +267,11 @@ class HMMMatcher:
                 continue
 
             cutoff = max(self.max_route_dist_factor * step[i], self.max_dist * 4)
-            # One bounded Dijkstra per distinct predecessor end-node, reused
-            # across every current candidate this step. Replaces O(k^2) full
-            # shortest-path calls and applies the distance cutoff
-            # (transitions beyond it are pruned, guarding absurd detours).
-            dist_from = {}
-            for peid in V[i - 1]:
-                _, pv = self.network.edge_endpoints(peid)
-                if pv not in dist_from:
-                    dist_from[pv] = nx.single_source_dijkstra_path_length(
-                        self.network.graph, pv, cutoff=cutoff, weight="length_m"
-                    )
+            # End node per distinct predecessor, resolved once per step; the
+            # bounded Dijkstra behind dcache.lookup is computed at most once
+            # per (source node, cutoff regime) and reused across steps.
+            prev_end = {peid: self.network.edge_endpoints(peid)[1]
+                        for peid in V[i - 1]}
             for eid, dist, _t in cand_list[i]:
                 em = self._emission_logp(dist)
                 u_cur, _ = self.network.edge_endpoints(eid)
@@ -214,8 +285,7 @@ class HMMMatcher:
                         # and be pruned, shattering the chain.
                         rd = step[i]
                     else:
-                        _, pv = self.network.edge_endpoints(peid)
-                        rd = dist_from[pv].get(u_cur)
+                        rd = dcache.lookup(prev_end[peid], u_cur, cutoff)
                         if rd is None:
                             continue  # unreachable within cutoff
                     delta = abs(step[i] - rd)
@@ -266,3 +336,31 @@ class HMMMatcher:
                     break
 
         return _match_frame(sub, matched, snap, traj_id=tid)
+
+
+# ------------------------------------------------------------ parallel workers
+# Module-level so they pickle under the 'spawn' start method (macOS/Windows).
+# The matcher (with its Network) is deserialised ONCE per worker process by
+# the pool initializer, not once per trajectory.
+_WORKER_STATE: dict = {}
+
+
+def _pool_init(matcher_bytes: bytes) -> None:
+    _WORKER_STATE["matcher"] = pickle.loads(matcher_bytes)
+
+
+def _pool_match_one(task):
+    tid, sub = task
+    return _WORKER_STATE["matcher"]._match_one(tid, sub)
+
+
+def _match_parallel(matcher: HMMMatcher, trajs: list, n_jobs: int) -> list:
+    from concurrent.futures import ProcessPoolExecutor
+
+    payload = pickle.dumps(matcher)
+    n_jobs = min(n_jobs, len(trajs))
+    chunksize = max(1, len(trajs) // (n_jobs * 4))
+    with ProcessPoolExecutor(max_workers=n_jobs, initializer=_pool_init,
+                             initargs=(payload,)) as pool:
+        # map preserves input order, so output matches serial ordering
+        return list(pool.map(_pool_match_one, trajs, chunksize=chunksize))
