@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (0.x: minor versions may contain breaking changes, noted below).
 
+## [Unreleased]
+
+### Changed
+
+- **Matching is 10-30x faster, with identical results.** NearestMatcher is
+  fully vectorised (one batch KDTree query + one vectorised
+  foot-of-perpendicular pass for the whole point set): ~13k -> ~400k points/s
+  on the benchmark grid. HMMMatcher's transition distances now run on scipy's
+  C Dijkstra over a CSR adjacency (`Network.csgraph()`) with an LRU-bounded
+  per-source cache reused across steps and trajectories: ~7.5k -> ~90k
+  points/s. Regression tests pin the new paths to the old per-point /
+  networkx results.
+- New `Network` batch methods: `nearest_edges`, `candidate_edges_batch`,
+  `csgraph()` (lazy CSR + node index maps). The scalar `candidate_edges`
+  is unchanged.
+
+### Added
+
+- `HMMMatcher(n_jobs=...)`: optional process-parallel decoding of independent
+  trajectories (identical output to serial). Off by default -- measured on
+  macOS, worker start-up and data-transfer overhead means serial stays faster
+  up to at least ~2M points; see the docstring before enabling.
+- `HMMMatcher(dist_cache_size=...)` to bound the shortest-path cache memory.
+- `benchmarks/bench_matching.py`: reproducible synthetic-data throughput
+  benchmark for both matchers.
+
 ## [0.2.0] - 2026-07-02
 
 This release follows a full-package code review (multi-angle, with every

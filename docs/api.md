@@ -100,9 +100,11 @@ handy for persisting a set loaded with `derive_speed=True`.
 ### `NearestMatcher(network, *, max_dist=50.0, k=10)`
 
 `.match(points) -> DataFrame`. Independent nearest-edge snapping within
-`max_dist` metres; `k` is the max candidate segments examined.
+`max_dist` metres; `k` is the max candidate segments examined. Fully
+vectorised — one batch KDTree query for the whole point set (hundreds of
+thousands of points per second).
 
-### `HMMMatcher(network, *, sigma_z=6.0, beta=30.0, max_dist=50.0, k=8, max_route_dist_factor=8.0)`
+### `HMMMatcher(network, *, sigma_z=6.0, beta=30.0, max_dist=50.0, k=8, max_route_dist_factor=8.0, n_jobs=1, dist_cache_size=10_000)`
 
 `.match(points) -> DataFrame`. HMM/Viterbi trajectory matching. Requires
 `points.has_traj`. `sigma_z` = GPS noise std (m) — raise it toward your data's
@@ -111,6 +113,13 @@ bounded at `max(max_route_dist_factor × step, max_dist × 4)` so cost stays
 bounded on large networks. Fixes with no candidate edge within `max_dist` are
 reported as `edge_id = -1` (never fabricated); the chain restarts after a
 candidate-less prefix. See [statistics §2.2](statistics.md).
+
+Transition distances run on scipy's C Dijkstra over the network's CSR
+adjacency with an LRU cache (`dist_cache_size` sources) reused across steps
+and trajectories — tens of thousands of points per second serial. `n_jobs`
+decodes independent trajectories in parallel processes with identical
+results; measure before enabling (worker start-up costs dominate until jobs
+run for minutes — see the class docstring).
 
 **Output columns (both matchers):** `point_id`, `edge_id` (`-1` if unmatched),
 `snap_dist_m`, `lon`, `lat`, `time`, `traj_id` if present, and `speed_mps` **if**
