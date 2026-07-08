@@ -131,6 +131,9 @@ for the match-then-`derive_speeds` pipeline. More worked examples are in
 
 - [Quickstart & concepts](docs/quickstart.md)
 - [Statistical methodology](docs/statistics.md)
+- [Methodology paper & empirical defense](docs/methodology.md) — the full
+  argument for the HMM matcher and the on-road speed estimator, with
+  reproducible ground-truth experiments (`scripts/paper_experiments.py`)
 - [API reference](docs/api.md)
 - [Changelog](CHANGELOG.md)
 - Build the docs site: `pip install roadtraffic[docs] && mkdocs serve`

@@ -1,0 +1,149 @@
+{
+  "experiment_a": {
+    "sigma_m": [
+      5.0,
+      15.0,
+      30.0,
+      50.0
+    ],
+    "nearest_acc": [
+      0.9118181818181819,
+      0.7559090909090909,
+      0.5340909090909091,
+      0.345
+    ],
+    "hmm_acc": [
+      0.9672727272727273,
+      0.8063636363636364,
+      0.5559090909090909,
+      0.36363636363636365
+    ],
+    "nearest_unmatched": [
+      0.0,
+      0.0,
+      0.00045454545454545455,
+      0.0009090909090909091
+    ],
+    "hmm_unmatched": [
+      0.0,
+      0.0,
+      0.00045454545454545455,
+      0.0009090909090909091
+    ]
+  },
+  "experiment_b": {
+    "sigma_sweep": [
+      {
+        "sigma_m": 5.0,
+        "dt_s": 5.0,
+        "theory_rel_std": 0.1414213562373095,
+        "raw_rel_std": 0.1477102296521423,
+        "raw_bias": 0.0028753967679781187,
+        "quality_frac": 0.999537037037037,
+        "quality_rel_std": 0.14721791777987317,
+        "quality_bias": 0.003143479057015716,
+        "merged_rel_std": 0.14686131588206439,
+        "merged_bias": 0.0028986194977863094,
+        "merged_quality_frac": 1.0,
+        "nearest_raw_bias": 0.014342525772315517,
+        "nearest_raw_std": 0.1561381457802353
+      },
+      {
+        "sigma_m": 15.0,
+        "dt_s": 5.0,
+        "theory_rel_std": 0.4242640687119285,
+        "raw_rel_std": 0.5234700811577567,
+        "raw_bias": 0.04052236467822478,
+        "quality_frac": 0.2884259259259259,
+        "quality_rel_std": 0.4022166266956843,
+        "quality_bias": 0.6703568435543371,
+        "merged_rel_std": 0.3762734919423044,
+        "merged_bias": 0.11783978233251408,
+        "merged_quality_frac": 0.9821276595744681,
+        "nearest_raw_bias": 0.12732165116832939,
+        "nearest_raw_std": 0.5176034489069844
+      },
+      {
+        "sigma_m": 30.0,
+        "dt_s": 5.0,
+        "theory_rel_std": 0.848528137423857,
+        "raw_rel_std": 1.072708460137211,
+        "raw_bias": 0.32909014530497177,
+        "quality_frac": 0.1468952734012975,
+        "quality_rel_std": 0.5737698482587021,
+        "quality_bias": 2.3145362692858216,
+        "merged_rel_std": 0.7867042620149916,
+        "merged_bias": 0.5597790720938043,
+        "merged_quality_frac": 0.9498117942283564,
+        "nearest_raw_bias": 0.5991598049297134,
+        "nearest_raw_std": 1.0436424442733223
+      },
+      {
+        "sigma_m": 50.0,
+        "dt_s": 5.0,
+        "theory_rel_std": 1.4142135623730951,
+        "raw_rel_std": 1.6023512965310176,
+        "raw_bias": 1.0566011273470237,
+        "quality_frac": 0.09225776541492814,
+        "quality_rel_std": 0.49352521513860054,
+        "quality_bias": 3.8699427949787593,
+        "merged_rel_std": 1.1603425365272788,
+        "merged_bias": 1.451064120819299,
+        "merged_quality_frac": 0.8863346104725415,
+        "nearest_raw_bias": 1.4680643910533833,
+        "nearest_raw_std": 1.5308863270758777
+      }
+    ],
+    "dt_sweep": [
+      {
+        "dt_s": 5.0,
+        "theory_rel_std": 0.848528137423857,
+        "measured_rel_std": 1.0390281900162495,
+        "measured_bias": 0.3179114542890277,
+        "quality_frac": 0.1376274328081557
+      },
+      {
+        "dt_s": 15.0,
+        "theory_rel_std": 0.282842712474619,
+        "measured_rel_std": 0.4092612649303917,
+        "measured_bias": 0.08339723331760301,
+        "quality_frac": 0.6882352941176471
+      },
+      {
+        "dt_s": 30.0,
+        "theory_rel_std": 0.1414213562373095,
+        "measured_rel_std": 0.2363374602568769,
+        "measured_bias": -0.01665657675398103,
+        "quality_frac": 0.953125
+      }
+    ]
+  },
+  "experiment_c": {
+    "true_peak_hours": [
+      7,
+      8,
+      9,
+      16,
+      17,
+      18
+    ],
+    "detected_peak_hours": [
+      7,
+      8,
+      9
+    ],
+    "detected_offpeak_hours": [
+      2,
+      3,
+      4
+    ],
+    "peak_speed_mps": 7.410338907030824,
+    "offpeak_speed_mps": 15.612526150289083,
+    "coverage": {
+      "overall": 528,
+      "peak": 378,
+      "offpeak": 488
+    },
+    "n_points": 6935
+  }
+}

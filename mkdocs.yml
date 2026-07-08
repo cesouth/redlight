@@ -21,6 +21,7 @@ nav:
   - Home: index.md
   - Quickstart & concepts: quickstart.md
   - Statistical methodology: statistics.md
+  - Methodology paper & empirical defense: methodology.md
   - API reference: api.md
 
 markdown_extensions:
