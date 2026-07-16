@@ -2,6 +2,9 @@
 
 Public API
 ----------
+SpeedUnit, to_mps, from_mps : the mph/kph/m/s unit type and its conversion
+                        helpers, used throughout the API wherever a
+                        ``speed_unit=``/``output_unit=`` argument is accepted.
 Network               : road graph container (load from GeoJSON / Shapefile /
                         GPKG, or fetch from OSM via ``Network.from_overpass``).
 load_points           : read a GPS point file into a normalised PointSet
@@ -41,7 +44,7 @@ from .routing import Router
 from .speeds import derive_speeds
 from .units import SpeedUnit, from_mps, to_mps
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "SpeedUnit",

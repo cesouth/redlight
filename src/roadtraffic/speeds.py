@@ -58,9 +58,11 @@ The estimate's noise is dominated by GPS position error over the time gap:
 the noise floor (``distance_m < min_snr * sigma_combined``), when ``dt`` is outside
 ``[min_dt_s, max_dt_s]``, when either snap distance exceeds ``max_snap_dist_m``
 (a non-finite snap distance also fails, unless the input carries no
-``snap_dist_m`` column at all), or when the implied speed is outside
-``[0, max_speed_mps]``. Keep ``quality`` rows for aggregation; the ``speed_var``
-column also supports inverse-variance weighting.
+``snap_dist_m`` column at all), when the implied speed is outside
+``[0, max_speed_mps]``, or when ``min_baseline_m`` was requested but a
+trajectory ran out of points before the merged interval reached it. Keep
+``quality`` rows for aggregation; the ``speed_var`` column also supports
+inverse-variance weighting.
 """
 from __future__ import annotations
 
@@ -245,7 +247,9 @@ def derive_speeds(
         If set, consecutive hops are merged until their summed on-road distance
         reaches this baseline before a speed is emitted. Trades temporal/edge
         resolution for a higher signal-to-noise ratio -- recommended when fixes
-        are dense and GPS is noisy. Default None (one interval per fix pair).
+        are dense and GPS is noisy. Default None (one interval per fix pair). A
+        trajectory's final interval is still emitted even if it runs out of
+        points before reaching the baseline, but is flagged ``quality=False``.
 
     Returns
     -------
@@ -307,6 +311,7 @@ def derive_speeds(
             acc_edges: list[int] = []
             ok = True
             last = i
+            reached_baseline = min_baseline_m is None
             while j < n:
                 if eid[j] == -1:
                     ok = False
@@ -324,8 +329,12 @@ def derive_speeds(
                 acc_edges.extend(edges_hop)
                 last = j
                 if min_baseline_m is None or acc_dist >= min_baseline_m:
+                    reached_baseline = True
                     break
                 j += 1  # keep merging toward the baseline
+            # ran out of trailing points before reaching min_baseline_m: the
+            # interval below still gets emitted (useful data), but flagged
+            # quality=False since the SNR-boosting guarantee wasn't met.
 
             if not ok:
                 # advance past the offending fix; do not bridge a gap silently
@@ -345,16 +354,22 @@ def derive_speeds(
             speed_var = speed_sigma ** 2
             finite_snaps = [x for x in (snapd[a], snapd[b]) if np.isfinite(x)]
             snap_pair = float(max(finite_snaps)) if finite_snaps else np.nan
-            # A non-finite snap means the match quality is unknown at best; only
-            # inputs with no snap column at all get the benefit of the doubt.
-            snap_ok = (snap_pair <= max_snap_dist_m if np.isfinite(snap_pair)
-                       else not has_snap_col)
+            # A non-finite snap means that endpoint's match quality is unknown;
+            # if the column is present, BOTH endpoints must be finite (and
+            # within tolerance) to pass -- only inputs with no snap_dist_m
+            # column at all get the benefit of the doubt.
+            if not has_snap_col:
+                snap_ok = True
+            else:
+                both_finite = np.isfinite(snapd[a]) and np.isfinite(snapd[b])
+                snap_ok = bool(both_finite and snap_pair <= max_snap_dist_m)
 
             quality = bool(
                 (distance_m >= min_snr * sigma_comb)
                 and (min_dt_s <= dt_s <= max_dt_s)
                 and (0.0 <= speed_mps <= max_speed_mps)
                 and snap_ok
+                and reached_baseline
             )
 
             # interval midpoint time = when this average speed applies

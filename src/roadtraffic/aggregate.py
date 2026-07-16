@@ -33,6 +33,14 @@ from .units import SpeedUnit, from_mps
 
 
 def _require_speed_mps(df: pd.DataFrame, fn_name: str) -> None:
+    """Raise a clear, actionable error if ``df`` has no ``speed_mps`` column.
+
+    Shared by every function in this module (and ``cleaning.py``) that needs
+    a speed to operate on, so points loaded without a speed column
+    (position+time only -- see :func:`roadtraffic.points.load_points`) get a
+    consistent, specific error message pointing at the fix instead of a
+    generic pandas ``KeyError`` deep in a groupby.
+    """
     if "speed_mps" not in df.columns:
         raise ValueError(
             f"{fn_name} needs a 'speed_mps' column. If points were loaded "
@@ -223,6 +231,20 @@ def peak_analysis(
 
 
 def _validate_hours(hours: Iterable, name: str) -> set:
+    """Coerce an hour-of-day iterable to a ``set[int]``, validating 0-23.
+
+    Parameters
+    ----------
+    hours : iterable of int
+        Candidate hour-of-day values, e.g. ``[7, 8, 9]``.
+    name : str
+        The caller's parameter name (``"peak_hours"``/``"offpeak_hours"``),
+        used only to make the error message point at the right argument.
+
+    Returns
+    -------
+    set of int
+    """
     out = {int(h) for h in hours}
     bad = {h for h in out if not 0 <= h <= 23}
     if bad:
@@ -429,6 +451,10 @@ def assign_segment_speeds(
     ----------
     statistic : {"median", "mean"}
         Per-edge summary statistic.
+    peak_hours, offpeak_hours : list of int, optional
+        Explicit hour-of-day lists (0-23) for each regime, passed straight
+        through to :func:`classify_hours`. Overrides ``n_peak``/``n_offpeak``
+        and the automatic median split when given.
     n_peak, n_offpeak : int, optional
         Widths (hours) of the contiguous peak and off-peak windows -- see
         :func:`classify_hours`.
@@ -466,22 +492,33 @@ def assign_segment_speeds(
         eid = data["edge_id"]
         for r, per_edge in regimes.items():
             spd = per_edge.get(eid, None)
-            observed = spd is not None and spd > 0
+            # 0.0 m/s (gridlock) is a real observation, not "unobserved" --
+            # only a missing per-edge entry means that.
+            observed = spd is not None
             if not observed:
                 spd = default_speed_mps
-            if spd and spd > 0:
+            if spd is not None and spd >= 0:
                 data[f"obs_speed_mps_{r}"] = float(spd)
-                data[f"travel_time_s_{r}"] = data["length_m"] / float(spd)
+                if spd > 0:
+                    data[f"travel_time_s_{r}"] = data["length_m"] / float(spd)
+                else:
+                    # travel time is undefined/infinite at 0 m/s
+                    data.pop(f"travel_time_s_{r}", None)
             else:
                 data.pop(f"obs_speed_mps_{r}", None)
                 data.pop(f"travel_time_s_{r}", None)
             if observed:
                 coverage[r] += 1
         # Keep the plain attributes pointing at the overall regime for
-        # back-compatible default routing.
+        # back-compatible default routing. travel_time_s_overall may be
+        # absent even when obs_speed_mps_overall is present (0 m/s has no
+        # defined travel time).
         if "obs_speed_mps_overall" in data:
             data["obs_speed_mps"] = data["obs_speed_mps_overall"]
-            data["travel_time_s"] = data["travel_time_s_overall"]
+            if "travel_time_s_overall" in data:
+                data["travel_time_s"] = data["travel_time_s_overall"]
+            else:
+                data.pop("travel_time_s", None)
         else:
             data.pop("obs_speed_mps", None)
             data.pop("travel_time_s", None)
@@ -510,17 +547,19 @@ def assign_speeds(
     matched: pd.DataFrame,
     *,
     statistic: str = "median",
-    output_unit="mps",
     default_speed_mps: float | None = None,
     block_hours: int = 24,
     target_hour: int | None = None,
 ) -> dict:
     """Compute a representative speed per edge and write it onto the graph.
 
-    Stores the result as edge attribute ``obs_speed_mps`` (always m/s for use by
-    the router) and ``travel_time_s = length_m / obs_speed_mps``. Edges with no
-    observations get ``default_speed_mps`` if provided, else are left without a
-    travel time (router can fall back to length).
+    Stores the result as edge attribute ``obs_speed_mps`` -- always m/s, since
+    this is what :class:`~roadtraffic.routing.Router` reads -- and
+    ``travel_time_s = length_m / obs_speed_mps``. Edges with no observations
+    get ``default_speed_mps`` if provided, else are left without a travel time
+    (router can fall back to length). Unlike :func:`aggregate_speeds`, there is
+    no ``output_unit``: this function's output is for routing, not display, so
+    it is never converted out of m/s.
 
     Parameters
     ----------
@@ -556,12 +595,18 @@ def assign_speeds(
     for _u, _v, data in network.graph.edges(data=True):
         eid = data["edge_id"]
         spd = per_edge.get(eid, None)
-        from_observation = spd is not None and spd > 0
+        # 0.0 m/s (gridlock) is a real observation, not "unobserved" -- only
+        # a missing per-edge entry means that.
+        from_observation = spd is not None
         if not from_observation:
             spd = default_speed_mps
-        if spd and spd > 0:
+        if spd is not None and spd >= 0:
             data["obs_speed_mps"] = float(spd)
-            data["travel_time_s"] = data["length_m"] / float(spd)
+            if spd > 0:
+                data["travel_time_s"] = data["length_m"] / float(spd)
+            else:
+                # travel time is undefined/infinite at 0 m/s
+                data.pop("travel_time_s", None)
             if from_observation:
                 observed += 1
         else:

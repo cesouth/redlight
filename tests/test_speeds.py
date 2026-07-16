@@ -67,6 +67,18 @@ def test_nan_snap_fails_quality(straight_net, make_points_csv):
     assert not res["intervals"]["quality"].any()
 
 
+def test_one_sided_nan_snap_fails_quality(straight_net, make_points_csv):
+    """Regression: only a NaN at BOTH endpoints failed quality; one finite +
+    one NaN snap silently passed even though one endpoint's match quality
+    was completely unknown."""
+    pts, m = _match(straight_net, make_points_csv, drive_along_road(3, traj="a"))
+    m = m.copy()
+    m.loc[0, "snap_dist_m"] = np.nan  # only the first fix is unquantified
+    res = rt.derive_speeds(straight_net, m, pts)
+    assert len(res["intervals"]) == 2
+    assert not res["intervals"]["quality"].iloc[0]
+
+
 def test_no_snap_column_keeps_benefit_of_doubt(straight_net, make_points_csv):
     pts, m = _match(straight_net, make_points_csv,
                     drive_along_road(3, traj="a", dlon=0.0006, dt_s=30))
@@ -92,6 +104,18 @@ def test_min_baseline_merges_intervals(straight_net, make_points_csv):
     assert 0 < len(res["intervals"]) <= 2
     assert (res["intervals"]["distance_m"] >= 40.0).all()
     np.testing.assert_allclose(res["intervals"]["speed_mps"], 1.6698, rtol=1e-3)
+
+
+def test_min_baseline_shortfall_flags_quality_false(straight_net, make_points_csv):
+    """Regression: a trajectory that ran out of points before reaching
+    min_baseline_m still had its final (short) interval silently pass
+    quality, violating the documented SNR-boosting guarantee."""
+    pts, m = _match(straight_net, make_points_csv, drive_along_road(3, traj="a"))
+    res = rt.derive_speeds(straight_net, m, pts, min_baseline_m=1000.0,
+                           default_pos_sigma_m=1.0)
+    assert len(res["intervals"]) == 1
+    assert res["intervals"]["distance_m"].iloc[0] < 1000.0
+    assert not res["intervals"]["quality"].iloc[0]
 
 
 def test_unmatched_fix_breaks_interval(straight_net, make_points_csv):

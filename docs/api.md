@@ -29,11 +29,14 @@ open segments first. Source properties that collide with the reserved edge
 attributes (`edge_id`, `length_m`, `geometry`) are preserved under an `_src`
 suffix.
 
-### `Network.from_file(path, ...)`
+### `Network.from_file(path, ..., layer=None)`
 
-Same signature as `from_geojson`. Dispatches GeoJSON to `from_geojson`;
-Shapefile (`.shp`) and GeoPackage (`.gpkg`) require the `shapefile` extra
-(`pip install roadtraffic[shapefile]`). Source CRS is auto-reprojected to WGS84.
+Same signature as `from_geojson`, plus `layer` (name or index of a layer to
+read from a multi-layer file, e.g. one table in a GeoPackage that holds
+several; default: the file's own default layer). Dispatches GeoJSON to
+`from_geojson`; Shapefile (`.shp`) and GeoPackage (`.gpkg`) require the
+`shapefile` extra (`pip install roadtraffic[shapefile]`, needs Python 3.10+).
+Source CRS is auto-reprojected to WGS84.
 
 ### `Network.from_overpass(bbox, *, metric_epsg=None, directed=True, oneway_attr="oneway", highway_regex=None, url=None, timeout=90.0)`
 
@@ -49,6 +52,27 @@ downloaded extract + `from_geojson` for large study areas.
 `.edge_length(eid)`, `.edge_geometry(eid)`, `.edge_data(eid)`,
 `.edge_coords_lonlat(eid)`, `.road_edge_ids(eid)` (the directed edge pair of a
 two-way road), `.edges_between(u, v)`.
+
+**Batch / vectorised lookups** (used internally by `NearestMatcher` and
+`HMMMatcher`; useful directly if you're writing your own matching or
+snapping logic over many points at once):
+
+- `.nearest_edges(px, py, *, k=10, max_dist=50.0, chunk_size=200_000)` —
+  nearest edge per point for many points in one vectorised pass. Returns
+  `(edge_ids, snap_dists)` arrays; `edge_ids[i] == -1` and `snap_dists[i]`
+  is `NaN` where no edge lies within `max_dist`. Identical results to
+  calling `.candidate_edges` per point and taking the closest candidate,
+  10-30x faster for large point sets; `chunk_size` only bounds peak memory.
+- `.candidate_edges_batch(px, py, *, k=10, max_dist=50.0)` — per-point
+  candidate lists for many points in one vectorised pass. Returns a list
+  (one entry per point) of `(edge_id, perp_dist, t)` lists, same content
+  and ordering as calling `.candidate_edges` per point.
+- `.csgraph()` — the directed graph as a `scipy.sparse` CSR matrix, plus
+  node<->int index maps: `(csr, node_to_int, int_to_node)`. `csr[i, j]` is
+  the minimum `length_m` over parallel edges from node `i` to node `j` (the
+  same distance Dijkstra would use on the multigraph). Built lazily and
+  cached; pairs with `scipy.sparse.csgraph.dijkstra` for fast bounded
+  shortest-path queries without pure-Python networkx search.
 
 Each edge carries: `edge_id`, `length_m`, `geometry` (projected `LineString`),
 plus all source properties (e.g. `highway`, `maxspeed`).
@@ -217,11 +241,12 @@ number of bins (the lists would overlap).
 
 ## Speed assignment & routing
 
-### `assign_speeds(network, matched, *, statistic="median", output_unit="mps", default_speed_mps=None, block_hours=24, target_hour=None) -> dict`
+### `assign_speeds(network, matched, *, statistic="median", default_speed_mps=None, block_hours=24, target_hour=None) -> dict`
 
 Computes a per-edge representative speed (optionally restricted to a time-of-day
-block via `target_hour`) and writes `obs_speed_mps` and `travel_time_s` onto the
-graph. Returns coverage counts.
+block via `target_hour`) and writes `obs_speed_mps` (always m/s -- unlike
+`aggregate_speeds`, there is no `output_unit`, since this output feeds the
+router, not display) and `travel_time_s` onto the graph. Returns coverage counts.
 
 ### `classify_hours(matched, *, statistic="median", peak_hours=None, offpeak_hours=None, n_peak=None, n_offpeak=None, min_samples=1) -> dict`
 

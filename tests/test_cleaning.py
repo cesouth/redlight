@@ -49,6 +49,14 @@ def test_mad_outliers_removed():
     assert len(out) == 20
 
 
+def test_mad_outliers_nan_speed_does_not_wipe_dataset():
+    """Regression: a single NaN speed poisoned np.median, failing every row."""
+    speeds = [10.0 + 0.1 * (k % 5) for k in range(20)] + [np.nan]
+    out = rt.filter_by_speed(_matched_frame(speeds), unit="mps",
+                             mad_outliers=True)
+    assert len(out) == 20  # the 19 finite non-outliers, minus the NaN row
+
+
 def test_trajectory_filter_keeps_slow_moving_traffic():
     # creeping at ~1 m/s: slow but making ground -> kept, low speed and all
     n = 20

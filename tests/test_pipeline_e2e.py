@@ -127,7 +127,7 @@ def main():
                                   for r in pk["off_peak"]])
 
     print("\n== Assign speeds + route ==")
-    info = rt.assign_speeds(net, clean, statistic="median", output_unit="mps")
+    info = rt.assign_speeds(net, clean, statistic="median")
     print(f"edges observed: {info['n_edges_observed']}/{info['n_edges_total']}")
     router = rt.Router(net)
     o = (-77.30, 38.68)

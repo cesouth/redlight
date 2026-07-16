@@ -31,8 +31,29 @@ def build_query(bbox, highway_regex: str | None = None,
                 timeout: float = 90.0) -> str:
     """Build the Overpass QL query for drivable ways in a bounding box.
 
-    ``bbox`` is ``(min_lon, min_lat, max_lon, max_lat)`` (WGS84); note Overpass
-    itself wants ``(south, west, north, east)`` -- the reordering happens here.
+    Parameters
+    ----------
+    bbox : tuple of float
+        ``(min_lon, min_lat, max_lon, max_lat)`` in WGS84 degrees. Note
+        Overpass QL itself wants ``(south, west, north, east)`` order for a
+        bounding box filter -- the reordering into that convention happens
+        inside this function, so callers always use the same
+        ``(min_lon, min_lat, max_lon, max_lat)`` convention as the rest of
+        the package.
+    highway_regex : str, optional
+        Regex of OSM ``highway`` tag values to include (matched with
+        ``^(...)$``). Defaults to :data:`DEFAULT_HIGHWAY_REGEX` (drivable
+        road classes).
+    timeout : float
+        Value embedded in the query's own ``[timeout:N]`` setting (seconds),
+        telling the Overpass server how long it may spend evaluating the
+        query server-side. This is independent of (but should not exceed)
+        the client-side HTTP timeout passed to :func:`fetch_network_records`.
+
+    Returns
+    -------
+    str
+        The Overpass QL query text.
     """
     min_lon, min_lat, max_lon, max_lat = (float(x) for x in bbox)
     if not (min_lon < max_lon and min_lat < max_lat):
@@ -52,11 +73,24 @@ def build_query(bbox, highway_regex: str | None = None,
 def ways_to_records(overpass_json: dict) -> list:
     """Convert an Overpass ``out geom`` JSON response to network records.
 
-    Returns a list of ``(shapely.LineString in WGS84, properties dict)`` --
-    the input format of the internal network builder. Way tags become
-    properties, plus ``osm_id``. Ways with fewer than two geometry points are
-    skipped. This function is pure (no network access), so it is unit-testable
-    offline.
+    Parameters
+    ----------
+    overpass_json : dict
+        Parsed JSON response from an Overpass ``out geom;`` query (as built by
+        :func:`build_query`) -- a dict with an ``"elements"`` list, each
+        element either a ``"way"`` (with an inline ``"geometry"`` list of
+        ``{"lat": ..., "lon": ...}`` points and a ``"tags"`` dict) or another
+        element type (nodes, relations), which is skipped.
+
+    Returns
+    -------
+    list of (shapely.LineString, dict)
+        One entry per way, geometry in WGS84 lon/lat -- the input format
+        :meth:`roadtraffic.network.Network._build` expects. Way tags become
+        the dict's properties, plus an ``osm_id`` key holding the way's OSM
+        id. Ways with fewer than two geometry points (degenerate/malformed)
+        are skipped. This function does no network I/O itself, so it is
+        unit-testable offline against a fixture JSON response.
     """
     records = []
     for el in overpass_json.get("elements", []):
@@ -78,8 +112,27 @@ def fetch_network_records(bbox, *, highway_regex: str | None = None,
                           timeout: float = 90.0) -> list:
     """Query Overpass and return network records for the bounding box.
 
-    See :func:`build_query` for the bbox convention and
-    :func:`ways_to_records` for the return format.
+    Parameters
+    ----------
+    bbox : tuple of float
+        ``(min_lon, min_lat, max_lon, max_lat)`` in WGS84 degrees; see
+        :func:`build_query`.
+    highway_regex : str, optional
+        Passed straight through to :func:`build_query`.
+    url : str, optional
+        Overpass endpoint to query. Default: the public
+        ``overpass-api.de`` instance (:data:`DEFAULT_OVERPASS_URL`) -- pass
+        your own mirror/self-hosted instance to avoid its shared usage limits
+        for repeated or large queries.
+    timeout : float
+        Both the client-side HTTP request timeout (seconds, via
+        ``urllib.request.urlopen``) and the value embedded in the query's
+        own server-side ``[timeout:N]`` setting (see :func:`build_query`).
+
+    Returns
+    -------
+    list of (shapely.LineString, dict)
+        See :func:`ways_to_records`.
     """
     query = build_query(bbox, highway_regex, timeout)
     endpoint = url or DEFAULT_OVERPASS_URL

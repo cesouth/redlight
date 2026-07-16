@@ -1,10 +1,11 @@
 """Road network container.
 
 Loads a road network from GeoJSON (native, no extra deps), Shapefile/GPKG
-(optional, requires the ``shapefile`` extra -> fiona), or the Overpass API
-(:meth:`Network.from_overpass`, stdlib only). Builds a NetworkX multigraph
-whose nodes are endpoint coordinates and whose edges carry geometry, length,
-and any source attributes (e.g. OSM ``highway``, ``maxspeed``, ``oneway``).
+(optional, requires the ``shapefile`` extra -> pyogrio, Python 3.10+), or the
+Overpass API (:meth:`Network.from_overpass`, stdlib only). Builds a NetworkX
+multigraph whose nodes are endpoint coordinates and whose edges carry
+geometry, length, and any source attributes (e.g. OSM ``highway``,
+``maxspeed``, ``oneway``).
 
 The graph is a :class:`networkx.MultiDiGraph` keyed by ``edge_id``, so two
 distinct roads that happen to share both endpoints (dual carriageways,
@@ -24,6 +25,7 @@ import math
 import warnings
 
 import numpy as np
+import shapely
 from pyproj import CRS, Transformer
 from shapely.geometry import LineString, shape
 from shapely.ops import transform as shapely_transform
@@ -91,6 +93,42 @@ class Network:
     def __init__(self, graph, crs_metric, edge_index, edge_geoms_proj,
                  edge_ids, transformer_fwd, transformer_inv,
                  edge_lengths=None, reverse_of=None):
+        """Assemble a ``Network`` from already-built graph/index pieces.
+
+        Not normally called directly -- use :meth:`from_geojson`,
+        :meth:`from_file`, or :meth:`from_overpass` to build one from source
+        data; those all funnel through the internal :meth:`_build` classmethod,
+        which constructs the arguments below and calls this constructor.
+
+        Parameters
+        ----------
+        graph : networkx.MultiDiGraph
+            The road graph itself, nodes = (lon, lat) tuples, edges keyed by
+            ``edge_id``.
+        crs_metric : pyproj.CRS
+            The projected CRS all distance/length/snapping math is done in.
+        edge_index : dict
+            ``edge_id -> (u, v)`` node tuple, mirroring the graph's own edge
+            endpoints for O(1) lookup without a graph traversal.
+        edge_geoms_proj : dict
+            ``edge_id -> shapely.LineString`` in the projected metric CRS
+            (the same geometry stored on the graph edge, kept here too for
+            fast access from hot paths like :meth:`_build_segment_table`).
+        edge_ids : numpy.ndarray
+            Sorted array of every edge id, backing the :attr:`edge_ids`
+            property.
+        transformer_fwd, transformer_inv : pyproj.Transformer
+            WGS84 -> metric and metric -> WGS84 coordinate transformers,
+            reused so every projection in the object uses the exact same CRS
+            pair (see :meth:`project_points`, :meth:`edge_coords_lonlat`).
+        edge_lengths : dict, optional
+            ``edge_id -> length_m``, backing :meth:`edge_length`. Defaults to
+            an empty dict.
+        reverse_of : dict, optional
+            ``edge_id -> opposite-direction edge_id`` (or ``None`` for a
+            one-way road with no opposite edge), backing
+            :meth:`road_edge_ids`. Defaults to an empty dict.
+        """
         self.graph = graph
         self.crs_metric = crs_metric
         self._edge_index = edge_index          # edge_id -> (u, v)
@@ -111,7 +149,39 @@ class Network:
     def from_geojson(cls, path: str, *, metric_epsg: int | None = None,
                      directed: bool = True, oneway_attr: str = "oneway",
                      length_attr: str | None = None) -> Network:
-        """Load a network from a GeoJSON LineString FeatureCollection."""
+        """Load a network from a GeoJSON LineString FeatureCollection.
+
+        Parameters
+        ----------
+        path : str
+            Path to a ``.geojson``/``.json`` file. ``LineString`` and
+            ``MultiLineString`` features are read; each part of a
+            ``MultiLineString`` becomes its own edge (or edge pair).
+        metric_epsg : int, optional
+            Projected CRS (EPSG code) used for all distance-correct math
+            (snapping, length). Default: auto-picked UTM zone from the first
+            coordinate of the first geometry.
+        directed : bool
+            If ``True`` (default), the ``oneway_attr`` source property is
+            honoured -- a oneway road gets a single directed edge in the legal
+            direction of travel. If ``False``, oneway restrictions are ignored
+            and every road gets edges in both directions. Note this does *not*
+            change the graph's type: the result is always a
+            :class:`networkx.MultiDiGraph` either way.
+        oneway_attr : str
+            Source property name holding the oneway tag. Default ``"oneway"``
+            (the OSM convention); values ``"yes"``/``"true"``/``"1"``/``"t"``
+            mean forward-only, ``"-1"``/``"reverse"`` mean reverse-only. Any
+            other value (including absent) is treated as two-way.
+        length_attr : str, optional
+            Source property to use as edge length in metres instead of
+            computing it from the projected geometry (e.g. a pre-measured
+            OSM ``length`` tag). Default: compute from geometry.
+
+        Returns
+        -------
+        Network
+        """
         with open(path, encoding="utf-8") as fh:
             gj = json.load(fh)
         feats = gj.get("features", []) if isinstance(gj, dict) else []
@@ -132,10 +202,38 @@ class Network:
     @classmethod
     def from_file(cls, path: str, *, metric_epsg: int | None = None,
                   directed: bool = True, oneway_attr: str = "oneway",
-                  length_attr: str | None = None) -> Network:
-        """Load a network from Shapefile or GPKG (requires the 'shapefile' extra).
+                  length_attr: str | None = None,
+                  layer: str | int | None = None) -> Network:
+        """Load a network from Shapefile (``.shp``) or GeoPackage (``.gpkg``).
 
-        GeoJSON files are dispatched to :meth:`from_geojson`.
+        Requires the optional ``shapefile`` extra (``pip install
+        roadtraffic[shapefile]``; needs Python 3.10+), which pulls in
+        ``pyogrio`` for reading non-GeoJSON vector formats -- GeoJSON itself
+        needs no extra dependency and is dispatched straight to
+        :meth:`from_geojson` without importing ``pyogrio`` at all. Only
+        ``LineString`` and ``MultiLineString`` features are read (other
+        geometry types in the file are skipped); the source CRS is read from
+        the file and every coordinate is reprojected to WGS84 before being
+        handed to the same builder :meth:`from_geojson` uses, so the two
+        loaders produce identical `Network` structure for equivalent data.
+
+        Parameters
+        ----------
+        path : str
+            Path to a ``.shp``, ``.gpkg``, or ``.geojson``/``.json`` file
+            (the latter two are dispatched to :meth:`from_geojson`).
+        metric_epsg, directed, oneway_attr, length_attr :
+            Same meaning as in :meth:`from_geojson`.
+        layer : str or int, optional
+            Layer name or index to read from a multi-layer file (e.g. one
+            table in a GeoPackage that holds several). Default: pyogrio's own
+            default layer (the file's only layer for a Shapefile; the first
+            layer for a multi-layer GeoPackage unless overridden here).
+            Ignored when ``path`` is dispatched to :meth:`from_geojson`.
+
+        Returns
+        -------
+        Network
         """
         low = path.lower()
         if low.endswith((".geojson", ".json")):
@@ -144,31 +242,43 @@ class Network:
                 oneway_attr=oneway_attr, length_attr=length_attr,
             )
         try:
-            import fiona
+            import pyogrio
         except ImportError as exc:
             raise ImportError(
                 "Reading Shapefile/GPKG requires the optional 'shapefile' extra. "
                 "Install with: pip install roadtraffic[shapefile]"
             ) from exc
+
+        # force_2d=True: drop any Z coordinate, matching the (x, y)-only
+        # reprojection below (2D distance-correct math is all this package does).
+        meta, _fids, wkb, field_data = pyogrio.raw.read(
+            path, layer=layer, force_2d=True,
+        )
+        # A feature with no geometry comes back as a None entry in `wkb`;
+        # drop it from every parallel array (geometry + each field column)
+        # before converting, mirroring fiona's `if geom is None: continue`.
+        has_geom = np.array([g is not None for g in wkb], dtype=bool)
+        geoms = shapely.from_wkb(wkb[has_geom])
+        field_names = list(meta["fields"])
+        field_data = tuple(np.asarray(col)[has_geom] for col in field_data)
+
+        src_crs = (CRS.from_user_input(meta["crs"]) if meta.get("crs")
+                  else CRS.from_epsg(4326))
+        to_wgs = Transformer.from_crs(src_crs, CRS.from_epsg(4326), always_xy=True)
+        reproject = src_crs.to_epsg() != 4326
+
         records = []
-        with fiona.open(path) as src:
-            src_crs = CRS.from_user_input(src.crs) if src.crs else CRS.from_epsg(4326)
-            to_wgs = Transformer.from_crs(src_crs, CRS.from_epsg(4326), always_xy=True)
-            for feat in src:
-                geom = feat["geometry"]
-                if geom is None:
+        for g, row in zip(geoms, zip(*field_data)):
+            props = dict(zip(field_names, row))
+            parts = g.geoms if g.geom_type == "MultiLineString" else [g]
+            for part in parts:
+                if part.geom_type != "LineString":
                     continue
-                g = shape(geom)
-                props = dict(feat["properties"] or {})
-                parts = g.geoms if g.geom_type == "MultiLineString" else [g]
-                for part in parts:
-                    if part.geom_type != "LineString":
-                        continue
-                    if src_crs.to_epsg() != 4326:
-                        part = shapely_transform(
-                            lambda x, y, z=None: to_wgs.transform(x, y), part
-                        )
-                    records.append((part, dict(props)))
+                if reproject:
+                    part = shapely_transform(
+                        lambda x, y: to_wgs.transform(x, y), part
+                    )
+                records.append((part, dict(props)))
         if not records:
             raise ValueError("File contained no LineString features.")
         return cls._build(records, metric_epsg, directed, oneway_attr, length_attr)
@@ -187,6 +297,19 @@ class Network:
         ----------
         bbox : tuple of float
             ``(min_lon, min_lat, max_lon, max_lat)`` in WGS84 degrees.
+        metric_epsg : int, optional
+            Projected CRS (EPSG code) for distance-correct snapping/length
+            math. Default: auto-picked UTM zone from the first coordinate.
+        directed : bool
+            If ``True`` (default), OSM ``oneway`` restrictions are honoured --
+            a oneway street gets a single directed edge. If ``False``, oneway
+            restrictions are ignored and every road gets edges in both
+            directions. Note this does *not* change the graph's type: the
+            result is always a :class:`networkx.MultiDiGraph` either way.
+        oneway_attr : str
+            Source property name holding the oneway tag. Default ``"oneway"``
+            (the OSM convention); values ``"yes"``/``"true"``/``"1"``/``"t"``
+            mean forward-only, ``"-1"``/``"reverse"`` mean reverse-only.
         highway_regex : str, optional
             Regex of OSM ``highway`` values to include. Defaults to drivable
             road classes (see :data:`roadtraffic.osm.DEFAULT_HIGHWAY_REGEX`).
@@ -208,6 +331,24 @@ class Network:
     # ------------------------------------------------------------------ builder
     @classmethod
     def _build(cls, records, metric_epsg, directed, oneway_attr, length_attr):
+        """Shared graph-construction logic behind every ``from_*`` loader.
+
+        Parameters
+        ----------
+        records : list of (shapely.LineString, dict)
+            One entry per road, geometry in WGS84 lon/lat and its source
+            property dict. This is the common currency every loader (GeoJSON,
+            Shapefile/GPKG, Overpass) converts its own format into before
+            calling here -- the only place that needs to know about graph
+            construction, CRS projection, and oneway semantics.
+        metric_epsg, directed, oneway_attr, length_attr :
+            Passed straight through from whichever ``from_*`` classmethod was
+            called; see :meth:`from_geojson` for what each one means.
+
+        Returns
+        -------
+        Network
+        """
         # Pick a metric CRS from the first coordinate of the first geometry.
         first = records[0][0]
         c = first.coords[0]
@@ -218,13 +359,16 @@ class Network:
         inv = Transformer.from_crs(crs_metric, CRS.from_epsg(4326), always_xy=True)
 
         graph = nx.MultiDiGraph()
-        edge_index, edge_geoms_proj = {}, {}
-        edge_lengths, reverse_of = {}, {}
-        next_id = 0
-        n_loops = 0
-        renamed_keys = set()
+        edge_index, edge_geoms_proj = {}, {}   # edge_id -> (u, v) / projected geometry
+        edge_lengths, reverse_of = {}, {}      # edge_id -> length_m / opposite edge_id
+        next_id = 0       # monotonically increasing edge_id counter
+        n_loops = 0        # count of skipped closed-loop features, for the warning below
+        renamed_keys = set()  # source property names that collided and got "_src"-suffixed
 
         def _add(a, b, line, length_m, attrs):
+            """Add one directed edge a->b, assign it the next edge_id, and
+            record it in every per-edge index the Network needs. Returns the
+            new edge_id so the caller can link forward/reverse pairs."""
             nonlocal next_id
             eid = next_id
             next_id += 1
@@ -239,21 +383,29 @@ class Network:
             return eid
 
         for geom_wgs, props in records:
+            # geom_wgs.coords: the road's vertices in WGS84 lon/lat order, as
+            # digitized; xs/ys split them into parallel coordinate arrays for
+            # the vectorised WGS84 -> metric projection below.
             xs, ys = zip(*[(pt[0], pt[1]) for pt in geom_wgs.coords])
             px, py = fwd.transform(np.asarray(xs), np.asarray(ys))
-            proj_line = LineString(np.column_stack([px, py]))
+            proj_line = LineString(np.column_stack([px, py]))  # same geometry, metric CRS
             length_m = (float(props[length_attr]) if length_attr and length_attr in props
                         else proj_line.length)
-            u = _round_node(xs[0], ys[0])
-            v = _round_node(xs[-1], ys[-1])
+            u = _round_node(xs[0], ys[0])   # start-node key (rounded WGS84 coord)
+            v = _round_node(xs[-1], ys[-1])  # end-node key
             if u == v:
                 n_loops += 1  # closed ways (roundabouts/loops) cannot be modelled
                 continue
 
+            # oneway_val: the source oneway tag, normalised for comparison
+            # against _ONEWAY_FORWARD / _ONEWAY_REVERSE below.
             oneway_val = str(props.get(oneway_attr, "")).strip().lower()
+            # base_attrs: props with any reserved-name collision renamed to
+            # "<name>_src" (see _sanitize_props); this becomes the edge's
+            # attribute dict on the graph.
             base_attrs, renamed = _sanitize_props(props)
             renamed_keys.update(renamed)
-            rev_line = LineString(list(proj_line.coords)[::-1])
+            rev_line = LineString(list(proj_line.coords)[::-1])  # v -> u geometry
 
             if directed and oneway_val in _ONEWAY_FORWARD:
                 _add(u, v, proj_line, length_m, base_attrs)
@@ -521,11 +673,15 @@ class Network:
         return out
 
     def number_of_edges(self) -> int:
+        """Total directed edge count (each direction of a two-way road counts
+        separately)."""
         return self.graph.number_of_edges()
 
     def number_of_nodes(self) -> int:
+        """Total node (intersection/endpoint) count."""
         return self.graph.number_of_nodes()
 
     @property
     def edge_ids(self):
+        """Sorted ``numpy.ndarray`` of every directed edge id in the network."""
         return self._edge_ids

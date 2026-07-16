@@ -31,17 +31,50 @@ except ImportError as exc:  # pragma: no cover
 
 
 class Router:
-    """Shortest-path routing on a :class:`~roadtraffic.network.Network`."""
+    """Shortest-path routing on a :class:`~roadtraffic.network.Network`.
+
+    Attributes
+    ----------
+    network : roadtraffic.network.Network
+        The network being routed over. Routing reads the graph live, so
+        writing new speeds onto it (e.g. re-running
+        :func:`~roadtraffic.aggregate.assign_speeds`) takes effect on the
+        next :meth:`route` call without constructing a new ``Router``.
+    default_speed_mps : float
+        Fallback speed (m/s) used for ``mode="time"`` on edges with no
+        observed travel time at all (see :meth:`_edge_travel_time`).
+    """
 
     def __init__(self, network, *, default_speed_mps: float = 11.176):
-        # 11.176 m/s ~ 25 mph: a sane urban fallback when an edge lacks a
-        # travel time and the user requests time routing.
+        """
+        Parameters
+        ----------
+        network : roadtraffic.network.Network
+            The network to route over.
+        default_speed_mps : float
+            Fallback speed (m/s) for ``mode="time"`` routing on edges that
+            have no travel-time data at all (neither the requested regime nor
+            the overall fallback). Default 11.176 m/s (~25 mph): a sane urban
+            fallback. Must be positive -- a zero or negative value would make
+            "no data" look like an instant or backwards-in-time edge.
+        """
+        if default_speed_mps <= 0:
+            raise ValueError(
+                f"default_speed_mps must be positive, got {default_speed_mps!r}."
+            )
         self.network = network
         self.default_speed_mps = default_speed_mps
-        self._node_array = None
-        self._node_list = None
+        self._node_array = None  # (n_nodes, 2) metric-CRS coords, built lazily
+        self._node_list = None   # parallel list of node keys (lon, lat) tuples
+        self._node_tree = None   # cKDTree over _node_array, for nearest_node()
 
     def _ensure_node_index(self):
+        """Build (once, lazily) the KDTree used by :meth:`nearest_node`.
+
+        Deferred to first use rather than ``__init__`` so constructing a
+        ``Router`` is cheap even if the caller only ever routes between exact
+        graph nodes (``snap=False``), which never needs the index.
+        """
         if self._node_array is None:
             nodes = list(self.network.graph.nodes())
             self._node_list = nodes
@@ -80,13 +113,64 @@ class Router:
     # networkx passes a *keyed* dict (edge key -> attrs) to weight callables on
     # multigraphs; the cheapest parallel edge wins.
     def _min_length_attrs(self, edges: dict) -> dict:
+        """The attribute dict of the shortest parallel edge in ``edges``.
+
+        ``edges`` is ``{edge_key: attrs_dict}`` for every parallel road
+        between one node pair (as networkx passes to a multigraph weight
+        function). Edges with no ``length_m`` are treated as 1.0 m so they
+        still sort (this should not happen for edges this package built).
+        """
         return min(edges.values(), key=lambda a: a.get("length_m", 1.0))
 
     def _min_time_attrs(self, edges: dict, period: str) -> dict:
+        """The attribute dict of the fastest (lowest travel-time) parallel edge.
+
+        Same ``edges`` shape as :meth:`_min_length_attrs`; ``period`` selects
+        which travel-time regime :meth:`_edge_travel_time` reads per edge.
+        """
         return min(edges.values(),
                    key=lambda a: self._edge_travel_time(a, period)[0])
 
+    def _min_cost_attrs(self, u, v, edges: dict, cost_func: Callable) -> dict:
+        """Pick the parallel edge ``cost_func`` itself would rank cheapest.
+
+        ``cost_func(u, v, edges)`` is free to reduce over the whole parallel-edge
+        dict however it likes, so there's no general way to ask it "which edge did
+        you pick" after the fact. Evaluating it on each edge in isolation (a
+        singleton ``{key: data}`` dict) and taking the minimum matches how Dijkstra
+        actually behaves whenever cost_func reduces via min/best-of over its
+        ``edges`` argument (the documented, and only sane, way to write one).
+        """
+        best_data, best_cost = None, np.inf
+        for k, a in edges.items():
+            c = cost_func(u, v, {k: a})
+            if c < best_cost:
+                best_cost, best_data = c, a
+        return best_data
+
     def _weight_func(self, mode: str, cost_func: Callable | None, period: str):
+        """Build the ``(u, v, edges) -> float`` weight callable Dijkstra uses.
+
+        Parameters
+        ----------
+        mode : {"distance", "time", "cost"}
+            Which of :meth:`route`'s modes to build a weight function for.
+        cost_func : callable or None
+            The user-supplied weight function for ``mode="cost"``; used
+            as-is (this method's own job is only to validate it's present).
+            Ignored for the other two modes.
+        period : str
+            Regime to route on for ``mode="time"`` (validated here against
+            :attr:`_PERIODS`); ignored for the other two modes.
+
+        Returns
+        -------
+        callable
+            A function of ``(u, v, edges)`` suitable for
+            ``networkx.shortest_path(..., weight=...)``, where ``edges`` is
+            the parallel-edge dict for that node pair (see
+            :meth:`_min_length_attrs`).
+        """
         if mode == "distance":
             return lambda u, v, d: self._min_length_attrs(d).get("length_m", 1.0)
         if mode == "time":
@@ -198,6 +282,8 @@ class Router:
             # pick the same parallel edge the active weight would have chosen
             if mode == "distance":
                 d = self._min_length_attrs(edges)
+            elif mode == "cost":
+                d = self._min_cost_attrs(u, v, edges, cost_func)
             else:
                 d = self._min_time_attrs(edges, time_period)
             edge_ids.append(d.get("edge_id"))

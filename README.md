@@ -67,7 +67,8 @@ methodology behind every number this package reports.
 # Core (GeoJSON networks, CSV/GeoJSON points)
 pip install roadtraffic
 
-# With Shapefile / GeoPackage network support (pulls fiona / GDAL)
+# With Shapefile / GeoPackage network support (pulls pyogrio / GDAL;
+# needs Python 3.10+)
 pip install roadtraffic[shapefile]
 
 # With static trafficability map rendering (pulls matplotlib)
@@ -80,7 +81,7 @@ From source:
 git clone https://github.com/cesouth/roadtraffic.git
 cd roadtraffic
 pip install -e .[dev]
-pytest  # 94 offline tests, ~2 s
+pytest  # 136 offline tests, ~2 s
 ```
 
 ---

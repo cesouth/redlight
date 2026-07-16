@@ -211,12 +211,21 @@ def _dwell_mask(lon, lat, t, radius_m, min_s) -> np.ndarray:
 
 
 def _mad_mask(x: np.ndarray, threshold: float) -> np.ndarray:
-    """Boolean mask of non-outliers by modified Z-score (MAD-based)."""
+    """Boolean mask of non-outliers by modified Z-score (MAD-based).
+
+    NaN entries never pass (there is no speed to judge) and are excluded from
+    the median/MAD computation, so a single missing value can't poison every
+    other row's score (``np.median`` propagates NaN through the whole result).
+    """
     x = np.asarray(x, dtype=float)
-    med = np.median(x)
-    mad = np.median(np.abs(x - med))
+    finite = np.isfinite(x)
+    if not finite.any():
+        return np.zeros(len(x), dtype=bool)
+    med = np.median(x[finite])
+    mad = np.median(np.abs(x[finite] - med))
     if mad == 0:
-        # Degenerate spread: fall back to keeping everything (no robust signal).
-        return np.ones(len(x), dtype=bool)
-    mz = 0.6745 * (x - med) / mad
-    return np.abs(mz) <= threshold
+        # Degenerate spread: fall back to keeping every finite value (no robust signal).
+        return finite
+    mz = np.zeros(len(x))
+    mz[finite] = 0.6745 * (x[finite] - med) / mad
+    return finite & (np.abs(mz) <= threshold)

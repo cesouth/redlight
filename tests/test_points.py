@@ -28,6 +28,16 @@ def test_speed_unit_inferred_from_column_name(make_points_csv):
     assert pts.df["speed_mps"][0] == pytest.approx(100 / 3.6)
 
 
+def test_speed_unit_inferred_from_alias_column_name(make_points_csv):
+    """Regression: only the exact 'kph' token was recognized, not aliases
+    like 'kmph' -- speed_kmph silently fell back to the mph conversion."""
+    path = make_points_csv([
+        {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T08:00:00", "speed_kmph": 100.0},
+    ])
+    pts = rt.load_points(path, speed_col="speed_kmph")
+    assert pts.df["speed_mps"][0] == pytest.approx(100 / 3.6)
+
+
 def test_explicit_unit_beats_column_name_with_warning(make_points_csv):
     path = make_points_csv([
         {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T08:00:00", "speed_kph": 100.0},
@@ -76,6 +86,16 @@ def test_epoch_with_tz(make_points_csv):
     assert pd.to_datetime(pts.df["time"]).dt.hour[0] == 9
 
 
+def test_epoch_without_tz_warns(make_points_csv):
+    """Regression: numeric epochs (UTC-aware by construction) never warned,
+    while an equivalent ISO 'Z' string did -- an inconsistent silent gap."""
+    epoch = int(pd.Timestamp("2026-06-01T13:00:00Z").timestamp())
+    path = make_points_csv([{"lon": 0.0, "lat": 0.0, "time": epoch}])
+    with pytest.warns(UserWarning, match="epoch"):
+        pts = rt.load_points(path, timestamp_unit="s")
+    assert pd.to_datetime(pts.df["time"]).dt.hour[0] == 13
+
+
 def test_missing_id_rows_dropped_with_warning(make_points_csv):
     """Regression: NaN-id rows silently vanished from HMM output only."""
     rows = drive_along_road(4, traj="a")
@@ -96,6 +116,21 @@ def test_derive_speed_geodesic(make_points_csv):
     ])
     pts = rt.load_points(path, derive_speed=True)
     expected = 111319.5 / 1000 / 60  # ~1.855 m/s
+    np.testing.assert_allclose(pts.df["speed_mps"], expected, rtol=1e-3)
+
+
+def test_derive_speed_ignores_unused_speed_column_unit(make_points_csv, recwarn):
+    """Regression: a stale/irrelevant speed column's inferred unit could still
+    fire a 'contradicts' warning even though derive_speed=True never reads it."""
+    path = make_points_csv([
+        {"id": "a", "lon": 0.000, "lat": 0.0, "time": "2026-06-01T08:00:00",
+         "speed_kph": 999.0},
+        {"id": "a", "lon": 0.001, "lat": 0.0, "time": "2026-06-01T08:01:00",
+         "speed_kph": 999.0},
+    ])
+    pts = rt.load_points(path, derive_speed=True, speed_unit="mph")
+    assert not any("contradicts" in str(w.message) for w in recwarn.list)
+    expected = 111319.5 / 1000 / 60
     np.testing.assert_allclose(pts.df["speed_mps"], expected, rtol=1e-3)
 
 

@@ -36,9 +36,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Shapefile / GeoPackage reading. Pulls fiona (GDAL binding). GeoJSON and
-# Overpass work without this.
-shapefile = ["fiona>=1.8"]
+# Shapefile / GeoPackage reading. Pulls pyogrio (GDAL binding). GeoJSON and
+# Overpass work without this. pyogrio>=0.12 requires Python 3.10+; this extra
+# is unavailable on Python 3.9 even though the core package supports it.
+shapefile = ["pyogrio>=0.10"]
 # Static trafficability map rendering (roadtraffic.mapping.plot_speed_map).
 # roadtraffic.mapping.to_geojson needs no extra dependency.
 mapping = ["matplotlib>=3.5"]

@@ -191,7 +191,7 @@ def test_speeds_pipeline_end_to_end():
     agg = rt.aggregate_speeds(clean, statistic="both", output_unit="mph", by_edge=True)
     assert len(agg) > 0
 
-    info = rt.assign_speeds(net, clean, statistic="median", output_unit="mps")
+    info = rt.assign_speeds(net, clean, statistic="median")
     assert info["n_edges_observed"] > 0
     router = rt.Router(net)
     route = router.route(tuple(coords_e[0]), tuple(coords_n[-1]), mode="time")
@@ -227,7 +227,7 @@ def _assigned_grid_network(tmp):
         rows.append({"edge_id": d["edge_id"], "speed_mps": 10.0,
                      "time": "2024-06-01T08:00:00"})
     matched = pd.DataFrame(rows)
-    rt.assign_speeds(net, matched, statistic="median", output_unit="mps")
+    rt.assign_speeds(net, matched, statistic="median")
     return net
 
 

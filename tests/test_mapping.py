@@ -56,6 +56,32 @@ def test_to_geojson_one_feature_per_road(straight_net):
     assert len(fc_dir["features"]) == 2
 
 
+def test_to_geojson_zero_speed_is_observed_not_nodata(straight_net):
+    """Regression: 0.0 m/s (gridlock) was treated identically to no data."""
+    rows = [{"edge_id": 0, "speed_mps": 0.0,
+             "time": pd.Timestamp(f"2026-06-01 08:10:{k:02d}")} for k in range(3)]
+    rt.assign_segment_speeds(straight_net, pd.DataFrame(rows), peak_hours=[8],
+                             offpeak_hours=[22])
+    fc = rt.to_geojson(straight_net, speed_unit="mps")
+    props = fc["features"][0]["properties"]
+    assert props["has_speed"] is True
+    assert props["speed"] == pytest.approx(0.0)
+    assert props["travel_time_s"] is None  # infinite/undefined, not ZeroDivisionError
+    assert fc["properties"]["n_edges_observed"] == 1
+
+
+def test_to_geojson_keep_tags_collision_renamed(straight_net):
+    """Regression: a source tag named e.g. 'speed' silently overwrote the
+    computed numeric speed property."""
+    _annotate(straight_net)
+    for _u, _v, data in straight_net.graph.edges(data=True):
+        data["speed"] = "posted 30mph zone"
+    fc = rt.to_geojson(straight_net, keep_tags=["speed"], speed_unit="mps")
+    props = fc["features"][0]["properties"]
+    assert isinstance(props["speed"], float)  # computed value untouched
+    assert props["speed_src"] == "posted 30mph zone"
+
+
 def test_to_geojson_unobserved_edges(grid_net):
     fc = rt.to_geojson(grid_net, speed_unit="mps")
     assert fc["properties"]["n_edges_observed"] == 0

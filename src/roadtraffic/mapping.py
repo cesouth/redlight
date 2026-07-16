@@ -28,6 +28,14 @@ from .units import SpeedUnit, from_mps
 
 _PERIODS = ("overall", "peak", "offpeak")
 
+# Computed properties to_geojson always writes. A keep_tags entry sharing one
+# of these names is renamed to "<tag>_src" instead of silently overwriting it
+# (mirrors network.py's _sanitize_props convention for the same collision).
+_COMPUTED_PROPS = frozenset({
+    "edge_id", "edge_ids", "has_speed", "speed", "speed_unit", "period",
+    "length_m", "travel_time_s",
+})
+
 
 def _speed_attr(period: str) -> str:
     if period not in _PERIODS:
@@ -101,6 +109,9 @@ def to_geojson(
         accepts (``"mph"``, ``"km/h"``, ``"m/s"``, ...).
     keep_tags : list of str
         Original OSM tags to copy into each feature's properties when present.
+        A tag whose name collides with a computed property (e.g. a source tag
+        literally named ``speed``) is copied under ``"<tag>_src"`` instead of
+        overwriting the computed value.
 
     Returns
     -------
@@ -113,7 +124,9 @@ def to_geojson(
     n_obs = n_total = 0
     for eids, data, spd_mps in _collect_edges(network, directional, attr):
         n_total += 1
-        has_speed = spd_mps is not None and spd_mps > 0
+        # 0.0 m/s is a real observation (gridlock), not "no data" -- only
+        # None (never observed in this regime) means that.
+        has_speed = spd_mps is not None
         if has_speed:
             n_obs += 1
         coords = network.edge_coords_lonlat(eids[0])
@@ -127,14 +140,17 @@ def to_geojson(
             "period": period,
             "length_m": _jsonable(length_m),
             # recomputed from the (possibly direction-merged) speed so speed
-            # and travel time never contradict each other
+            # and travel time never contradict each other. spd_mps == 0.0
+            # (gridlock) has an undefined/infinite travel time -- left None
+            # rather than raising a ZeroDivisionError.
             "travel_time_s": (float(length_m) / float(spd_mps)
-                              if has_speed and length_m else None),
+                              if has_speed and length_m and spd_mps > 0 else None),
         }
         if keep_tags:
             for tag in keep_tags:
                 if tag in data:
-                    props[tag] = _jsonable(data[tag])
+                    key = f"{tag}_src" if tag in _COMPUTED_PROPS else tag
+                    props[key] = _jsonable(data[tag])
         feats.append({
             "type": "Feature",
             "geometry": {"type": "LineString", "coordinates": coords},
@@ -171,8 +187,52 @@ def plot_speed_map(
 
     Observed edges are coloured on ``cmap`` (green = fast/free-flowing, red =
     slow by default); unobserved edges are drawn in ``no_data_color``. Requires
-    matplotlib. Returns the matplotlib Figure (and saves to ``path`` if given).
-    ``period`` selects the overall / peak / off-peak regime.
+    matplotlib (``pip install roadtraffic[mapping]``), imported lazily so the
+    core package has no hard dependency on it.
+
+    Parameters
+    ----------
+    network : roadtraffic.network.Network
+        A network that has been annotated with per-edge speeds via
+        :func:`~roadtraffic.aggregate.assign_speeds` or
+        :func:`~roadtraffic.aggregate.assign_segment_speeds`.
+    path : str, optional
+        If given, save the figure here (format inferred from the extension,
+        e.g. ``.png``); the matplotlib backend is switched to the
+        non-interactive ``"Agg"`` first so this works headless (no display).
+        If omitted, the figure is only returned -- useful in a notebook.
+    period : {"overall", "peak", "offpeak"}
+        Which regime's speeds to colour by (see
+        :func:`~roadtraffic.aggregate.assign_segment_speeds`).
+    speed_unit : str or SpeedUnit
+        Unit for the colour scale and colourbar label. Any alias
+        :meth:`~roadtraffic.units.SpeedUnit.parse` accepts.
+    cmap : str
+        Matplotlib colormap name for the speed scale. Default ``"RdYlGn"``
+        (red = slow, yellow = medium, green = fast) -- pick a colormap where
+        low values read as "bad" if you swap it.
+    vmin, vmax : float, optional
+        Colour-scale bounds, in ``speed_unit``. Default: the 5th/95th
+        percentile of observed speeds (robust to a few extreme outliers
+        stretching the scale). Pass both explicitly to compare multiple maps
+        (e.g. peak vs. off-peak) on the same colour scale.
+    no_data_color : str
+        Matplotlib color spec for edges with no observation in ``period``.
+        Default a light grey (``"#cccccc"``) so they read as background.
+    linewidth : float
+        Line width (points) for observed edges; unobserved edges are drawn
+        thinner (``0.6 * linewidth``) so they recede visually.
+    figsize : tuple of float
+        Figure size in inches, passed straight to ``matplotlib.pyplot.subplots``.
+    dpi : int
+        Resolution for the saved file (ignored if ``path`` is omitted).
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The rendered figure. Callers embedding it elsewhere (e.g. a notebook
+        or GUI) are responsible for closing it (``plt.close(fig)``) if they
+        don't want it to accumulate in matplotlib's global figure registry.
     """
     import matplotlib
     if path:
@@ -188,7 +248,9 @@ def plot_speed_map(
     lines_obs, speeds, lines_nodata = [], [], []
     for eids, _data, spd_mps in _collect_edges(network, False, attr):
         coords = network.edge_coords_lonlat(eids[0])
-        if spd_mps is not None and spd_mps > 0:
+        # 0.0 m/s is a real observation (gridlock) and must be drawn on the
+        # speed colormap, not lumped in with genuinely unobserved edges.
+        if spd_mps is not None:
             lines_obs.append(coords)
             speeds.append(from_mps(float(spd_mps), unit))
         else:

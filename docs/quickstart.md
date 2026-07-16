@@ -27,7 +27,8 @@ Any of:
 
 - **GeoJSON** of `LineString` / `MultiLineString` features (works with the core
   install).
-- **Shapefile** or **GeoPackage** (`pip install roadtraffic[shapefile]`).
+- **Shapefile** or **GeoPackage** (`pip install roadtraffic[shapefile]`,
+  needs Python 3.10+).
 
 Optional feature properties that the package understands: a one-way flag
 (default property name `oneway`, values like `yes`/`true`/`1`/`-1`) and any
@@ -187,12 +188,17 @@ print(res["travel_time_s"], "s; edges on default speed:", res["n_edges_default"]
 res_d = router.route((-77.30, 38.68), (-77.27, 38.71), mode="distance")
 ```
 
-For a custom objective, pass `mode="cost"` with a weight function:
+For a custom objective, pass `mode="cost"` with a weight function. The network
+is a `MultiDiGraph` (parallel roads are distinct edges), so `cost_func(u, v,
+edges)` receives `edges` as a dict of `edge_id -> attrs` for every parallel
+road between `u` and `v` -- reduce over it yourself (typically `min`):
 
 ```python
-def risk_weight(u, v, data):
-    base = data.get("travel_time_s") or data["length_m"] / 11.0
-    return base * (2.0 if data.get("highway") == "motorway" else 1.0)
+def risk_weight(u, v, edges):
+    def cost(d):
+        base = d.get("travel_time_s") or d["length_m"] / 11.0
+        return base * (2.0 if d.get("highway") == "motorway" else 1.0)
+    return min(cost(d) for d in edges.values())
 
 res = router.route(o, d, mode="cost", cost_func=risk_weight)
 ```

@@ -24,6 +24,33 @@ def line_feature(coords, **props):
     }
 
 
+def write_ogr(path, features, *, crs="EPSG:4326", layer=None):
+    """Write LineString features to a Shapefile/GPKG via pyogrio (no geopandas).
+
+    ``features``: list of ``(coords, props)`` pairs -- same shape as
+    ``line_feature``'s inputs, but for pyogrio-written formats (``.gpkg``,
+    ``.shp``; the extension on ``path`` picks the driver). Imports pyogrio
+    and shapely locally so collecting this module never requires the optional
+    'shapefile' extra; callers must ``pytest.importorskip("pyogrio")`` first.
+    """
+    import numpy as np
+    import pyogrio
+    import shapely
+
+    geoms = np.array([shapely.LineString(coords) for coords, _ in features],
+                     dtype=object)
+    wkb = shapely.to_wkb(geoms)
+    field_names = sorted({k for _, props in features for k in props})
+    field_data = tuple(
+        np.array([props.get(name) for _, props in features], dtype=object)
+        for name in field_names
+    )
+    kwargs = {} if layer is None else {"layer": layer}
+    pyogrio.raw.write(str(path), wkb, field_data, field_names,
+                      geometry_type="LineString", crs=crs, **kwargs)
+    return str(path)
+
+
 @pytest.fixture
 def straight_net(tmp_path):
     """One two-way 1.1 km road along the equator from (0,0) to (0.01,0)."""

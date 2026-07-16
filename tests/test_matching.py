@@ -3,6 +3,7 @@ import pytest
 
 import roadtraffic as rt
 from conftest import drive_along_road
+from roadtraffic.matching import _CSRDistCache
 
 
 def _load(make_points_csv, rows):
@@ -58,12 +59,48 @@ def test_hmm_mid_trajectory_gap_reports_unmatched(straight_net, make_points_csv)
     assert (m["edge_id"].drop(m.index[2]) != -1).all()
 
 
+def test_hmm_gap_transition_uses_correct_anchor(grid_net, make_points_csv):
+    """Regression: after a GPS dropout (candidate-less fix), the transition
+    distance used to compare against the raw distance from the immediately-
+    prior (off-network, noisy) fix instead of the last fix that actually
+    anchored a Viterbi state -- corrupting the transition score right where
+    an intersection makes the wrong candidate a real possibility."""
+    rows = drive_along_road(5, traj="a", start_lon=0.0002, dlon=0.00022, lat=3e-5)
+    # a wild, far off-network fix mid-trajectory simulates a GPS dropout
+    rows.insert(3, {"id": "a", "lon": rows[2]["lon"], "lat": 0.03,
+                    "time": "2026-06-01T08:00:35"})
+    pts = rt.load_points(make_points_csv(rows))
+    m = rt.HMMMatcher(grid_net, max_dist=60).match(pts).sort_values("point_id")
+    assert m["edge_id"].iloc[3] == -1  # the dropout fix itself stays unmatched
+    matched_others = m["edge_id"].drop(m.index[3])
+    assert (matched_others != -1).all()
+    for eid in matched_others:
+        (u, v) = grid_net.edge_endpoints(int(eid))
+        assert u[1] == 0.0 and v[1] == 0.0  # stayed on the bottom row
+
+
 def test_hmm_all_off_network(straight_net, make_points_csv):
     rows = [{"id": "a", "lon": 0.002 * k, "lat": 0.02, "time": f"2026-06-01T08:00:{k:02d}"}
             for k in range(3)]
     pts = _load(make_points_csv, rows)
     m = rt.HMMMatcher(straight_net, max_dist=50).match(pts)
     assert (m["edge_id"] == -1).all()
+
+
+def test_csr_dist_cache_refresh_bumps_recency(grid_net):
+    """Regression: refreshing a cached entry (larger cutoff) didn't move it
+    to the MRU end, so a just-recomputed, actively-used source could be
+    evicted right after being recomputed instead of a genuinely cold entry."""
+    csr, node_int, int_node = grid_net.csgraph()
+    cache = _CSRDistCache(csr, node_int, maxsize=3)
+    a, b, c, d = int_node[0], int_node[1], int_node[2], int_node[3]
+    cache.lookup(a, b, 50.0)    # caches a
+    cache.lookup(b, a, 50.0)    # caches b
+    cache.lookup(c, a, 50.0)    # caches c; at maxsize == 3: {a, b, c}
+    cache.lookup(a, b, 500.0)   # refresh a (larger cutoff) -- must bump to MRU
+    cache.lookup(d, a, 50.0)    # caches d; over maxsize -> evicts the LRU entry
+    assert node_int[a] in cache._cache      # just refreshed -> must survive
+    assert node_int[b] not in cache._cache  # now the oldest untouched entry
 
 
 def test_matchers_share_output_schema(straight_net, make_points_csv):

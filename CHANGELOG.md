@@ -8,11 +8,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-15
+
+This release follows a second full-package review (12 correctness defects, all
+reproduced before being fixed), an expanded parameter/attribute documentation
+pass, and the fiona -> pyogrio migration for Shapefile/GeoPackage reading.
+
+### Fixed
+
+- **A single NaN speed could silently empty an entire `filter_by_speed` call.**
+  `_mad_mask` computed the median/MAD over the raw array; `np.median`
+  propagates NaN, so one missing speed poisoned every row's modified Z-score
+  and the whole batch was dropped as "outliers". NaN entries are now excluded
+  from the median/MAD computation and never pass the mask themselves.
+- **Speed-unit inference only recognized the exact `mph`/`kph`/`mps` tokens.**
+  A column named e.g. `speed_kmph` or `speed_km/h` silently fell back to the
+  mph conversion (a ~61% overstatement). `_infer_speed_unit` now recognizes
+  every alias `SpeedUnit.parse` accepts.
+- **Numeric-epoch timestamps never warned about an assumed clock**, even
+  though they're UTC-aware by construction and an equivalent ISO `Z` string
+  did warn. `load_points(timestamp_unit=..., tz=None)` now warns too.
+- **`speed_unit=` contradiction warnings fired even under `derive_speed=True`**,
+  where the speed column (and therefore its unit) is never read — a
+  misleading warning about a setting with no effect.
+- **A genuine 0 m/s (gridlock) was treated identically to "no data"** in
+  `assign_speeds`, `assign_segment_speeds`, `to_geojson`, and
+  `plot_speed_map` — the exact condition a trafficability tool exists to
+  surface was silently hidden or fell back to the default speed. All four now
+  treat only a missing observation as "no data"; travel time at 0 m/s is left
+  undefined rather than raising `ZeroDivisionError`.
+- **`to_geojson(keep_tags=...)` could silently overwrite computed properties**
+  (`speed`, `length_m`, etc.) when a source tag shared that name. Colliding
+  tags are now copied under `"<tag>_src"` instead (matching how network
+  loading already handles the analogous collision).
+- **`Router(mode="cost")` could report the wrong parallel edge.** Path
+  reconstruction picked the parallel edge with the lowest overall travel
+  time, not the one `cost_func` actually costed the path over — so
+  `distance_m`/`travel_time_s`/geometry could describe a different road than
+  the one Dijkstra used. It now re-evaluates `cost_func` per parallel edge to
+  find the one it actually preferred.
+- **`Router(default_speed_mps=0)` raised a raw `ZeroDivisionError`**, and a
+  negative value was silently accepted and produced negative travel times.
+  Both now raise a `ValueError` from the constructor.
+- **`derive_speeds`'s quality gate let a one-sided NaN `snap_dist_m` pass.**
+  Only a NaN at *both* endpoints of an interval failed quality; one finite +
+  one NaN snap passed even though one endpoint's match quality was entirely
+  unknown. Both endpoints must now be finite (and within tolerance) whenever
+  the column is present.
+- **`min_baseline_m` wasn't actually guaranteed.** A trajectory that ran out
+  of points before its merged interval reached the requested baseline still
+  emitted that interval as if the guarantee held. It's now flagged
+  `quality=False` when the baseline wasn't reached.
+- **HMM transitions across a GPS dropout compared the wrong points.** After
+  one or more candidate-less fixes, the transition distance used the raw
+  step from the *immediately preceding* (off-network, noisy) fix instead of
+  the last fix that actually anchored a Viterbi state — corrupting the
+  transition score exactly where a nearby intersection makes the wrong
+  candidate plausible. The straight-line step is now measured from the true
+  last-anchored fix.
+- **HMM transition route distance omitted the partial-edge terms** that
+  `roadtraffic.speeds`'s on-road distance measurement already accounts for
+  (remaining length past the previous snap; length up to the current snap) —
+  a systematic bias that could favor a geometrically wrong candidate. The
+  transition distance is now the same three-piece sum used elsewhere.
+- **The bounded shortest-path cache's LRU eviction was broken for refreshed
+  entries.** Recomputing a cached source at a larger cutoff didn't move it to
+  the recently-used end (`OrderedDict` reassignment doesn't reorder), so an
+  actively-used source could be evicted right after being recomputed.
+  Refreshes now bump recency like cache hits do.
+
 ### Changed
 
+- **Breaking:** `assign_speeds`'s `output_unit` parameter is removed — it was
+  never applied (the function always wrote `obs_speed_mps` in m/s, as its
+  docstring already said, for router compatibility). `aggregate_speeds`'s
+  `output_unit` is unaffected and still works.
+- **Shapefile/GeoPackage reading now uses `pyogrio` instead of `fiona`.**
+  `fiona` is the legacy I/O path in the geopandas ecosystem now that
+  geopandas itself defaults to `pyogrio`; it also has materially weaker
+  Windows wheel coverage. `Network.from_file()`'s behavior and output are
+  unchanged (still splits `MultiLineString` into per-part edges, still
+  reprojects to WGS84 before building the graph, still raises the same
+  errors) -- only the backend and the `shapefile` extra's declared
+  dependency changed. **Breaking (scoped):** the `shapefile` extra now
+  requires Python >= 3.10 (pyogrio dropped 3.9 support in its 0.12 release);
+  the core package's Python 3.9+ floor is unaffected -- GeoJSON and
+  `from_overpass` still work on 3.9.
 - CI moved to GitLab CI (`.gitlab-ci.yml`, same ruff + pytest matrix on
   Python 3.9/3.11/3.13) ahead of the repository's migration to GitLab; the
-  GitHub Actions workflow was removed.
+  GitHub Actions workflow was removed. The `shapefile` extra is now installed
+  on the 3.11/3.13 legs (previously not installed in CI at all); the 3.9 leg
+  skips it and the pyogrio-dependent tests self-skip there.
 
 - **Matching is 10-30x faster, with identical results.** NearestMatcher is
   fully vectorised (one batch KDTree query + one vectorised
@@ -28,6 +114,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Network.from_file(..., layer=...)`**: select a layer by name or index
+  when reading a multi-layer GeoPackage (previously the loader had no way to
+  address anything but the file's default layer).
+- Regression tests for `Network.from_file()` reading `.shp`/`.gpkg`,
+  including CRS reprojection and multi-layer selection -- this loader had no
+  dedicated test coverage before.
 - `HMMMatcher(n_jobs=...)`: optional process-parallel decoding of independent
   trajectories (identical output to serial). Off by default -- measured on
   macOS, worker start-up and data-transfer overhead means serial stays faster

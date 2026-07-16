@@ -110,8 +110,10 @@ class _CSRDistCache:
             finite = np.flatnonzero(np.isfinite(row))
             entry = (cutoff, dict(zip(finite.tolist(), row[finite].tolist())))
             self._cache[si] = entry
-        else:
-            self._cache.move_to_end(si)
+        # Always bump recency, including on a refresh: reassigning an existing
+        # OrderedDict key does NOT move it, so a just-recomputed, actively-used
+        # source could otherwise be evicted next -- ahead of genuinely cold ones.
+        self._cache.move_to_end(si)
         if len(self._cache) > self._maxsize:
             self._cache.popitem(last=False)
         d = entry[1].get(di)
@@ -139,8 +141,11 @@ class HMMMatcher:
         Max candidate edges per point.
     max_route_dist_factor : float
         Bounds the transition shortest-path search. The actual cutoff used at
-        each step is ``max(max_route_dist_factor * step, max_dist * 4)`` --
-        the ``max_dist * 4`` floor keeps slow-moving (small-step) trajectories
+        each step is ``max(max_route_dist_factor * gc_step, max_dist * 4)``,
+        where ``gc_step`` is the straight-line distance from this fix back to
+        the last fix that actually anchored a state (the immediately-previous
+        fix normally, but further back across a candidate-less gap) -- the
+        ``max_dist * 4`` floor keeps slow-moving (small-step) trajectories
         from pruning every transition. Same-edge transitions are always
         allowed. When no predecessor is reachable within the cutoff, the chain
         connects to the best prior state with a saturating penalty (see the
@@ -242,14 +247,17 @@ class HMMMatcher:
         )
         has_cand = [bool(c) for c in cand_list]
 
-        # great-circle metric step between consecutive points (projected dist)
-        step = np.zeros(n)
-        if n > 1:
-            step[1:] = np.hypot(np.diff(px), np.diff(py))
-
         # Viterbi
-        V = [dict() for _ in range(n)]    # state -> best log-prob
-        back = [dict() for _ in range(n)]  # state -> previous edge_id (or None)
+        V = [dict() for _ in range(n)]      # state -> best log-prob
+        back = [dict() for _ in range(n)]   # state -> previous edge_id (or None)
+        snap_t = [dict() for _ in range(n)]  # state -> fractional position (0..1)
+                                              # along that edge, from candidate_edges
+        # anchor[i]: index whose raw GPS position (px, py) is "the" observed
+        # position for whatever state V[i] currently holds. Equal to i for a row
+        # with its own candidates; propagated from anchor[i-1] across a
+        # candidate-less gap, since a carried-forward state's last real fix is
+        # still that earlier row, not the noisy/off-network row(s) in between.
+        anchor = list(range(n))
         for i in range(n):
             if not has_cand[i]:
                 # No candidates: carry the state set forward unchanged so the
@@ -257,24 +265,33 @@ class HMMMatcher:
                 if i > 0:
                     V[i] = dict(V[i - 1])
                     back[i] = {e: e for e in V[i]}
+                    snap_t[i] = dict(snap_t[i - 1])
+                    anchor[i] = anchor[i - 1]
                 continue
 
             if i == 0 or not V[i - 1]:
                 # Start (or restart after a candidate-less prefix): emission only.
-                for eid, dist, _t in cand_list[i]:
+                for eid, dist, t_cur in cand_list[i]:
                     V[i][eid] = self._emission_logp(dist)
                     back[i][eid] = None
+                    snap_t[i][eid] = t_cur
                 continue
 
-            cutoff = max(self.max_route_dist_factor * step[i], self.max_dist * 4)
+            # Straight-line distance from the last row that actually anchored a
+            # state (which may be several rows back, across a gap) to this row --
+            # NOT necessarily the immediately-previous row.
+            j = anchor[i - 1]
+            gc_step = float(np.hypot(px[i] - px[j], py[i] - py[j]))
+            cutoff = max(self.max_route_dist_factor * gc_step, self.max_dist * 4)
             # End node per distinct predecessor, resolved once per step; the
             # bounded Dijkstra behind dcache.lookup is computed at most once
             # per (source node, cutoff regime) and reused across steps.
             prev_end = {peid: self.network.edge_endpoints(peid)[1]
                         for peid in V[i - 1]}
-            for eid, dist, _t in cand_list[i]:
+            for eid, dist, t_cur in cand_list[i]:
                 em = self._emission_logp(dist)
                 u_cur, _ = self.network.edge_endpoints(eid)
+                leadin_cur = t_cur * self.network.edge_length(eid)
                 best_lp, best_prev = -np.inf, None
                 for peid, plp in V[i - 1].items():
                     if peid == eid:
@@ -283,12 +300,20 @@ class HMMMatcher:
                         # this, dense sampling -- many consecutive points on one
                         # long edge -- would need an end-to-start loop distance
                         # and be pruned, shattering the chain.
-                        rd = step[i]
+                        rd = gc_step
                     else:
-                        rd = dcache.lookup(prev_end[peid], u_cur, cutoff)
-                        if rd is None:
+                        node_dist = dcache.lookup(prev_end[peid], u_cur, cutoff)
+                        if node_dist is None:
                             continue  # unreachable within cutoff
-                    delta = abs(step[i] - rd)
+                        # Full on-road distance, matching the three-piece sum
+                        # roadtraffic.speeds._hop_distance uses for the same
+                        # quantity: remaining length of the previous edge past
+                        # its snap, the node-to-node middle, then the current
+                        # edge's length up to its own snap.
+                        remaining_prev = ((1.0 - snap_t[i - 1][peid])
+                                          * self.network.edge_length(peid))
+                        rd = remaining_prev + node_dist + leadin_cur
+                    delta = abs(gc_step - rd)
                     lp = plp + self._transition_logp(delta) + em
                     if lp > best_lp:
                         best_lp, best_prev = lp, peid
@@ -307,6 +332,7 @@ class HMMMatcher:
                     best_prev = pbest
                 V[i][eid] = best_lp
                 back[i][eid] = best_prev
+                snap_t[i][eid] = t_cur
 
         # backtrack from the last step that has any state; fixes without
         # candidates stay -1 (never fabricate a match for them)

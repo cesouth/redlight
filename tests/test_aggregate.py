@@ -157,12 +157,24 @@ def test_classify_hours_degenerate_ties_warns():
 
 def test_assign_speeds_observed_count_excludes_default(straight_net):
     """Regression: edges written with the default used to count as observed."""
-    df = pd.DataFrame(obs(8, 0.0, edge_id=0, n=3))  # only zero speeds
+    df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))  # edge 1 has no observations
     info = rt.assign_speeds(straight_net, df, default_speed_mps=5.0)
-    assert info["n_edges_observed"] == 0
+    assert info["n_edges_observed"] == 1
     assert info["n_edges_total"] == 2
     # default still written so time routing works
-    assert straight_net.edge_data(0)["obs_speed_mps"] == 5.0
+    assert straight_net.edge_data(1)["obs_speed_mps"] == 5.0
+
+
+def test_assign_speeds_zero_speed_is_observed_gridlock(straight_net):
+    """Regression: 0.0 m/s (gridlock) used to be treated as 'unobserved', so
+    a genuinely stopped edge silently fell back to the default speed instead
+    of reporting the real gridlock."""
+    df = pd.DataFrame(obs(8, 0.0, edge_id=0, n=3))
+    info = rt.assign_speeds(straight_net, df, default_speed_mps=5.0)
+    assert info["n_edges_observed"] == 1
+    assert straight_net.edge_data(0)["obs_speed_mps"] == pytest.approx(0.0)
+    assert "travel_time_s" not in straight_net.edge_data(0)  # undefined at 0 m/s
+    assert straight_net.edge_data(1)["obs_speed_mps"] == 5.0  # truly unobserved
 
 
 def test_assign_segment_speeds_regimes(straight_net):
@@ -177,3 +189,16 @@ def test_assign_segment_speeds_regimes(straight_net):
     assert d["obs_speed_mps_overall"] == pytest.approx(10.0)
     assert d["obs_speed_mps"] == d["obs_speed_mps_overall"]
     assert info["coverage"]["peak"] == 1  # only edge 0 observed
+
+
+def test_assign_segment_speeds_zero_speed_is_observed_gridlock(straight_net):
+    """Regression: a regime with only 0.0 m/s observations used to write
+    nothing at all (spd=0.0 is falsy), leaving the edge with no speed data
+    instead of the real gridlock reading."""
+    df = pd.DataFrame(obs(8, 0.0, edge_id=0, n=2) + obs(22, 16.0, edge_id=0, n=2))
+    info = rt.assign_segment_speeds(straight_net, df, peak_hours=[8],
+                                    offpeak_hours=[22])
+    d = straight_net.edge_data(0)
+    assert d["obs_speed_mps_peak"] == pytest.approx(0.0)
+    assert "travel_time_s_peak" not in d  # undefined at 0 m/s
+    assert info["coverage"]["peak"] == 1

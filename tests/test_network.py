@@ -2,7 +2,7 @@ import networkx as nx
 import pytest
 
 import roadtraffic as rt
-from conftest import line_feature, write_geojson
+from conftest import line_feature, write_geojson, write_ogr
 
 
 def test_graph_is_multidigraph(straight_net):
@@ -121,3 +121,70 @@ def test_length_attr_override(tmp_path):
     ])
     net = rt.Network.from_geojson(path, length_attr="seg_len")
     assert net.edge_length(int(net.edge_ids[0])) == 500.0
+
+
+# ------------------------------------------------------------- from_file (pyogrio)
+def test_from_file_gpkg_basic(tmp_path):
+    """A GeoPackage loads to the same graph structure as equivalent GeoJSON."""
+    pytest.importorskip("pyogrio")
+    path = write_ogr(tmp_path / "basic.gpkg", [
+        ([[0, 0], [0.01, 0]], {"highway": "residential"}),
+    ])
+    net = rt.Network.from_file(path)
+    gj_path = write_geojson(tmp_path / "basic.geojson", [
+        line_feature([[0, 0], [0.01, 0]], highway="residential"),
+    ])
+    net_gj = rt.Network.from_geojson(gj_path)
+    assert net.number_of_edges() == net_gj.number_of_edges() == 2
+    assert set(net.graph.nodes()) == set(net_gj.graph.nodes())
+
+
+def test_from_file_shp_basic(tmp_path):
+    """A Shapefile loads correctly too (not just GeoPackage)."""
+    pytest.importorskip("pyogrio")
+    path = write_ogr(tmp_path / "basic.shp", [
+        ([[0, 0], [0.01, 0]], {"highway": "residential"}),
+    ])
+    net = rt.Network.from_file(path)
+    assert net.number_of_edges() == 2  # two-way by default
+    assert net.number_of_nodes() == 2
+
+
+def test_from_file_reprojects_non_wgs84_crs(tmp_path):
+    """Regression risk: from_file's CRS handling is the part most likely to
+    hide a subtle bug in the fiona->pyogrio rewrite (meta['crs'] format)."""
+    pytest.importorskip("pyogrio")
+    from pyproj import CRS, Transformer
+    fwd = Transformer.from_crs(CRS.from_epsg(4326), CRS.from_epsg(32633),
+                               always_xy=True)
+    lon0, lat0 = 15.0, 50.0
+    lon1, lat1 = 15.01, 50.0
+    x0, y0 = fwd.transform(lon0, lat0)
+    x1, y1 = fwd.transform(lon1, lat1)
+    path = write_ogr(tmp_path / "utm.gpkg", [
+        ([[x0, y0], [x1, y1]], {"highway": "residential"}),
+    ], crs="EPSG:32633")
+    net = rt.Network.from_file(path)
+    lons = sorted(n[0] for n in net.graph.nodes())
+    assert lons[0] == pytest.approx(lon0, abs=1e-6)
+    assert lons[1] == pytest.approx(lon1, abs=1e-6)
+
+
+def test_from_file_layer_param(tmp_path):
+    """layer= selects a specific layer of a multi-layer GeoPackage."""
+    pytest.importorskip("pyogrio")
+    path = tmp_path / "multi.gpkg"
+    write_ogr(path, [([[0, 0], [0.01, 0]], {"name": "a"})], layer="layer_a")
+    write_ogr(path, [([[1, 1], [1.01, 1]], {"name": "b"})], layer="layer_b")
+    net_b = rt.Network.from_file(str(path), layer="layer_b")
+    names = {d.get("name") for _u, _v, d in net_b.graph.edges(data=True)}
+    assert names == {"b"}
+
+
+def test_from_file_missing_pyogrio_message(tmp_path, monkeypatch):
+    """Regression-guard: a clear, actionable error, not a bare ImportError
+    from deep inside pyogrio, when the 'shapefile' extra isn't installed."""
+    import sys
+    monkeypatch.setitem(sys.modules, "pyogrio", None)
+    with pytest.raises(ImportError, match="shapefile"):
+        rt.Network.from_file(str(tmp_path / "whatever.gpkg"))

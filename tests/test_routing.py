@@ -40,6 +40,15 @@ def test_invalid_period_raises(straight_net):
                                       period="rush")
 
 
+def test_default_speed_mps_must_be_positive(straight_net):
+    """Regression: default_speed_mps=0 raised a raw ZeroDivisionError, and a
+    negative value was silently accepted and produced negative travel times."""
+    with pytest.raises(ValueError, match="default_speed_mps"):
+        rt.Router(straight_net, default_speed_mps=0.0)
+    with pytest.raises(ValueError, match="default_speed_mps"):
+        rt.Router(straight_net, default_speed_mps=-5.0)
+
+
 def test_default_speed_fallback_counted(straight_net):
     r = rt.Router(straight_net, default_speed_mps=10.0)
     res = r.route((0, 0), (0.01, 0), mode="time")
@@ -93,6 +102,29 @@ def test_cost_mode_receives_parallel_edge_dict(grid_net):
                                     cost_func=cost)
     assert res["n_edges"] == 2
     assert seen["is_dict_of_dicts"]
+
+
+def test_cost_mode_reports_the_edge_it_actually_costed(tmp_path):
+    """Regression: for parallel edges, mode='cost' reported edge_ids/distance
+    picked by lowest travel_time_s, ignoring what cost_func actually costed
+    the path over -- reported metrics didn't match the path Dijkstra chose."""
+    path = write_geojson(tmp_path / "par.json", [
+        line_feature([[0, 0], [0.001, 0]], name="straight"),
+        line_feature([[0, 0], [0.0005, 0.0006], [0.001, 0]], name="detour"),
+    ])
+    net = rt.Network.from_geojson(path)
+    # Make travel-time and length disagree on which parallel edge is
+    # "cheapest": this is what exposes picking-by-time instead of by cost.
+    for _u, _v, data in net.graph.edges(data=True):
+        data["travel_time_s"] = 10.0 if data.get("name") == "detour" else 1000.0
+
+    def cost_by_length(u, v, edges):
+        return min(a["length_m"] for a in edges.values())
+
+    res = rt.Router(net).route((0, 0), (0.001, 0), mode="cost",
+                               cost_func=cost_by_length)
+    assert net.edge_data(res["edge_ids"][0]).get("name") == "straight"
+    assert res["distance_m"] == pytest.approx(111.32, rel=0.01)
 
 
 def test_cost_mode_requires_callable(grid_net):

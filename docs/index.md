@@ -16,13 +16,19 @@ support is an opt-in extra.
 
 ## Features
 
-- **Bring your own data.** Road network as GeoJSON (native) or Shapefile/GPKG
-  (optional extra). GPS points as CSV/TSV or GeoJSON, with auto-detected
-  columns.
-- **No speed column? Two ways to get one.** `derive_speed=True` reconstructs a
-  per-point speed from successive GPS positions; or, for noisy/sparse GPS,
-  match first and call `derive_speeds` to reconstruct speed from on-road
-  displacement after map matching.
+- **Bring your own data — or fetch it.** Road network as GeoJSON (native),
+  Shapefile/GPKG (optional extra), or straight from OpenStreetMap via
+  `Network.from_overpass(bbox)` (stdlib only). GPS points as CSV/TSV or
+  GeoJSON, with auto-detected columns, unit-aware speed parsing
+  (`speed_kph` columns convert as kph), and timezone handling (`tz=`) so
+  peak hours are computed on the local clock.
+- **No speed column? Two ways to get one.** Opt-in `derive_speed=True`
+  reconstructs a per-point speed from successive GPS positions (geodesic
+  distance / time); `save_points` writes the result back out. Or, for
+  noisy/sparse GPS, match first and call `derive_speeds` to reconstruct speed
+  from **on-road displacement** after map matching — more accurate, and
+  robust to the matcher flip-flopping between the two directions of a
+  two-way road.
 - **Units handled for you.** Input speed in mph, kph, or m/s; everything is
   computed internally in m/s and reported in the unit you choose.
 - **Two GPS-to-road matchers, one interface.**
@@ -30,15 +36,25 @@ support is an opt-in extra.
   - `HMMMatcher` — trajectory-aware HMM / Viterbi map matching
     (Newson & Krumm, 2009). No extra dependencies.
 - **Sound speed cleaning.** Hard physical bounds plus robust MAD-based outlier
-  removal.
+  removal — and a trajectory-aware `filter_trajectory_speed` that drops parked
+  *dwells* while keeping slow-but-moving congestion (no upward speed bias).
 - **Temporal aggregation.** Average speed by hour or by an N-hour block, with
   your choice of **mean** (with standard error and 95% CI) or **median**
   (with IQR).
-- **Peak / off-peak detection.** Rank time bins by congestion.
-- **Routing.** Shortest path by time, distance, or a user-supplied cost
-  function, using Dijkstra on a NetworkX graph.
-- **Mapping.** Export a speed-annotated network as GeoJSON, or render a quick
-  static PNG trafficability map (`roadtraffic[mapping]`).
+- **Peak / off-peak detection, your way.** Rank time bins by congestion
+  (peak = slowest), pick contiguous peak/off-peak windows of user-selected
+  width (`n_peak=` / `n_offpeak=`, wrapping midnight), pass explicit hour
+  lists, or let the automatic median split decide — then assign three speeds
+  per segment: overall, peak block, and off-peak block.
+- **Routing.** Shortest path by time (per overall/peak/off-peak regime),
+  distance, or a user-supplied cost function, using Dijkstra on a NetworkX
+  multigraph (parallel roads and OSM one-way semantics — including
+  `oneway=-1` — handled correctly), with actionable errors when no route
+  exists.
+- **Mapping.** Export a speed-annotated network as GeoJSON for QGIS / Kepler /
+  Leaflet / Mapbox, or render a quick static PNG trafficability map
+  (`pip install roadtraffic[mapping]`) — for any of the three time regimes
+  (`period="peak"`).
 
 See [`statistics.md`](statistics.md) for the full statistical
 methodology behind every number this package reports.
@@ -51,7 +67,8 @@ methodology behind every number this package reports.
 # Core (GeoJSON networks, CSV/GeoJSON points)
 pip install roadtraffic
 
-# With Shapefile / GeoPackage network support (pulls fiona / GDAL)
+# With Shapefile / GeoPackage network support (pulls pyogrio / GDAL;
+# needs Python 3.10+)
 pip install roadtraffic[shapefile]
 
 # With static trafficability map rendering (pulls matplotlib)
@@ -61,9 +78,9 @@ pip install roadtraffic[mapping]
 From source:
 
 ```bash
-git clone https://gitlab.com/your-namespace/roadtraffic.git
+git clone https://github.com/cesouth/roadtraffic.git
 cd roadtraffic
-pip install -e .
+pip install -e .[dev]
 ```
 
 ---
@@ -100,7 +117,7 @@ result = router.route((-77.30, 38.68), (-77.27, 38.71), mode="time")
 print(result["travel_time_s"], "seconds over", result["distance_m"], "m")
 ```
 
-More worked examples are in [`examples/`](https://gitlab.com/your-namespace/roadtraffic/-/tree/main/examples).
+More worked examples are in [`examples/`](https://github.com/cesouth/roadtraffic/tree/main/examples).
 
 ---
 

@@ -60,7 +60,7 @@ import numpy as np
 import pandas as pd
 
 from ._geo import GEOD_WGS84
-from .units import SpeedUnit, from_mps, to_mps
+from .units import _SPEED_UNIT_ALIASES, SpeedUnit, from_mps, to_mps
 
 
 @dataclass
@@ -155,11 +155,17 @@ def _autodetect(columns: Sequence[str], candidates: Sequence[str]) -> str | None
 
 
 def _infer_speed_unit(colname: str) -> str | None:
-    """Infer the unit embedded in a speed column name, if any."""
+    """Infer the unit embedded in a speed column name, if any.
+
+    Recognizes every alias :meth:`~roadtraffic.units.SpeedUnit.parse` accepts
+    (e.g. ``kmh``, ``kmph``, ``km/h``), not just the canonical mph/kph/mps
+    tokens -- so an explicit ``speed_unit=`` and an auto-detected column name
+    never silently disagree just because they spelled the same unit differently.
+    """
     low = colname.strip().lower()
-    for u in ("mph", "kph", "mps"):
-        if low == u or low.endswith(f"_{u}") or low.endswith(f"({u})"):
-            return u
+    for alias, canonical in _SPEED_UNIT_ALIASES.items():
+        if low == alias or low.endswith(f"_{alias}") or low.endswith(f"({alias})"):
+            return canonical
     return None
 
 
@@ -175,6 +181,13 @@ def _parse_times(values, timestamp_unit: str | None, tz: str | None) -> pd.Serie
         )
         if tz is not None:
             t = t.dt.tz_convert(tz)
+        else:
+            warnings.warn(
+                "Timestamps are numeric epochs (UTC by definition); hour-of-day "
+                "statistics (peak/off-peak) will use UTC. Pass tz= to convert to "
+                "the study area's local time.",
+                stacklevel=3,
+            )
         return t.dt.tz_localize(None)
 
     try:
@@ -308,19 +321,22 @@ def load_points(
     # speed_col is optional otherwise: position+time-only data is valid input
     # (e.g. for HMMMatcher + roadtraffic.speeds.derive_speeds).
 
-    # resolve the unit of the source speed column
-    inferred = _infer_speed_unit(speed_col) if speed_col is not None else None
-    if speed_unit is None:
-        unit = SpeedUnit.parse(inferred) if inferred else SpeedUnit.MPH
-    else:
-        unit = SpeedUnit.parse(speed_unit)
-        if inferred is not None and SpeedUnit.parse(inferred) is not unit:
-            warnings.warn(
-                f"speed_unit={unit.value!r} contradicts the detected column "
-                f"name {speed_col!r} (which implies {inferred!r}); using the "
-                f"explicit speed_unit={unit.value!r}.",
-                stacklevel=2,
-            )
+    # Resolve the unit of the source speed column. Skipped entirely when
+    # deriving speed from positions: speed_col (if any) is never read in that
+    # mode, so warning about a unit that has no effect would just be noise.
+    if not derive_speed:
+        inferred = _infer_speed_unit(speed_col) if speed_col is not None else None
+        if speed_unit is None:
+            unit = SpeedUnit.parse(inferred) if inferred else SpeedUnit.MPH
+        else:
+            unit = SpeedUnit.parse(speed_unit)
+            if inferred is not None and SpeedUnit.parse(inferred) is not unit:
+                warnings.warn(
+                    f"speed_unit={unit.value!r} contradicts the detected column "
+                    f"name {speed_col!r} (which implies {inferred!r}); using the "
+                    f"explicit speed_unit={unit.value!r}.",
+                    stacklevel=2,
+                )
 
     out = pd.DataFrame()
     out["point_id"] = np.arange(len(df), dtype=np.int64)
