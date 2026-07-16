@@ -446,6 +446,74 @@ implausible detour.
 
 ---
 
+## 11. Network structure & connectivity diagnostics
+
+`roadtraffic.analysis` answers three questions about the road network itself
+(not about observed speeds): which roads are structurally critical, how the
+network's basic shape compares to a straight-line ideal, and whether it's
+actually all one routable piece.
+
+**Edge betweenness centrality** (`edge_betweenness_centrality`) is the
+fraction of all-pairs shortest paths passing through an edge. Weighted by
+`travel_time_s`, it identifies real trafficability chokepoints — roads a
+disproportionate share of *fast* routes are forced through, so losing one
+would force the most detours — rather than roads that merely look important
+topologically. `network.graph` is a `MultiDiGraph` (parallel roads between
+the same node pair are distinct edges); networkx's Dijkstra-based betweenness
+handles this correctly without any extra work — betweenness is attributed
+only to the cheapest parallel edge, exactly the "cheapest parallel edge wins"
+semantics `Router` already uses for routing.
+
+**A missing weight attribute is not "no opinion" — it is silently `1.0`.**
+This is a networkx behavior, not a `roadtraffic` one, and it is easy to trip
+without noticing: if you ask for `weight="travel_time_s"` and an edge has
+never had one written (no observations, and no `default_speed_mps=` fallback
+when you ran `assign_speeds`), networkx does not skip it or raise — it treats
+that edge as if crossing it takes about one second, i.e. essentially free.
+Verified directly: a graph with the attribute missing on an edge produces
+byte-identical betweenness output to the same graph with that edge's
+attribute explicitly set to `1.0`. An "unobserved" edge would then look
+artificially attractive to the shortest-path search and corrupt the whole
+ranking, silently. `edge_betweenness_centrality` guards this: it scans every
+edge for the requested attribute first and raises a `ValueError` naming how
+many edges are missing it, rather than returning a confidently wrong answer.
+There is a further subtlety worth knowing: a genuinely observed 0 m/s
+(gridlock) edge *also* has no `travel_time_s` (§10's mapping export section
+explains why — travel time at 0 m/s is undefined/infinite, not zero), so a
+gridlocked edge trips this same guard even after `default_speed_mps=` has
+been set correctly everywhere else.
+
+**Circuity** (`network_stats`'s `circuity_avg`) is
+`sum(length_m) / sum(geodesic distance between edge endpoints)` over every
+directed edge — 1.0 means every road is perfectly straight; higher means more
+circuitous. This is a ratio of sums, not a mean of per-edge ratios. A mean of
+ratios is fragile: a short edge with a near-zero geodesic denominator can
+blow its own ratio up arbitrarily, and one such edge then dominates an
+average across the whole network. The sum/sum form is immune to this by
+construction, since one edge's contribution to the numerator and denominator
+is bounded by its own (bounded) length either way. Whether directed edges are
+deduplicated by physical road turns out not to matter for this formula
+either: a two-way road's forward and reverse edges have identical length and
+identical geodesic distance (`Geod.inv` is symmetric), so including both
+scales numerator and denominator by the same factor and leaves the ratio
+unchanged — the implementation can iterate every directed edge with no
+per-road bookkeeping.
+
+**Connectivity: strongly vs. weakly connected.** `connectivity_report`
+distinguishes two failure modes that otherwise only surface one failed
+`Router.route()` call at a time: a **one-way trap** (every node is reachable
+if one-way restrictions are ignored, but some aren't respecting them — e.g. a
+neighbourhood exited via only one oneway street) has
+`is_strongly_connected=False` but `is_weakly_connected=True`; a **genuinely
+disconnected** extract (e.g. a bounding-box clip that split the road network
+into unconnected pieces) has `is_weakly_connected=False` too. This mirrors
+the exact diagnosis `Router.route()` already makes internally when a query
+fails to find a path (`nx.has_path(graph.to_undirected(...), src, dst)`,
+§6) — `connectivity_report` exposes that same check proactively, before
+routing, over the whole network rather than one query at a time.
+
+---
+
 ## References
 
 - Newson, P., & Krumm, J. (2009). *Hidden Markov Map Matching Through Noise and

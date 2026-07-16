@@ -55,6 +55,12 @@ support is an opt-in extra.
   Leaflet / Mapbox, or render a quick static PNG trafficability map
   (`pip install roadtraffic[mapping]`) — for any of the three time regimes
   (`period="peak"`).
+- **Network structure diagnostics.** Travel-time-weighted edge betweenness
+  centrality to find chokepoints (not just topologically central roads),
+  basic network stats (circuity, streets-per-node, intersection/dead-end
+  counts, optional area-based densities), and connectivity diagnostics
+  (largest strongly-connected component, one-way-trap vs. genuinely
+  disconnected detection) — `roadtraffic.analysis`.
 
 See [`docs/statistics.md`](docs/statistics.md) for the full statistical
 methodology behind every number this package reports.

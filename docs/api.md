@@ -293,6 +293,54 @@ modes, including `n_peak`/`n_offpeak` windows). Returns the hour blocks used,
 
 ---
 
+## Network analysis
+
+`roadtraffic.analysis` — road-network structure measures scoped to what a
+trafficability/routing tool needs, not general urban-form analysis. All three
+take a `Network` first, matching the rest of the package's free-function
+convention.
+
+### `edge_betweenness_centrality(network, *, weight, normalized=True, k=None, seed=None, write_attr=None) -> dict[int, float]`
+
+Which roads carry a disproportionate share of shortest paths — a real
+trafficability chokepoint, not just a topologically central one.
+
+| Parameter | Meaning |
+|-----------|---------|
+| `weight` | Edge attribute to weight shortest paths by. **Required, no default** — pass `"travel_time_s"` for the chokepoint-by-real-travel-time reading (needs `assign_speeds`/`assign_segment_speeds` to have run on every edge), `"length_m"` for the purely geometric reading (always present, no pipeline needed), `None` for unweighted/topological betweenness, or any other numeric edge attribute you've computed. |
+| `normalized` | If `True` (default), scores are in `[0, 1]`; if `False`, raw path counts. |
+| `k` | Sample `k` source nodes instead of every node, for faster approximate results on large networks (exact computation is `O(VE)` or worse). Must be `>= 1`. |
+| `seed` | Random seed for `k` sampling, for reproducible results. |
+| `write_attr` | If given, also write each edge's score onto the graph under this name, so it flows into `to_geojson(keep_tags=[...])`/`plot_speed_map` for a chokepoint map. Off by default. Raises if it collides with a reserved or pipeline-owned attribute name. |
+
+Raises `ValueError` if `weight` is a string and any edge lacks that
+attribute (networkx would otherwise silently treat a missing weight as
+`1.0`, corrupting the ranking — see [statistics §11](statistics.md)), if
+`k < 1`, or on a `write_attr` collision.
+
+### `network_stats(network, *, area_km2=None) -> dict`
+
+Basic descriptive stats: `n_nodes`, `n_edges`, `n_physical_roads`,
+`n_intersections`/`n_dead_ends` (by physical-road-degree, not raw directed
+degree), `streets_per_node_avg`/`streets_per_node_counts`, `circuity_avg`
+(always computed), plus `intersection_density_km2`/`edge_density_km2` (only
+when `area_km2` is supplied — `Network` has no stored query-boundary polygon
+to compute an area from automatically). See
+[statistics §11](statistics.md) for the exact formulas and why.
+
+### `connectivity_report(network) -> dict`
+
+Diagnoses whether the network is one routable piece before you ever call
+`Router.route`. Returns strongly-connected-component sizes and the actual
+largest-component node/edge partition (not just a headline number), plus a
+weakly- vs. strongly-connected distinction that separates a one-way trap
+(`is_strongly_connected=False`, `is_weakly_connected=True`) from a genuinely
+disconnected extract (`is_weakly_connected=False`) — the same diagnosis
+`Router.route` already makes internally on a failed query, exposed here
+proactively.
+
+---
+
 ## Mapping / visualization
 
 Requires `network.graph` edges to already carry `obs_speed_mps` (written by

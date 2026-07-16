@@ -26,6 +26,13 @@ assign_segment_speeds : write overall / peak / off-peak speeds onto network edge
 Router                : shortest path by time (per regime), distance, or cost.
 to_geojson            : export a speed-annotated network as a GeoJSON map.
 plot_speed_map        : render a quick static PNG map coloured by speed.
+edge_betweenness_centrality : which roads carry a disproportionate share of
+                        shortest paths -- trafficability chokepoints, not
+                        just topologically central roads.
+network_stats         : circuity, streets-per-node, intersection/dead-end
+                        counts, optional area-based densities.
+connectivity_report    : largest strongly-connected-component diagnostics and
+                        a one-way-trap vs. disconnected-extract distinction.
 """
 
 from .aggregate import (
@@ -35,6 +42,7 @@ from .aggregate import (
     classify_hours,
     peak_analysis,
 )
+from .analysis import connectivity_report, edge_betweenness_centrality, network_stats
 from .cleaning import filter_by_speed, filter_trajectory_speed
 from .mapping import plot_speed_map, to_geojson
 from .matching import HMMMatcher, NearestMatcher
@@ -67,5 +75,8 @@ __all__ = [
     "Router",
     "to_geojson",
     "plot_speed_map",
+    "edge_betweenness_centrality",
+    "network_stats",
+    "connectivity_report",
     "__version__",
 ]

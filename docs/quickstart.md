@@ -220,6 +220,36 @@ rt.plot_speed_map(net, "speeds.png", speed_unit="mph")
 
 ---
 
+## 7. Network analysis
+
+`roadtraffic.analysis` answers structural questions about the network
+itself — independent of the speed pipeline above, except where noted:
+
+```python
+# Which roads are chokepoints? Needs assign_speeds/assign_segment_speeds to
+# have run first (every edge needs a travel_time_s); write it onto the graph
+# so it shows up in to_geojson()'s keep_tags / plot_speed_map for free.
+bc = rt.edge_betweenness_centrality(net, weight="travel_time_s",
+                                    write_attr="betweenness")
+
+# Basic descriptive stats -- no speed pipeline needed.
+stats = rt.network_stats(net)
+print(stats["circuity_avg"], stats["n_intersections"], stats["streets_per_node_avg"])
+
+# Is the network one routable piece? Also no speed pipeline needed -- run
+# this before routing on an unfamiliar or clipped network.
+report = rt.connectivity_report(net)
+if not report["is_strongly_connected"]:
+    print("stranded edges:", report["stranded_edge_ids"])
+```
+
+See [statistics §11](statistics.md) for what each measure means and the
+correctness guards behind them (in particular, `edge_betweenness_centrality`
+requires an explicit `weight=` — there's no default, since silently getting
+it wrong is worse than an error here).
+
+---
+
 ## Next steps
 
 - Worked, runnable scripts: [`examples/`](../examples).

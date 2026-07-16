@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`roadtraffic.analysis`**: a new module of road-network structure
+  measures scoped to what a trafficability/speed-routing tool actually
+  needs (not general urban-form analysis):
+  - **`edge_betweenness_centrality`** -- travel-time-weighted (or any other
+    edge attribute) betweenness centrality, identifying the roads carrying
+    a disproportionate share of shortest paths ("chokepoints"), not just
+    topologically central ones. Guards a networkx landmine: a missing
+    weight attribute is silently treated as `1.0` by networkx itself
+    (verified against an explicit `1.0` weight -- identical output), which
+    would make unobserved edges look artificially cheap and corrupt the
+    ranking; this now raises a clear `ValueError` instead of computing a
+    silently wrong answer. Optional `write_attr=` writes scores onto the
+    graph so they flow into `to_geojson`/`plot_speed_map` for a chokepoint
+    map.
+  - **`network_stats`** -- circuity, streets-per-node, and
+    intersection/dead-end counts, always available; intersection/edge
+    density additionally when an `area_km2` is supplied (there's no
+    query-boundary polygon retained by `Network` to compute one from
+    automatically, unlike `osmnx`).
+  - **`connectivity_report`** -- largest strongly-connected-component size
+    and fraction, plus the actual node/edge partition (so a caller can
+    isolate the routable core, not just read a number), and a
+    weakly-vs-strongly-connected distinction that separates a genuinely
+    disconnected extract from a network that's merely a "one-way trap" --
+    the same diagnosis `Router.route()` already makes internally on a
+    failed query, exposed proactively.
+
 ## [0.3.0] - 2026-07-15
 
 This release follows a second full-package review (12 correctness defects, all
