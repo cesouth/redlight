@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Day-of-week support across temporal aggregation.** `aggregate_speeds`,
+  `classify_hours`, `assign_speeds`, and `assign_segment_speeds` all take a new
+  optional `days=` argument to restrict analysis to particular weekdays before
+  binning -- the fix for hour-of-day bins otherwise silently pooling, say,
+  Tuesday 09:00 with Saturday 09:00. Accepts a preset (`"weekday"` = Mon-Fri,
+  `"weekend"` = Sat-Sun, `"all"`), a day name or number (`"Mon"`/`0` ...
+  `"Sun"`/`6`), or any iterable of those; `days=None` (the default) preserves
+  the previous every-day behaviour exactly, so this is fully back-compatible.
+  Weekdays are read on the stored **local clock** (load with `tz=`).
+- **`day_type_report`** -- a ready-made weekday-vs-weekend (or any custom
+  day-grouping) comparison built on `days=`. For each group it reports the
+  network-wide overall speed, the full per-hour/per-block profile, and the
+  peak/off-peak blocks, then lines the groups up block-by-block into a single
+  `comparison` DataFrame carrying the per-block `delta_speed`/`delta_pct` -- so
+  the change between weekday and weekend traffic is one printable/plottable
+  table. A day-type with no observations (e.g. a dataset that never sampled a
+  weekend) is reported honestly with `n=0`/NaN and a warning, not an error.
 - **`roadtraffic.analysis`**: a new module of road-network structure
   measures scoped to what a trafficability/speed-routing tool actually
   needs (not general urban-form analysis):

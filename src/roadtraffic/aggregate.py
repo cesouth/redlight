@@ -57,6 +57,84 @@ def _drop_unmatched(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Day-of-week filtering. Weekday numbering follows pandas' ``dt.dayofweek``:
+# Monday == 0 ... Sunday == 6. A resolved selector is a ``frozenset[int]`` of
+# those numbers, or ``None`` meaning "no filter -- every day" (so the whole
+# feature is opt-in and back-compatible: ``days=None`` changes nothing).
+_DAY_PRESETS: dict[str, frozenset | None] = {
+    "all": None,
+    "weekday": frozenset({0, 1, 2, 3, 4}),
+    "weekdays": frozenset({0, 1, 2, 3, 4}),
+    "weekend": frozenset({5, 6}),
+    "weekends": frozenset({5, 6}),
+}
+# Every day-name spelling accepted, mapped to its ``dt.dayofweek`` number.
+_DAY_NAMES: dict[str, int] = {
+    "mon": 0, "monday": 0,
+    "tue": 1, "tues": 1, "tuesday": 1,
+    "wed": 2, "weds": 2, "wednesday": 2,
+    "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
+    "fri": 4, "friday": 4,
+    "sat": 5, "saturday": 5,
+    "sun": 6, "sunday": 6,
+}
+
+
+def _day_tokens(token) -> frozenset | None:
+    """Resolve one day token to a set of weekday ints, or ``None`` for 'all'.
+
+    A token is a preset (``"weekday"``/``"weekend"``/``"all"``), a day name
+    (``"Mon"``/``"Monday"``/...), or a weekday number 0-6 (Mon=0), in any case
+    and with surrounding whitespace ignored.
+    """
+    k = str(token).strip().lower()
+    if k in _DAY_PRESETS:
+        return _DAY_PRESETS[k]           # None for 'all', else a frozenset
+    if k in _DAY_NAMES:
+        return frozenset({_DAY_NAMES[k]})
+    try:
+        di = int(k)
+    except ValueError:
+        raise ValueError(
+            f"Unrecognised day {token!r}. Use a weekday number 0-6 (Mon=0), a "
+            "day name ('Mon'/'Monday'), or a preset "
+            "('weekday'/'weekend'/'all')."
+        ) from None
+    if not 0 <= di <= 6:
+        raise ValueError(f"day {di} out of range; use 0=Mon .. 6=Sun.")
+    return frozenset({di})
+
+
+def _resolve_days(days) -> frozenset | None:
+    """Normalise a ``days=`` argument to a ``frozenset[int]`` or ``None``.
+
+    ``None`` (the default everywhere) means no day filter. A bare string/int is
+    one token; any other iterable is a union of tokens. If any token is
+    ``"all"`` the result is ``None`` (no filter), since including every day is
+    the same as not filtering. See :func:`_day_tokens` for the token grammar.
+    """
+    if days is None:
+        return None
+    tokens = [days] if isinstance(days, (str, int)) else list(days)
+    result: set[int] = set()
+    for tok in tokens:
+        got = _day_tokens(tok)
+        if got is None:                  # 'all' short-circuits to "no filter"
+            return None
+        result |= set(got)
+    if not result:
+        raise ValueError("days= resolved to no days; pass at least one day.")
+    return frozenset(result)
+
+
+def _filter_days(df: pd.DataFrame, days: frozenset | None) -> pd.DataFrame:
+    """Keep only rows whose ``time`` falls on a weekday in ``days`` (or all)."""
+    if days is None:
+        return df
+    dow = pd.to_datetime(df["time"]).dt.dayofweek.to_numpy()
+    return df[np.isin(dow, list(days))]
+
+
 def aggregate_speeds(
     matched: pd.DataFrame,
     *,
@@ -66,6 +144,7 @@ def aggregate_speeds(
     by_edge: bool = False,
     min_samples: int = 1,
     dedup_intervals: bool = True,
+    days=None,
 ) -> pd.DataFrame:
     """Aggregate speeds into time bins.
 
@@ -93,6 +172,17 @@ def aggregate_speeds(
         drop duplicate rows of the same interval first, so an interval that
         traversed many edges counts once. Default True. Ignored for
         ``by_edge=True``, where the per-edge duplication is the point.
+    days : optional
+        Restrict to observations falling on particular days of the week before
+        binning -- the way to separate weekday from weekend traffic (the
+        hour-of-day bins otherwise pool, say, Tuesday 09:00 with Saturday
+        09:00). Accepts a preset (``"weekday"`` = Mon-Fri, ``"weekend"`` =
+        Sat-Sun, ``"all"``), a day name or number (``"Mon"``/``0`` ...
+        ``"Sun"``/``6``), or an iterable of those (e.g. ``[0, 1, 2]`` or
+        ``["Sat", "Sun"]``). Default ``None`` = every day (no filter). The
+        filter uses the stored **local-clock** weekday, so load points with
+        ``tz=`` if the study area isn't already local. See
+        :func:`day_type_report` for a ready-made weekday-vs-weekend comparison.
 
     Returns
     -------
@@ -110,9 +200,11 @@ def aggregate_speeds(
             stacklevel=2,
         )
 
+    day_set = _resolve_days(days)
     _require_speed_mps(matched, "aggregate_speeds")
     df = _drop_unmatched(matched)
     df = df[~df["speed_mps"].isna()]
+    df = _filter_days(df, day_set)
     if not by_edge and dedup_intervals and "interval_id" in df.columns:
         df = df.drop_duplicates(subset="interval_id")
     df = df.copy()
@@ -287,8 +379,15 @@ def classify_hours(
     n_peak: int | None = None,
     n_offpeak: int | None = None,
     min_samples: int = 1,
+    days=None,
 ) -> dict:
     """Split the 24 hours of the day into a peak and an off-peak block.
+
+    ``days`` restricts which weekdays contribute (e.g. ``"weekday"`` /
+    ``"weekend"`` / ``[0, 1, 2]``) so peak windows can be classified separately
+    for weekday and weekend traffic; see :func:`aggregate_speeds` for the
+    accepted forms. It has no effect in explicit-override mode (the hour lists
+    are taken as given). Default ``None`` = every day.
 
     Three modes, in order of precedence:
 
@@ -348,12 +447,14 @@ def classify_hours(
 
     agg = aggregate_speeds(
         matched, block_hours=1, statistic=statistic, output_unit="mps",
-        by_edge=False, min_samples=min_samples,
+        by_edge=False, min_samples=min_samples, days=days,
     )
     if len(agg) == 0:
         raise ValueError(
             "classify_hours: no observations to classify (every hour bin was "
-            "empty or suppressed by min_samples)."
+            "empty or suppressed by min_samples"
+            + (", or the days= filter matched no rows)." if days is not None
+               else ").")
         )
     col = "median_speed" if statistic == "median" else "mean_speed"
     hours = agg["block_start_hour"].to_numpy()
@@ -429,6 +530,7 @@ def assign_segment_speeds(
     n_offpeak: int | None = None,
     default_speed_mps: float | None = None,
     min_samples: int = 1,
+    days=None,
 ) -> dict:
     """Write three representative speeds per edge: overall, peak, off-peak.
 
@@ -462,23 +564,34 @@ def assign_segment_speeds(
         Fallback speed for edges with no observations in a given regime.
     min_samples : int
         Passed to auto hour classification.
+    days : optional
+        Restrict to particular weekdays before both classifying hours and
+        pooling per-edge speeds -- e.g. ``"weekday"`` / ``"weekend"`` /
+        ``[0, 1, 2]``. Build one annotated network per day-type to compare
+        weekday and weekend congestion on the same segments (:func:`to_geojson`
+        / :func:`~roadtraffic.mapping.plot_speed_map`). See
+        :func:`aggregate_speeds` for the accepted forms; default ``None`` =
+        every day. ``day_type_report`` wraps this comparison up for you.
 
     Returns
     -------
     dict
         ``peak_hours``, ``offpeak_hours``, ``threshold_speed_mps``, ``source``,
-        ``n_edges_total`` and ``coverage`` (observed-edge counts per regime).
+        ``days`` (the resolved weekday set, or None), ``n_edges_total`` and
+        ``coverage`` (observed-edge counts per regime).
     """
     cls = classify_hours(
         matched, statistic=statistic, peak_hours=peak_hours,
         offpeak_hours=offpeak_hours, n_peak=n_peak, n_offpeak=n_offpeak,
-        min_samples=min_samples,
+        min_samples=min_samples, days=days,
     )
     peak_set = set(cls["peak_hours"])
     off_set = set(cls["offpeak_hours"])
 
+    day_set = _resolve_days(days)
     df = _drop_unmatched(matched)
     df = df[~df["speed_mps"].isna()]
+    df = _filter_days(df, day_set)
     hod = pd.to_datetime(df["time"]).dt.hour.to_numpy()
 
     regimes = {
@@ -537,6 +650,7 @@ def assign_segment_speeds(
         "offpeak_hours": cls["offpeak_hours"],
         "threshold_speed_mps": cls["threshold_speed_mps"],
         "source": cls["source"],
+        "days": sorted(day_set) if day_set is not None else None,
         "n_edges_total": network.graph.number_of_edges(),
         "coverage": coverage,
     }
@@ -550,6 +664,7 @@ def assign_speeds(
     default_speed_mps: float | None = None,
     block_hours: int = 24,
     target_hour: int | None = None,
+    days=None,
 ) -> dict:
     """Compute a representative speed per edge and write it onto the graph.
 
@@ -571,6 +686,12 @@ def assign_speeds(
         used, enabling time-of-day routing.
     default_speed_mps : float, optional
         Fallback speed for unobserved edges.
+    days : optional
+        Restrict to particular weekdays before computing per-edge speeds -- e.g.
+        ``"weekday"`` / ``"weekend"`` / ``[0, 1, 2]`` -- so a routing network can
+        be built from weekday-only (or weekend-only) travel times. Combines with
+        ``target_hour``. See :func:`aggregate_speeds` for the accepted forms;
+        default ``None`` = every day.
 
     Returns
     -------
@@ -582,6 +703,7 @@ def assign_speeds(
     _require_speed_mps(matched, "assign_speeds")
     df = _drop_unmatched(matched)
     df = df[~df["speed_mps"].isna()]
+    df = _filter_days(df, _resolve_days(days))
     if target_hour is not None:
         t = pd.to_datetime(df["time"])
         bs = (target_hour // block_hours) * block_hours
@@ -615,4 +737,180 @@ def assign_speeds(
     return {
         "n_edges_observed": observed,
         "n_edges_total": network.graph.number_of_edges(),
+    }
+
+
+def day_type_report(
+    matched: pd.DataFrame,
+    *,
+    statistic: str = "median",
+    output_unit="mph",
+    block_hours: int = 1,
+    groups: dict | None = None,
+    n_peak: int = 1,
+    n_offpeak: int = 1,
+    min_samples: int = 1,
+) -> dict:
+    """Compare traffic across day-types -- weekday vs weekend by default.
+
+    A ready-made summary of how speeds differ between groups of weekdays, built
+    on the same ``days=`` filter the rest of this module now accepts. For each
+    group it reports the network-wide overall speed, the full per-hour (or
+    per-block) profile, and the peak/off-peak blocks; then it lines the groups
+    up block-by-block so the weekday-vs-weekend **difference** is a single table
+    you can print or export.
+
+    Parameters
+    ----------
+    matched : DataFrame
+        Speed observations with ``time`` and ``speed_mps`` (a matcher output, or
+        ``derive_speeds``' ``edge_observations``). Rows with ``edge_id == -1``
+        are excluded and, when an ``interval_id`` column is present, network-wide
+        counts deduplicate on it -- exactly as :func:`aggregate_speeds` does.
+    statistic : {"median", "mean"}
+        Summary statistic for every reported speed. Median (default) is the
+        robust choice for skewed congested-flow speeds.
+    output_unit : str or SpeedUnit
+        Unit for every speed in the result.
+    block_hours : int
+        Time-bin width for the per-hour profile and peak detection (see
+        :func:`aggregate_speeds`). 1 (default) = hour-of-day.
+    groups : dict, optional
+        ``{label: day-selector}`` mapping, where each selector is anything
+        :func:`aggregate_speeds`' ``days=`` accepts (a preset, day name/number,
+        or iterable). Default
+        ``{"weekday": "weekday", "weekend": "weekend"}``. Provide your own to
+        compare arbitrary day groupings, e.g.
+        ``{"Mon-Thu": [0, 1, 2, 3], "Fri": "fri"}``.
+    n_peak, n_offpeak : int
+        How many peak (slowest) / off-peak (fastest) blocks to report per group.
+    min_samples : int
+        Bins with fewer observations than this are dropped before ranking.
+
+    Returns
+    -------
+    dict
+        ``statistic``, ``unit``, ``block_hours`` : echoes of the inputs.
+        ``groups`` : dict of ``label -> {days, n, overall_speed, hourly,
+            peak, offpeak}``. ``days`` is the resolved weekday set (or None for
+            all); ``n`` is the number of independent measurements; ``hourly`` is
+            the full :func:`aggregate_speeds` frame; ``peak``/``offpeak`` are
+            lists of ``{block_label, speed, n}`` (``None`` if the group had no
+            data).
+        ``overall`` : dict of ``{label}_speed`` per group, plus -- when there
+            are exactly two groups -- ``delta_speed`` and ``delta_pct`` (the
+            second group minus the first: with the default groups that is
+            *weekend minus weekday*, so a positive number means weekends run
+            faster / less congested).
+        ``comparison`` : a tidy DataFrame, one row per time block, with a
+            ``{label}_speed`` column per group and (for two groups)
+            ``delta_speed`` / ``delta_pct``. Print it to read the weekday-vs-
+            weekend change at a glance, or feed it straight to a plot.
+
+    Notes
+    -----
+    A day-type with no observations (e.g. a dataset that never sampled a
+    weekend) is reported honestly with ``n=0`` and NaN speeds, and a warning --
+    not an error. Weekdays are taken on the stored **local clock**, so load
+    points with ``tz=`` if the study area isn't already in local time.
+    """
+    if statistic not in {"mean", "median"}:
+        raise ValueError("statistic must be 'mean' or 'median'.")
+    _require_speed_mps(matched, "day_type_report")
+    unit = SpeedUnit.parse(output_unit)
+    if groups is None:
+        groups = {"weekday": "weekday", "weekend": "weekend"}
+    if not groups:
+        raise ValueError("groups must contain at least one day-type.")
+
+    speed_col = "median_speed" if statistic == "median" else "mean_speed"
+    agg_fn = np.median if statistic == "median" else np.mean
+
+    results: dict = {}
+    empties: list = []
+    for label, selector in groups.items():
+        day_set = _resolve_days(selector)
+        # network-wide, interval-deduplicated frame for the overall speed and n
+        frame = _drop_unmatched(matched)
+        frame = frame[~frame["speed_mps"].isna()]
+        if "interval_id" in frame.columns:
+            frame = frame.drop_duplicates(subset="interval_id")
+        frame = _filter_days(frame, day_set)
+        n = int(len(frame))
+        overall = (float(from_mps(float(agg_fn(frame["speed_mps"].to_numpy())), unit))
+                   if n else float("nan"))
+
+        hourly = aggregate_speeds(
+            matched, block_hours=block_hours, statistic=statistic,
+            output_unit=unit, by_edge=False, min_samples=min_samples,
+            days=selector,
+        )
+        peak = offpeak = None
+        if len(hourly):
+            pk = peak_analysis(hourly, statistic=statistic,
+                               n_peak=n_peak, n_offpeak=n_offpeak)
+            peak = [{"block_label": r["block_label"], "speed": r[speed_col],
+                     "n": r["n"]} for r in pk["peak"]]
+            offpeak = [{"block_label": r["block_label"], "speed": r[speed_col],
+                        "n": r["n"]} for r in pk["off_peak"]]
+        if n == 0:
+            empties.append(label)
+        results[label] = {
+            "days": sorted(day_set) if day_set is not None else None,
+            "n": n,
+            "overall_speed": overall,
+            "hourly": hourly,
+            "peak": peak,
+            "offpeak": offpeak,
+        }
+
+    # block-by-block comparison table across every group
+    labels = list(groups)
+    comp = None
+    for label in labels:
+        col = f"{label}_speed"
+        a = results[label]["hourly"]
+        if len(a):
+            piece = a[["block_start_hour", "block_label", speed_col]].rename(
+                columns={speed_col: col})
+        else:
+            piece = pd.DataFrame({
+                "block_start_hour": pd.Series([], dtype="int64"),
+                "block_label": pd.Series([], dtype="object"),
+                col: pd.Series([], dtype="float64"),
+            })
+        comp = piece if comp is None else comp.merge(
+            piece, on=["block_start_hour", "block_label"], how="outer")
+    if len(comp):
+        comp = comp.sort_values("block_start_hour").reset_index(drop=True)
+
+    overall_summary = {f"{label}_speed": results[label]["overall_speed"]
+                       for label in labels}
+    if len(labels) == 2:
+        g1, g2 = labels
+        # second group minus first (weekend - weekday, with the defaults):
+        # positive => the second day-type is faster / less congested.
+        comp["delta_speed"] = comp[f"{g2}_speed"] - comp[f"{g1}_speed"]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            comp["delta_pct"] = 100.0 * comp["delta_speed"] / comp[f"{g1}_speed"]
+        base = overall_summary[f"{g1}_speed"]
+        d = overall_summary[f"{g2}_speed"] - base
+        overall_summary["delta_speed"] = d
+        overall_summary["delta_pct"] = (100.0 * d / base) if base else float("nan")
+
+    if empties:
+        warnings.warn(
+            f"day_type_report: day-type(s) {empties} had no observations; their "
+            "speeds are NaN. Check the data spans those days (and that points "
+            "were loaded with the right tz= so weekdays are on the local clock).",
+            stacklevel=2,
+        )
+
+    return {
+        "statistic": statistic,
+        "unit": unit.value,
+        "block_hours": block_hours,
+        "groups": results,
+        "overall": overall_summary,
+        "comparison": comp,
     }

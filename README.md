@@ -40,7 +40,11 @@ support is an opt-in extra.
   *dwells* while keeping slow-but-moving congestion (no upward speed bias).
 - **Temporal aggregation.** Average speed by hour or by an N-hour block, with
   your choice of **mean** (with standard error and 95% CI) or **median**
-  (with IQR).
+  (with IQR). An optional `days=` filter (`"weekday"`, `"weekend"`, day
+  names/numbers, or a custom list) keeps weekday and weekend traffic apart
+  instead of pooling them into the same hour-of-day bin — and
+  `day_type_report` turns that into a ready-made weekday-vs-weekend comparison
+  (overall/hourly/peak speeds plus the per-block delta).
 - **Peak / off-peak detection, your way.** Rank time bins by congestion
   (peak = slowest), pick contiguous peak/off-peak windows of user-selected
   width (`n_peak=` / `n_offpeak=`, wrapping midnight), pass explicit hour

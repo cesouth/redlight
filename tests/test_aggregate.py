@@ -191,6 +191,123 @@ def test_assign_segment_speeds_regimes(straight_net):
     assert info["coverage"]["peak"] == 1  # only edge 0 observed
 
 
+# --------------------------------------------------------------- day-of-week
+
+# June 2026: the 1st is a Monday, so 2026-06-01 is a weekday (dow 0) and
+# 2026-06-06 / 2026-06-07 are Saturday / Sunday (dow 5 / 6).
+WEEKDAY = "2026-06-01"   # Monday
+SATURDAY = "2026-06-06"
+SUNDAY = "2026-06-07"
+
+
+def obs_on(date, hour, speed_mps, *, edge_id=0, n=1, minute=15):
+    rows = []
+    for k in range(n):
+        rows.append({"edge_id": edge_id, "speed_mps": speed_mps,
+                     "time": pd.Timestamp(f"{date} {hour:02d}:{minute:02d}:{k:02d}")})
+    return rows
+
+
+def day_profile_on(date, *, slow_hours=(7, 8), fast_hours=(22, 23), n_per_hour=4,
+                   slow=4.0, base=10.0, fast=16.0, edge_id=0):
+    rows = []
+    for h in range(24):
+        sp = slow if h in slow_hours else (fast if h in fast_hours else base)
+        rows += obs_on(date, h, sp, n=n_per_hour, edge_id=edge_id)
+    return rows
+
+
+def test_days_filter_selects_weekday_vs_weekend():
+    df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0) + obs_on(SATURDAY, 8, 20.0))
+    wd = rt.aggregate_speeds(df, days="weekday", output_unit="mps")
+    we = rt.aggregate_speeds(df, days="weekend", output_unit="mps")
+    both = rt.aggregate_speeds(df, output_unit="mps")  # days=None default
+    assert wd.iloc[0]["mean_speed"] == pytest.approx(5.0) and wd.iloc[0]["n"] == 1
+    assert we.iloc[0]["mean_speed"] == pytest.approx(20.0) and we.iloc[0]["n"] == 1
+    assert both.iloc[0]["n"] == 2  # unfiltered pools the two days
+
+
+def test_days_presets_names_numbers_agree():
+    df = pd.DataFrame(obs_on(SATURDAY, 8, 20.0) + obs_on(SUNDAY, 8, 22.0)
+                      + obs_on(WEEKDAY, 8, 5.0))
+    by_preset = rt.aggregate_speeds(df, days="weekend", output_unit="mps").iloc[0]
+    by_names = rt.aggregate_speeds(df, days=["sat", "Sunday"], output_unit="mps").iloc[0]
+    by_nums = rt.aggregate_speeds(df, days=[5, 6], output_unit="mps").iloc[0]
+    assert by_preset["n"] == by_names["n"] == by_nums["n"] == 2
+    assert by_preset["mean_speed"] == pytest.approx(by_nums["mean_speed"])
+
+
+def test_days_all_is_noop():
+    df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0) + obs_on(SATURDAY, 8, 20.0))
+    a = rt.aggregate_speeds(df, days="all", output_unit="mps").iloc[0]
+    b = rt.aggregate_speeds(df, output_unit="mps").iloc[0]
+    assert a["n"] == b["n"] == 2
+
+
+def test_days_invalid_raises():
+    df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0))
+    with pytest.raises(ValueError, match="Unrecognised day"):
+        rt.aggregate_speeds(df, days="funday")
+    with pytest.raises(ValueError, match="out of range"):
+        rt.aggregate_speeds(df, days=[7])
+
+
+def test_day_type_report_weekday_vs_weekend():
+    weekday = day_profile_on(WEEKDAY)                       # slow 7-8, fast 22-23
+    weekend = day_profile_on(SATURDAY, slow=14.0, base=18.0, fast=22.0)
+    rep = rt.day_type_report(pd.DataFrame(weekday + weekend),
+                             statistic="median", output_unit="mps")
+    g = rep["groups"]
+    assert g["weekday"]["n"] == 96 and g["weekend"]["n"] == 96
+    assert g["weekday"]["days"] == [0, 1, 2, 3, 4]
+    assert g["weekend"]["days"] == [5, 6]
+    assert g["weekday"]["overall_speed"] == pytest.approx(10.0)
+    assert g["weekend"]["overall_speed"] == pytest.approx(18.0)
+    # weekend is less congested overall -> positive delta (weekend - weekday)
+    assert rep["overall"]["delta_speed"] == pytest.approx(8.0)
+    # peak = slowest block, recovered independently per day-type
+    assert g["weekday"]["peak"][0]["speed"] == pytest.approx(4.0)
+    assert g["weekend"]["peak"][0]["speed"] == pytest.approx(14.0)
+    comp = rep["comparison"]
+    assert len(comp) == 24
+    assert {"weekday_speed", "weekend_speed", "delta_speed", "delta_pct"} <= set(comp.columns)
+    # the 08:00 block: weekday 4, weekend 14 -> delta 10
+    row8 = comp[comp["block_start_hour"] == 8].iloc[0]
+    assert row8["delta_speed"] == pytest.approx(10.0)
+
+
+def test_day_type_report_empty_group_is_graceful():
+    """A dataset with no weekend fixes reports n=0/NaN and warns, not raises."""
+    weekday = day_profile_on(WEEKDAY)
+    with pytest.warns(UserWarning, match="no observations"):
+        rep = rt.day_type_report(pd.DataFrame(weekday), output_unit="mps")
+    assert rep["groups"]["weekend"]["n"] == 0
+    assert np.isnan(rep["groups"]["weekend"]["overall_speed"])
+    assert rep["groups"]["weekend"]["peak"] is None
+    assert rep["comparison"]["weekend_speed"].isna().all()
+
+
+def test_day_type_report_custom_groups():
+    df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0, n=2)        # Monday
+                      + obs_on("2026-06-05", 8, 9.0, n=2))  # Friday
+    rep = rt.day_type_report(df, groups={"Mon": "mon", "Fri": [4]},
+                             output_unit="mps")
+    assert rep["groups"]["Mon"]["overall_speed"] == pytest.approx(5.0)
+    assert rep["groups"]["Fri"]["overall_speed"] == pytest.approx(9.0)
+    assert "delta_speed" in rep["comparison"].columns
+
+
+def test_assign_segment_speeds_days_filter(straight_net):
+    """days= restricts which weekdays feed per-edge speeds."""
+    df = pd.DataFrame(obs_on(WEEKDAY, 8, 4.0, edge_id=0, n=3)
+                      + obs_on(SATURDAY, 8, 16.0, edge_id=0, n=3))
+    info = rt.assign_segment_speeds(straight_net, df, peak_hours=[8],
+                                    offpeak_hours=[20], days="weekday",
+                                    default_speed_mps=10.0)
+    assert info["days"] == [0, 1, 2, 3, 4]
+    assert straight_net.edge_data(0)["obs_speed_mps_peak"] == pytest.approx(4.0)
+
+
 def test_assign_segment_speeds_zero_speed_is_observed_gridlock(straight_net):
     """Regression: a regime with only 0.0 m/s observations used to write
     nothing at all (spd=0.0 is falsy), leaving the edge with no speed data

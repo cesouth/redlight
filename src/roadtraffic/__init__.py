@@ -18,9 +18,12 @@ derive_speeds         : reconstruct speed from on-road displacement after matchi
                         (more accurate than ``load_points(derive_speed=True)``).
 filter_by_speed       : drop observations outside a plausible speed band.
 filter_trajectory_speed : dwell-aware cleaning that keeps slow-but-moving traffic.
-aggregate_speeds      : average speed by hour or by N-hour block, mean or median.
+aggregate_speeds      : average speed by hour or by N-hour block, mean or median
+                        (optional ``days=`` filter for weekday/weekend splits).
 peak_analysis         : identify peak / off-peak periods.
 classify_hours        : split the day into peak vs off-peak hour blocks.
+day_type_report       : compare traffic across day-types (weekday vs weekend by
+                        default) -- overall/hourly/peak speeds and their delta.
 assign_speeds         : write a single aggregated speed onto network edges.
 assign_segment_speeds : write overall / peak / off-peak speeds onto network edges.
 Router                : shortest path by time (per regime), distance, or cost.
@@ -40,6 +43,7 @@ from .aggregate import (
     assign_segment_speeds,
     assign_speeds,
     classify_hours,
+    day_type_report,
     peak_analysis,
 )
 from .analysis import connectivity_report, edge_betweenness_centrality, network_stats
@@ -72,6 +76,7 @@ __all__ = [
     "assign_speeds",
     "classify_hours",
     "assign_segment_speeds",
+    "day_type_report",
     "Router",
     "to_geojson",
     "plot_speed_map",
