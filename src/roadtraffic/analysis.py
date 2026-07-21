@@ -27,6 +27,8 @@ free functions over graph methods (see :mod:`roadtraffic.aggregate`,
 """
 from __future__ import annotations
 
+import math
+
 import networkx as nx
 
 from ._geo import GEOD_WGS84
@@ -44,8 +46,27 @@ _SPEED_TIME_ATTRS = frozenset({
 })
 
 
+def _invalid_weight(value) -> bool:
+    """True if ``value`` isn't a usable numeric edge weight.
+
+    Covers both a fully-absent attribute and one present but explicitly
+    ``None`` -- the latter is a real, reachable case, not just theoretical:
+    ``mapping.to_geojson`` writes ``"travel_time_s": None`` into its exported
+    properties for any edge with no observed speed, and re-loading that
+    GeoJSON via ``Network.from_geojson`` copies it straight onto the new
+    graph's edges as a literal ``None`` attribute value -- present, but
+    exactly as useless as being absent. A NaN is guarded too, since it would
+    otherwise propagate through networkx's internal distance sums silently.
+    """
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return False
+
+
 def _require_edge_weight(graph, weight: str, fn_name: str) -> None:
-    """Raise a clear, actionable error if any edge lacks the ``weight`` attribute.
+    """Raise a clear, actionable error if any edge lacks a usable ``weight``.
 
     networkx silently substitutes a default weight of 1.0 for a missing edge
     attribute rather than raising (verified empirically: a graph with the
@@ -53,16 +74,22 @@ def _require_edge_weight(graph, weight: str, fn_name: str) -> None:
     centrality output to the same graph with that edge's attribute explicitly
     set to 1.0). Left unguarded, an edge with no ``travel_time_s`` would look
     artificially cheap -- like it takes about a second to cross -- and pull
-    shortest-path traffic through it, corrupting the centrality ranking.
+    shortest-path traffic through it, corrupting the centrality ranking. An
+    edge with the attribute present but ``None``/``NaN`` is just as unusable,
+    but fails differently and worse: not a wrong-but-plausible answer, a raw
+    ``TypeError``/``NaN`` propagation from deep inside networkx's own
+    Dijkstra implementation. Both cases are guarded here identically.
     """
     total = graph.number_of_edges()
-    missing = sum(1 for *_, d in graph.edges(data=True) if weight not in d)
+    missing = sum(1 for *_, d in graph.edges(data=True)
+                 if weight not in d or _invalid_weight(d[weight]))
     if missing:
         raise ValueError(
-            f"{fn_name}: {missing} of {total} edges have no {weight!r} "
-            "attribute. networkx silently substitutes a default weight of "
-            "1.0 for a missing attribute (verified: identical output to the "
-            "attribute being explicitly 1.0), which would make those edges "
+            f"{fn_name}: {missing} of {total} edges have no usable {weight!r} "
+            "value (missing entirely, or present as None/NaN). networkx "
+            "silently substitutes a default weight of 1.0 for a missing "
+            "attribute (verified: identical output to the attribute being "
+            "explicitly 1.0), which would make those edges "
             "look artificially cheap and corrupt the ranking. Fix by one of: "
             "(1) run assign_speeds(...) or assign_segment_speeds(..., "
             f"default_speed_mps=...) first so every edge carries {weight!r} "

@@ -24,6 +24,27 @@ def test_partial_missing_weight_still_raises(straight_net):
         rt.edge_betweenness_centrality(straight_net, weight="travel_time_s")
 
 
+def test_explicit_none_weight_value_raises_not_crashes(straight_net):
+    """Regression: an edge with the attribute present but literally None
+    (e.g. a `travel_time_s: null` GeoJSON property re-loaded via
+    Network.from_geojson) is just as unusable as a missing attribute, but
+    used to slip past the guard and crash inside networkx's own Dijkstra
+    with a raw TypeError instead of raising this module's clear ValueError."""
+    for eid in straight_net.edge_ids:
+        straight_net.edge_data(int(eid))["travel_time_s"] = None
+    with pytest.raises(ValueError, match="travel_time_s"):
+        rt.edge_betweenness_centrality(straight_net, weight="travel_time_s")
+
+
+def test_nan_weight_value_raises(straight_net):
+    """Same guard, NaN instead of None -- would otherwise propagate silently
+    through networkx's internal distance sums."""
+    for eid in straight_net.edge_ids:
+        straight_net.edge_data(int(eid))["travel_time_s"] = float("nan")
+    with pytest.raises(ValueError, match="travel_time_s"):
+        rt.edge_betweenness_centrality(straight_net, weight="travel_time_s")
+
+
 def test_weight_length_m_works_without_any_pipeline(grid_net):
     bc = rt.edge_betweenness_centrality(grid_net, weight="length_m")
     assert set(bc.keys()) == {int(e) for e in grid_net.edge_ids}

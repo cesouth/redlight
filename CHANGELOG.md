@@ -16,14 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`edge_betweenness_centrality`** -- travel-time-weighted (or any other
     edge attribute) betweenness centrality, identifying the roads carrying
     a disproportionate share of shortest paths ("chokepoints"), not just
-    topologically central ones. Guards a networkx landmine: a missing
-    weight attribute is silently treated as `1.0` by networkx itself
-    (verified against an explicit `1.0` weight -- identical output), which
-    would make unobserved edges look artificially cheap and corrupt the
-    ranking; this now raises a clear `ValueError` instead of computing a
-    silently wrong answer. Optional `write_attr=` writes scores onto the
-    graph so they flow into `to_geojson`/`plot_speed_map` for a chokepoint
-    map.
+    topologically central ones. Guards a networkx landmine: a missing *or*
+    explicitly `None`/`NaN` weight attribute is silently treated as `1.0` by
+    networkx itself (a missing attribute verified against an explicit `1.0`
+    weight -- identical output), which would make unobserved edges look
+    artificially cheap and corrupt the ranking; this now raises a clear
+    `ValueError` instead of computing a silently wrong answer (or, for the
+    `None`/`NaN` case, crashing with a raw `TypeError` deep inside
+    networkx's own Dijkstra -- caught reviewing real OSM data reloaded via
+    `to_geojson` -> `from_geojson`, which round-trips an unobserved edge's
+    `travel_time_s: null` property as a literal `None` attribute, present
+    but exactly as useless as absent). Optional `write_attr=` writes scores
+    onto the graph so they flow into `to_geojson`/`plot_speed_map` for a
+    chokepoint map.
   - **`network_stats`** -- circuity, streets-per-node, and
     intersection/dead-end counts, always available; intersection/edge
     density additionally when an `area_km2` is supplied (there's no
