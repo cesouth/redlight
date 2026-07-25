@@ -21,17 +21,12 @@ from .units import SpeedUnit, to_mps
 
 DEFAULT_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
-# Unit suffixes accepted on an OSM ``maxspeed`` value, mapped to this package's
-# canonical unit name. The empty suffix is the important one: OSM specifies a
-# bare ``maxspeed=50`` as **km/h**, so reading it as mph (natural in a package
-# whose reports default to mph) would overstate the limit by ~61%.
-_MAXSPEED_UNITS = {"": "kph", "mph": "mph",
-                   "km/h": "kph", "kmh": "kph", "kph": "kph"}
-
-# A number, optional whitespace, optional alphabetic/slash unit suffix. Anything
-# else (country codes like "RU:urban", multi-values like "50;30", "none",
-# "walk", "signals") deliberately fails to match -- see parse_maxspeed.
-_MAXSPEED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([a-z/]*)")
+# A number, optional whitespace, optional unit suffix. The suffix charset spans
+# every spelling SpeedUnit.parse accepts ("mph", "mi/h", "km/h", "kmph",
+# "miles_per_hour", ...) so that module stays the single owner of the alias
+# list; anything else (country codes like "RU:urban", multi-values like
+# "50;30", "none", "walk", "signals") fails to match -- see parse_maxspeed.
+_MAXSPEED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([a-z/_]*)")
 
 #: Drivable road classes (motorized traffic). Override via ``highway_regex``
 #: to include/exclude classes (e.g. add ``track`` for off-road studies).
@@ -117,13 +112,17 @@ def parse_maxspeed(value) -> float | None:
     match = _MAXSPEED_RE.fullmatch(str(value).strip().lower())
     if match is None:
         return None
-    unit = _MAXSPEED_UNITS.get(match.group(2))
-    if unit is None:                       # a real unit we don't convert (knots)
+    try:
+        # An absent suffix means km/h per the OSM spec; anything else is
+        # resolved by units.py, the one owner of the unit-alias list, so the
+        # spellings accepted here cannot drift from the rest of the package.
+        unit = SpeedUnit.parse(match.group(2) or "kph")
+    except ValueError:                     # a real unit we don't convert (knots)
         return None
     speed = float(match.group(1))
     if speed <= 0:
         return None
-    return float(to_mps(speed, SpeedUnit.parse(unit)))
+    return float(to_mps(speed, unit))
 
 
 def ways_to_records(overpass_json: dict) -> list:

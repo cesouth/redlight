@@ -57,8 +57,21 @@ def _invalid_weight(value) -> bool:
     graph's edges as a literal ``None`` attribute value -- present, but
     exactly as useless as being absent. A NaN is guarded too, since it would
     otherwise propagate through networkx's internal distance sums silently.
+
+    The NaN test goes through ``math.isnan`` rather than
+    ``isinstance(value, float)``, which would only catch Python floats and
+    ``numpy.float64`` (a float subclass) while missing ``numpy.float32`` and
+    ``Decimal`` NaNs -- those reach networkx and surface as a
+    ``ZeroDivisionError`` from inside its accumulation loop, far from the
+    cause. Non-numeric values raise ``TypeError`` here and are reported as
+    valid, leaving type complaints to networkx itself.
     """
-    return value is None or (isinstance(value, float) and math.isnan(value))
+    if value is None:
+        return True
+    try:
+        return math.isnan(value)
+    except (TypeError, ValueError):
+        return False
 
 
 def _require_edge_weight(graph, weight: str, fn_name: str) -> None:

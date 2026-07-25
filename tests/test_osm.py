@@ -73,6 +73,16 @@ def test_parse_maxspeed_accepts_numeric_input():
     assert osm.parse_maxspeed(50) == pytest.approx(50 * 1000 / 3600)
 
 
+@pytest.mark.parametrize("alias", ["mph", "mi/h", "km/h", "kmh", "kph", "kmph"])
+def test_parse_maxspeed_accepts_every_unit_alias_units_knows(alias):
+    """One owner of the unit-alias list. Anything ``units.SpeedUnit`` resolves
+    must parse here too -- a narrower private table silently drops a valid
+    limit, and a dropped limit sends the Router back to its global default."""
+    from roadtraffic.units import SpeedUnit, to_mps
+    expected = to_mps(50.0, SpeedUnit.parse(alias))
+    assert osm.parse_maxspeed(f"50 {alias}") == pytest.approx(expected)
+
+
 @pytest.mark.parametrize("value", [
     None, "", "   ",
     "none",           # autobahn: no limit, not a number

@@ -45,6 +45,16 @@ def test_nan_weight_value_raises(straight_net):
         rt.edge_betweenness_centrality(straight_net, weight="travel_time_s")
 
 
+def test_numpy_float32_nan_weight_raises(straight_net):
+    """np.float32 is not a Python float subclass, so an isinstance-based NaN
+    check misses it and lets the NaN into networkx's distance sums."""
+    import numpy as np
+    for eid in straight_net.edge_ids:
+        straight_net.edge_data(int(eid))["travel_time_s"] = np.float32("nan")
+    with pytest.raises(ValueError, match="travel_time_s"):
+        rt.edge_betweenness_centrality(straight_net, weight="travel_time_s")
+
+
 def test_weight_length_m_works_without_any_pipeline(grid_net):
     bc = rt.edge_betweenness_centrality(grid_net, weight="length_m")
     assert set(bc.keys()) == {int(e) for e in grid_net.edge_ids}
