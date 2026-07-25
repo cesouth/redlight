@@ -54,7 +54,12 @@ support is an opt-in extra.
   distance, or a user-supplied cost function, using Dijkstra on a NetworkX
   multigraph (parallel roads and OSM one-way semantics — including
   `oneway=-1` — handled correctly), with actionable errors when no route
-  exists.
+  exists. Roads your GPS data never covered are estimated at their **posted
+  OSM speed limit** (parsed from `maxspeed`, km/h vs mph handled per the OSM
+  spec) rather than at one blanket speed for every road — so an uncovered
+  motorway doesn't get routed at the same 25 mph as a side street. Measured
+  speeds always win over the limit, and estimated edges stay flagged as
+  estimated.
 - **Mapping.** Export a speed-annotated network as GeoJSON for QGIS / Kepler /
   Leaflet / Mapbox, or render a quick static PNG trafficability map
   (`pip install roadtraffic[mapping]`) — for any of the three time regimes

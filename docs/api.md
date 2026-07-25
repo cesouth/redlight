@@ -45,6 +45,17 @@ via the Overpass API (stdlib only — no new dependencies; needs internet).
 `highway_regex` filters OSM highway classes (default: drivable roads). Use a
 downloaded extract + `from_geojson` for large study areas.
 
+**Posted speed limits.** Any network whose source data carries a `maxspeed`
+property (Overpass, or a GeoJSON exported from OSM) gets a numeric
+`maxspeed_mps` edge attribute parsed via `osm.parse_maxspeed`, alongside the
+untouched raw tag. A bare `maxspeed=50` is read as **km/h** per the OSM spec;
+an explicit `mph` / `km/h` suffix wins. Values carrying no unambiguous number
+(`"none"`, `"walk"`, `"signals"`, country defaults like `"RU:urban"`,
+multi-values like `"50;30"`) write no attribute at all, so consumers test
+presence rather than sniff for sentinels. `Router` uses this as a per-edge
+routing fallback; it is a legal limit, **not** an observed speed, so nothing in
+the measurement pipeline (`aggregate_speeds` and friends) ever reads it.
+
 **Useful attributes / methods:** `.graph` (NetworkX `MultiDiGraph`, edge key =
 `edge_id` — parallel roads between the same nodes coexist),
 `.crs_metric`, `.number_of_nodes()`, `.number_of_edges()`, `.edge_ids`,
@@ -309,7 +320,14 @@ builds the annotated network from one day-type only — e.g. a weekday-only vs a
 weekend-only network to compare congestion on the same segments. Returns the hour
 blocks used, `source`, the resolved `days`, and per-regime `coverage`.
 
-### `Router(network, *, default_speed_mps=11.176)`
+### `Router(network, *, default_speed_mps=11.176, use_maxspeed=True)`
+
+`use_maxspeed=True` estimates an **unobserved** edge at its posted limit (the
+`maxspeed_mps` edge attribute, parsed from an OSM `maxspeed` tag at load time)
+instead of at the single global `default_speed_mps`. Measured travel times
+always win over the limit, and a limit-estimated edge is still reported as
+non-observed in `n_edges_default` — a posted limit is an assumption, not a
+measurement. Set `False` for one uniform fallback speed everywhere.
 
 - `.route(origin, destination, *, mode="time", cost_func=None, snap=True, period="overall") -> dict`
   — `mode` ∈ `{"distance", "time", "cost"}`; `period` ∈

@@ -188,3 +188,31 @@ def test_from_file_missing_pyogrio_message(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "pyogrio", None)
     with pytest.raises(ImportError, match="shapefile"):
         rt.Network.from_file(str(tmp_path / "whatever.gpkg"))
+
+
+# --------------------------------------------------------------- maxspeed
+def _net_with(tmp_path, **props):
+    path = write_geojson(tmp_path / "ms.json", [
+        line_feature([[0, 0], [0.01, 0]], highway="residential", **props),
+    ])
+    return rt.Network.from_geojson(path)
+
+
+def test_maxspeed_tag_becomes_numeric_edge_attr(tmp_path):
+    net = _net_with(tmp_path, maxspeed="35 mph")
+    for _u, _v, d in net.graph.edges(data=True):
+        assert d["maxspeed_mps"] == pytest.approx(35 * 1609.344 / 3600)
+        assert d["maxspeed"] == "35 mph"      # raw tag preserved alongside
+
+
+def test_edge_without_maxspeed_has_no_maxspeed_mps(tmp_path):
+    net = _net_with(tmp_path)
+    for _u, _v, d in net.graph.edges(data=True):
+        assert "maxspeed_mps" not in d
+
+
+def test_unparseable_maxspeed_sets_no_numeric_attr(tmp_path):
+    net = _net_with(tmp_path, maxspeed="none")
+    for _u, _v, d in net.graph.edges(data=True):
+        assert "maxspeed_mps" not in d
+        assert d["maxspeed"] == "none"        # raw tag still preserved

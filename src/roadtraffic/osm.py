@@ -11,12 +11,27 @@ The entry point most users want is
 from __future__ import annotations
 
 import json
+import re
 import urllib.parse
 import urllib.request
 
 from shapely.geometry import LineString
 
+from .units import SpeedUnit, to_mps
+
 DEFAULT_OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+
+# Unit suffixes accepted on an OSM ``maxspeed`` value, mapped to this package's
+# canonical unit name. The empty suffix is the important one: OSM specifies a
+# bare ``maxspeed=50`` as **km/h**, so reading it as mph (natural in a package
+# whose reports default to mph) would overstate the limit by ~61%.
+_MAXSPEED_UNITS = {"": "kph", "mph": "mph",
+                   "km/h": "kph", "kmh": "kph", "kph": "kph"}
+
+# A number, optional whitespace, optional alphabetic/slash unit suffix. Anything
+# else (country codes like "RU:urban", multi-values like "50;30", "none",
+# "walk", "signals") deliberately fails to match -- see parse_maxspeed.
+_MAXSPEED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([a-z/]*)")
 
 #: Drivable road classes (motorized traffic). Override via ``highway_regex``
 #: to include/exclude classes (e.g. add ``track`` for off-road studies).
@@ -68,6 +83,47 @@ def build_query(bbox, highway_regex: str | None = None,
         f"({min_lat},{min_lon},{max_lat},{max_lon});"
         "out geom;"
     )
+
+
+def parse_maxspeed(value) -> float | None:
+    """Parse an OSM ``maxspeed`` tag value to metres per second.
+
+    The posted **legal limit** -- not an observed speed. It is useful as a
+    per-edge fallback for roads your GPS data never covered (see
+    :class:`roadtraffic.routing.Router`), but it must never be mistaken for
+    measured traffic: congestion is precisely the gap between the two.
+
+    Parameters
+    ----------
+    value : str or float or None
+        The raw tag value, e.g. ``"50"``, ``"35 mph"``, ``"50 km/h"``. Parsing
+        is case- and whitespace-insensitive. Per the OSM specification a bare
+        number means **km/h**; an explicit ``mph`` suffix overrides that.
+
+    Returns
+    -------
+    float or None
+        Speed in m/s, or ``None`` when the value carries no unambiguous
+        number. Returning ``None`` rather than guessing is deliberate: OSM
+        also uses ``"none"`` (no limit), ``"walk"`` (walking pace),
+        ``"signals"``/``"variable"`` (dynamic), country defaults
+        (``"RU:urban"``), and multi-values (``"50;30"``) -- each of which would
+        need an invented constant or a country table to turn into a number.
+        Non-positive values are rejected too, since a zero limit would divide
+        by zero in any travel-time computation.
+    """
+    if value is None:
+        return None
+    match = _MAXSPEED_RE.fullmatch(str(value).strip().lower())
+    if match is None:
+        return None
+    unit = _MAXSPEED_UNITS.get(match.group(2))
+    if unit is None:                       # a real unit we don't convert (knots)
+        return None
+    speed = float(match.group(1))
+    if speed <= 0:
+        return None
+    return float(to_mps(speed, SpeedUnit.parse(unit)))
 
 
 def ways_to_records(overpass_json: dict) -> list:

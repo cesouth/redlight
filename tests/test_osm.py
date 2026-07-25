@@ -50,3 +50,38 @@ def test_build_query_contents_and_validation():
 def test_build_query_custom_regex():
     q = osm.build_query((0, 0, 1, 1), highway_regex="track")
     assert "^(track)$" in q
+
+
+# --------------------------------------------------------------- maxspeed
+# OSM's maxspeed tag: a bare number means km/h; an explicit unit suffix wins.
+
+def test_parse_maxspeed_bare_number_is_kph():
+    assert osm.parse_maxspeed("50") == pytest.approx(50 * 1000 / 3600)
+
+
+def test_parse_maxspeed_mph_suffix():
+    assert osm.parse_maxspeed("35 mph") == pytest.approx(35 * 1609.344 / 3600)
+
+
+def test_parse_maxspeed_kph_spellings_agree():
+    kph = osm.parse_maxspeed("50")
+    for text in ("50 km/h", "50 kmh", "50 kph", "50km/h", " 50 KM/H "):
+        assert osm.parse_maxspeed(text) == pytest.approx(kph)
+
+
+def test_parse_maxspeed_accepts_numeric_input():
+    assert osm.parse_maxspeed(50) == pytest.approx(50 * 1000 / 3600)
+
+
+@pytest.mark.parametrize("value", [
+    None, "", "   ",
+    "none",           # autobahn: no limit, not a number
+    "walk",           # 'walking pace' -- no defensible number
+    "signals", "variable",
+    "RU:urban",       # implicit country default, needs a country table
+    "50;30",          # multi-value, ambiguous
+    "fast",
+    "0", "-20",       # non-positive: would divide by zero / reverse time
+])
+def test_parse_maxspeed_unparseable_returns_none(value):
+    assert osm.parse_maxspeed(value) is None

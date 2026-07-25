@@ -358,6 +358,11 @@ class Network:
         fwd = Transformer.from_crs(CRS.from_epsg(4326), crs_metric, always_xy=True)
         inv = Transformer.from_crs(crs_metric, CRS.from_epsg(4326), always_xy=True)
 
+        # Local import (once, not per record): keeps urllib -- pulled in by
+        # osm.py's Overpass client -- off the cost of importing roadtraffic,
+        # matching the deferred import in from_overpass below.
+        from .osm import parse_maxspeed
+
         graph = nx.MultiDiGraph()
         edge_index, edge_geoms_proj = {}, {}   # edge_id -> (u, v) / projected geometry
         edge_lengths, reverse_of = {}, {}      # edge_id -> length_m / opposite edge_id
@@ -405,6 +410,14 @@ class Network:
             # attribute dict on the graph.
             base_attrs, renamed = _sanitize_props(props)
             renamed_keys.update(renamed)
+            # Posted legal limit, parsed to m/s for routing fallbacks. The raw
+            # tag is left untouched alongside it; an unparseable value (OSM's
+            # "none"/"walk"/country defaults) simply writes no numeric attr, so
+            # consumers can test presence rather than sniff for sentinels.
+            if "maxspeed" in base_attrs and "maxspeed_mps" not in base_attrs:
+                maxspeed_mps = parse_maxspeed(base_attrs["maxspeed"])
+                if maxspeed_mps is not None:
+                    base_attrs["maxspeed_mps"] = maxspeed_mps
             rev_line = LineString(list(proj_line.coords)[::-1])  # v -> u geometry
 
             if directed and oneway_val in _ONEWAY_FORWARD:

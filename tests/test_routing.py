@@ -138,3 +138,55 @@ def test_route_geometry(grid_net):
     coords = r.route_geometry_lonlat(res)
     assert coords[0] == pytest.approx((0.0, 0.0), abs=1e-9)
     assert coords[-1][0] == pytest.approx(0.002, abs=1e-8)
+
+
+# ------------------------------------------ posted-limit fallback (maxspeed)
+# An edge with no observations is estimated. Without a posted limit that
+# estimate is one global constant for every road; with one it is per-edge.
+
+def _road(tmp_path, **props):
+    path = write_geojson(tmp_path / "road.json", [
+        line_feature([[0, 0], [0.01, 0]], highway="primary", **props),
+    ])
+    return rt.Network.from_geojson(path)
+
+
+def test_unobserved_edge_routes_at_posted_limit(tmp_path):
+    net = _road(tmp_path, maxspeed="35 mph")
+    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    expected = res["distance_m"] / (35 * 1609.344 / 3600)
+    assert res["travel_time_s"] == pytest.approx(expected, rel=1e-9)
+
+
+def test_unobserved_edge_without_limit_uses_global_default(tmp_path):
+    net = _road(tmp_path)
+    r = rt.Router(net, default_speed_mps=11.176)
+    res = r.route((0, 0), (0.01, 0), mode="time")
+    assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 11.176,
+                                                 rel=1e-9)
+
+
+def test_measured_speed_beats_posted_limit(tmp_path):
+    """Observed congestion must win: the limit is only a fallback."""
+    net = _road(tmp_path, maxspeed="60 mph")
+    rt.assign_speeds(net, pd.DataFrame(_hourly_obs(0, 8, 5.0)))
+    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 5.0,
+                                                 rel=1e-6)
+    assert res["n_edges_default"] == 0
+
+
+def test_posted_limit_edge_still_counts_as_estimated(tmp_path):
+    """maxspeed refines the fallback speed; it is not measured data, so the
+    honesty counter must keep reporting the edge as non-observed."""
+    net = _road(tmp_path, maxspeed="35 mph")
+    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    assert res["n_edges_default"] == res["n_edges"] == 1
+
+
+def test_posted_limit_fallback_can_be_disabled(tmp_path):
+    net = _road(tmp_path, maxspeed="35 mph")
+    r = rt.Router(net, default_speed_mps=11.176, use_maxspeed=False)
+    res = r.route((0, 0), (0.01, 0), mode="time")
+    assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 11.176,
+                                                 rel=1e-9)

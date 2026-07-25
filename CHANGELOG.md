@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OSM posted speed limits are now parsed and used as a per-edge routing
+  fallback.** `osm.parse_maxspeed` converts an OSM `maxspeed` tag to m/s --
+  correctly reading a bare `maxspeed=50` as **km/h** per the OSM spec (reading
+  it as mph would overstate the limit by ~61%) while honouring an explicit
+  `mph`/`km/h` suffix. Values that carry no unambiguous number (`"none"`,
+  `"walk"`, `"signals"`, country defaults like `"RU:urban"`, multi-values like
+  `"50;30"`) parse to `None` rather than an invented constant. Any network
+  whose source data carries a `maxspeed` property -- Overpass, or a GeoJSON
+  exported from OSM -- now gets a numeric `maxspeed_mps` edge attribute
+  alongside the untouched raw tag.
+  `Router` uses it (new `use_maxspeed=True`) to estimate **unobserved** edges
+  at their posted limit instead of at one global `default_speed_mps` for every
+  road. Previously a motorway with no GPS coverage was routed at the same
+  25 mph as a side street, which made time-mode routing on unobserved networks
+  degenerate into distance-mode. Measured travel times always take precedence,
+  and a limit-estimated edge is still counted as non-observed in
+  `n_edges_default` -- the posted limit is an assumption, never a measurement.
+  Pass `use_maxspeed=False` for the previous uniform-fallback behaviour.
 - **Day-of-week support across temporal aggregation.** `aggregate_speeds`,
   `classify_hours`, `assign_speeds`, and `assign_segment_speeds` all take a new
   optional `days=` argument to restrict analysis to particular weekdays before

@@ -43,9 +43,13 @@ class Router:
     default_speed_mps : float
         Fallback speed (m/s) used for ``mode="time"`` on edges with no
         observed travel time at all (see :meth:`_edge_travel_time`).
+    use_maxspeed : bool
+        Whether an edge's posted limit (``maxspeed_mps``) refines that
+        fallback in place of the single global constant.
     """
 
-    def __init__(self, network, *, default_speed_mps: float = 11.176):
+    def __init__(self, network, *, default_speed_mps: float = 11.176,
+                 use_maxspeed: bool = True):
         """
         Parameters
         ----------
@@ -57,6 +61,15 @@ class Router:
             the overall fallback). Default 11.176 m/s (~25 mph): a sane urban
             fallback. Must be positive -- a zero or negative value would make
             "no data" look like an instant or backwards-in-time edge.
+        use_maxspeed : bool
+            If ``True`` (default), an unobserved edge carrying a parsed posted
+            limit (``maxspeed_mps``, written by
+            :meth:`~roadtraffic.network.Network._build` from an OSM
+            ``maxspeed`` tag) is estimated at that limit instead of at
+            ``default_speed_mps``. This only ever replaces a guess with a
+            better guess: measured travel times always win, and the edge is
+            still counted in ``n_edges_default`` as non-observed. Set
+            ``False`` to route on one uniform fallback speed everywhere.
         """
         if default_speed_mps <= 0:
             raise ValueError(
@@ -64,6 +77,7 @@ class Router:
             )
         self.network = network
         self.default_speed_mps = default_speed_mps
+        self.use_maxspeed = bool(use_maxspeed)
         self._node_array = None  # (n_nodes, 2) metric-CRS coords, built lazily
         self._node_list = None   # parallel list of node keys (lon, lat) tuples
         self._node_tree = None   # cKDTree over _node_array, for nearest_node()
@@ -98,7 +112,14 @@ class Router:
         """Period-aware travel time for one edge's attrs; returns (seconds, used_default).
 
         Prefers ``travel_time_s_<period>``, falls back to the overall
-        ``travel_time_s``, then to ``length_m / default_speed_mps``.
+        ``travel_time_s``, then to ``length_m`` over an assumed speed: the
+        edge's posted limit (``maxspeed_mps``) when one was parsed and
+        ``use_maxspeed`` is on, else ``default_speed_mps``.
+
+        The posted limit is an assumption, not a measurement -- a road at its
+        legal limit is by definition uncongested -- so this still reports
+        ``used_default=True``. It only makes the assumption per-road instead of
+        pretending a motorway and a side street both run at 25 mph.
         """
         attr = ("travel_time_s" if period == "overall"
                 else f"travel_time_s_{period}")
@@ -106,7 +127,12 @@ class Router:
         if tt is None:                      # this regime had no data on this edge
             tt = d.get("travel_time_s")     # fall back to overall
         if tt is None:                      # no speed data at all
-            return d.get("length_m", 0.0) / self.default_speed_mps, True
+            speed = self.default_speed_mps
+            if self.use_maxspeed:
+                posted = d.get("maxspeed_mps")
+                if posted:                  # absent, None, or 0 -> keep default
+                    speed = posted
+            return d.get("length_m", 0.0) / speed, True
         return tt, False
 
     # ------------------------------------------------- multigraph edge selection
