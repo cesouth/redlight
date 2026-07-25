@@ -58,11 +58,7 @@ def _invalid_weight(value) -> bool:
     exactly as useless as being absent. A NaN is guarded too, since it would
     otherwise propagate through networkx's internal distance sums silently.
     """
-    if value is None:
-        return True
-    if isinstance(value, float) and math.isnan(value):
-        return True
-    return False
+    return value is None or (isinstance(value, float) and math.isnan(value))
 
 
 def _require_edge_weight(graph, weight: str, fn_name: str) -> None:

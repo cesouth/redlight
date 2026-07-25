@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable
+from functools import reduce
 
 import numpy as np
 import pandas as pd
@@ -824,21 +825,26 @@ def day_type_report(
         raise ValueError("groups must contain at least one day-type.")
 
     speed_col = "median_speed" if statistic == "median" else "mean_speed"
-    agg_fn = np.median if statistic == "median" else np.mean
 
     results: dict = {}
     empties: list = []
+    pieces: list = []           # each group's hourly column, for the comparison
     for label, selector in groups.items():
         day_set = _resolve_days(selector)
-        # network-wide, interval-deduplicated frame for the overall speed and n
-        frame = _drop_unmatched(matched)
-        frame = frame[~frame["speed_mps"].isna()]
-        if "interval_id" in frame.columns:
-            frame = frame.drop_duplicates(subset="interval_id")
-        frame = _filter_days(frame, day_set)
-        n = int(len(frame))
-        overall = (float(from_mps(float(agg_fn(frame["speed_mps"].to_numpy())), unit))
-                   if n else float("nan"))
+
+        # A single 24-hour bin is the network-wide overall speed and count,
+        # interval-deduplicated exactly the way the hourly profile is -- so both
+        # numbers in the report come from the one aggregation path instead of a
+        # hand-rolled second copy of the dedup/filter/aggregate logic.
+        overall_agg = aggregate_speeds(
+            matched, block_hours=24, statistic=statistic,
+            output_unit=unit, by_edge=False, days=selector,
+        )
+        if len(overall_agg):
+            overall = float(overall_agg[speed_col].iloc[0])
+            n = int(overall_agg["n"].iloc[0])
+        else:
+            overall, n = float("nan"), 0
 
         hourly = aggregate_speeds(
             matched, block_hours=block_hours, statistic=statistic,
@@ -864,23 +870,28 @@ def day_type_report(
             "offpeak": offpeak,
         }
 
-    # block-by-block comparison table across every group
-    labels = list(groups)
-    comp = None
-    for label in labels:
+        # accumulate this group's column for the block-by-block comparison
         col = f"{label}_speed"
-        a = results[label]["hourly"]
-        if len(a):
-            piece = a[["block_start_hour", "block_label", speed_col]].rename(
+        if len(hourly):
+            piece = hourly[["block_start_hour", "block_label", speed_col]].rename(
                 columns={speed_col: col})
         else:
+            # aggregate_speeds returns a column-less frame when empty, so build
+            # the typed empty schema the outer merge below needs.
             piece = pd.DataFrame({
                 "block_start_hour": pd.Series([], dtype="int64"),
                 "block_label": pd.Series([], dtype="object"),
                 col: pd.Series([], dtype="float64"),
             })
-        comp = piece if comp is None else comp.merge(
-            piece, on=["block_start_hour", "block_label"], how="outer")
+        pieces.append(piece)
+
+    labels = list(groups)
+    # block-by-block comparison table: outer-merge every group's column
+    comp = reduce(
+        lambda left, right: left.merge(
+            right, on=["block_start_hour", "block_label"], how="outer"),
+        pieces,
+    )
     if len(comp):
         comp = comp.sort_values("block_start_hour").reset_index(drop=True)
 
