@@ -8,10 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A non-finite `maxspeed_mps` no longer poisons route travel times.** The
+  posted-limit fallback screened the attribute with a plain truthiness test,
+  but **NaN is truthy** -- so a `maxspeed_mps` arriving from a caller's own
+  GeoJSON/Shapefile (an empty numeric field reads as NaN, and networks that
+  already carry the attribute skip parsing entirely) made every travel time
+  derived from it, and the route total summing them, silently NaN. Infinity
+  would have made the edge free to cross. Non-finite, non-positive and
+  non-numeric limits now fall through to `default_speed_mps`.
+- **`days=` accepts numpy integers.** `isinstance(days, int)` is False for
+  `numpy.int64`, so a value taken straight from pandas
+  (`df["time"].dt.dayofweek.unique()[0]`) was treated as an iterable and
+  failed with `'numpy.int64' object is not iterable` -- an error naming
+  neither `days` nor the cause.
+- Corrected the advertised test counts in `README.md` and `docs/methodology.md`
+  (long stale at 136 and 122), and the import path documented for
+  `parse_maxspeed`, which is not re-exported on the top-level namespace.
+
 ### Added
 
 - **OSM posted speed limits are now parsed and used as a per-edge routing
-  fallback.** `osm.parse_maxspeed` converts an OSM `maxspeed` tag to m/s --
+  fallback.** `roadtraffic.osm.parse_maxspeed` converts an OSM `maxspeed` tag
+  to m/s --
   correctly reading a bare `maxspeed=50` as **km/h** per the OSM spec (reading
   it as mph would overstate the limit by ~61%) while honouring an explicit
   `mph`/`km/h` suffix. Values that carry no unambiguous number (`"none"`,

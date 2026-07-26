@@ -109,14 +109,27 @@ def _day_tokens(token) -> frozenset | None:
 def _resolve_days(days) -> frozenset | None:
     """Normalise a ``days=`` argument to a ``frozenset[int]`` or ``None``.
 
-    ``None`` (the default everywhere) means no day filter. A bare string/int is
-    one token; any other iterable is a union of tokens. If any token is
-    ``"all"`` the result is ``None`` (no filter), since including every day is
-    the same as not filtering. See :func:`_day_tokens` for the token grammar.
+    ``None`` (the default everywhere) means no day filter. A bare scalar is one
+    token; anything iterable is a union of tokens. If any token is ``"all"``
+    the result is ``None`` (no filter), since including every day is the same
+    as not filtering. See :func:`_day_tokens` for the token grammar.
+
+    Scalar-vs-iterable is decided by *trying* to iterate rather than by an
+    ``isinstance(days, int)`` test, because numpy integers are not Python
+    ``int`` subclasses: ``days=np.int64(0)`` -- what you get straight out of
+    ``df["time"].dt.dayofweek.unique()[0]`` -- would otherwise be sent down
+    the iterate-it path and die as "numpy.int64 object is not iterable",
+    an error naming neither ``days`` nor the real problem.
     """
     if days is None:
         return None
-    tokens = [days] if isinstance(days, (str, int)) else list(days)
+    if isinstance(days, str):
+        tokens = [days]
+    else:
+        try:
+            tokens = list(days)
+        except TypeError:          # a non-iterable scalar (int, np.int64, ...)
+            tokens = [days]
     result: set[int] = set()
     for tok in tokens:
         got = _day_tokens(tok)

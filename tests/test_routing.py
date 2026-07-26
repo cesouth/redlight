@@ -184,6 +184,35 @@ def test_posted_limit_edge_still_counts_as_estimated(tmp_path):
     assert res["n_edges_default"] == res["n_edges"] == 1
 
 
+@pytest.mark.parametrize("bad", [
+    float("nan"),    # truthy! would poison the whole route total silently
+    float("inf"),    # would make the edge free to cross
+    0.0, -5.0, "fast", None,
+])
+def test_unusable_maxspeed_mps_falls_back_to_default(tmp_path, bad):
+    """A maxspeed_mps that arrives from the caller's own source data (rather
+    than from parse_maxspeed) is not trustworthy -- anything non-finite or
+    non-positive must fall through to the global default, not propagate."""
+    net = _road(tmp_path)
+    for eid in net.edge_ids:
+        net.edge_data(int(eid))["maxspeed_mps"] = bad
+    res = rt.Router(net, default_speed_mps=11.176).route(
+        (0, 0), (0.01, 0), mode="time")
+    assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 11.176,
+                                                 rel=1e-9)
+
+
+def test_numpy_float_maxspeed_mps_is_usable(tmp_path):
+    """numpy scalars are not Python float subclasses; they must still count."""
+    import numpy as np
+    net = _road(tmp_path)
+    for eid in net.edge_ids:
+        net.edge_data(int(eid))["maxspeed_mps"] = np.float32(20.0)
+    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 20.0,
+                                                 rel=1e-5)
+
+
 def test_posted_limit_fallback_can_be_disabled(tmp_path):
     net = _road(tmp_path, maxspeed="35 mph")
     r = rt.Router(net, default_speed_mps=11.176, use_maxspeed=False)

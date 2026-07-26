@@ -47,7 +47,9 @@ downloaded extract + `from_geojson` for large study areas.
 
 **Posted speed limits.** Any network whose source data carries a `maxspeed`
 property (Overpass, or a GeoJSON exported from OSM) gets a numeric
-`maxspeed_mps` edge attribute parsed via `osm.parse_maxspeed`, alongside the
+`maxspeed_mps` edge attribute parsed via `parse_maxspeed` (import it directly:
+`from roadtraffic.osm import parse_maxspeed` — the `osm` submodule is not
+re-exported on the top-level `roadtraffic` namespace), alongside the
 untouched raw tag. A bare `maxspeed=50` is read as **km/h** per the OSM spec;
 an explicit `mph` / `km/h` suffix wins. Values carrying no unambiguous number
 (`"none"`, `"walk"`, `"signals"`, country defaults like `"RU:urban"`,

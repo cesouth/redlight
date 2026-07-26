@@ -252,6 +252,18 @@ def test_days_invalid_raises():
         rt.aggregate_speeds(df, days=[7])
 
 
+def test_days_accepts_numpy_scalar():
+    """A numpy integer is not a Python int subclass, so a bare
+    ``isinstance(days, int)`` test sends it down the iterate-it path and it
+    dies as 'numpy.int64 object is not iterable' -- with no mention of days=.
+    Reachable straight from pandas: ``df['time'].dt.dayofweek.unique()[0]``."""
+    import numpy as np
+    df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0) + obs_on(SATURDAY, 8, 9.0))
+    out = rt.aggregate_speeds(df, days=np.int64(0), output_unit="mps")
+    assert len(out) == 1
+    assert out["mean_speed"].iloc[0] == pytest.approx(5.0)
+
+
 def test_day_type_report_weekday_vs_weekend():
     weekday = day_profile_on(WEEKDAY)                       # slow 7-8, fast 22-23
     weekend = day_profile_on(SATURDAY, slow=14.0, base=18.0, fast=22.0)

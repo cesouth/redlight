@@ -96,7 +96,7 @@ From source:
 git clone https://github.com/cesouth/roadtraffic.git
 cd roadtraffic
 pip install -e .[dev]
-pytest  # 136 offline tests, ~2 s
+pytest  # 206 offline tests, ~7 s
 ```
 
 ---
