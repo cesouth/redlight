@@ -44,7 +44,10 @@ support is an opt-in extra.
   names/numbers, or a custom list) keeps weekday and weekend traffic apart
   instead of pooling them into the same hour-of-day bin — and
   `day_type_report` turns that into a ready-made weekday-vs-weekend comparison
-  (overall/hourly/peak speeds plus the per-block delta).
+  (overall/hourly/peak speeds plus the per-block delta). Optional
+  `weight_by_variance=True` weights each observation by the precision
+  `derive_speeds` measured it to, so a noisy 3-second hop stops counting as
+  much as a clean 90-second baseline.
 - **Peak / off-peak detection, your way.** Rank time bins by congestion
   (peak = slowest), pick contiguous peak/off-peak windows of user-selected
   width (`n_peak=` / `n_offpeak=`, wrapping midnight), pass explicit hour
@@ -96,7 +99,7 @@ From source:
 git clone https://github.com/cesouth/roadtraffic.git
 cd roadtraffic
 pip install -e .[dev]
-pytest  # 206 offline tests, ~7 s
+pytest  # 213 offline tests, ~7 s
 ```
 
 ---

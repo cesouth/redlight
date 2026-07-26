@@ -8,7 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Inverse-variance weighting for the mean** — `aggregate_speeds(...,
+  weight_by_variance=True)`. `derive_speeds` has always reported a
+  per-interval `speed_var`, and the docs have always said it "supports
+  inverse-variance weighting downstream", but nothing consumed it: every
+  observation counted equally, so a noisy 3-second hop weighed as much as a
+  clean 90-second baseline. Now `mean_speed` is `sum(x/var) / sum(1/var)` and
+  `sem_speed` is `sqrt(1 / sum(1/var))` — a propagated measurement uncertainty
+  rather than a spread-over-`sqrt(n)`, and therefore defined even for a single
+  observation. `std_speed` deliberately stays the unweighted sample spread: the
+  spread is a property of the traffic, the weights of the instrument. Rows with
+  a non-finite or non-positive `speed_var` are dropped with a warning. See
+  `docs/statistics.md` for what the weighted SEM does and does not claim.
+- **`derive_speeds(..., interval_id_start=)`** so the output of separate runs
+  can be given non-overlapping interval ids and safely concatenated.
+
 ### Fixed
+
+- **Colliding `interval_id`s are now detected instead of silently halving the
+  data.** `derive_speeds` numbers intervals from 0 on every call, and
+  network-wide aggregation deduplicates on `interval_id` — so concatenating
+  two runs made distinct intervals collide, and the dedup kept one row per
+  colliding group and dropped the rest. Two equal-sized runs lost ~50% of
+  their observations with no error and no warning. `aggregate_speeds` now
+  cross-checks each id against the measurement it names (`traj_id`, `time`,
+  `speed_mps`) and raises with the available fixes. Legitimate duplication —
+  one interval attributed to several edges — is unaffected, as is
+  `dedup_intervals=False`.
 
 - **A non-finite `maxspeed_mps` no longer poisons route travel times.** The
   posted-limit fallback screened the attribute with a plain truthiness test,

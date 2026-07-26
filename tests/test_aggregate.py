@@ -331,3 +331,69 @@ def test_assign_segment_speeds_zero_speed_is_observed_gridlock(straight_net):
     assert d["obs_speed_mps_peak"] == pytest.approx(0.0)
     assert "travel_time_s_peak" not in d  # undefined at 0 m/s
     assert info["coverage"]["peak"] == 1
+
+
+# ------------------------------------------------ interval_id collisions
+def test_colliding_interval_ids_raise():
+    """derive_speeds numbers intervals from 0 per call, so concatenating two
+    runs makes genuinely different intervals share an id -- and the
+    network-wide dedup would silently drop one of every colliding pair."""
+    run_a = pd.DataFrame(obs(8, 10.0, interval_id=0) + obs(9, 11.0, interval_id=1))
+    run_b = pd.DataFrame(obs(10, 20.0, interval_id=0) + obs(11, 21.0, interval_id=1))
+    both = pd.concat([run_a, run_b], ignore_index=True)
+    with pytest.raises(ValueError, match="interval_id"):
+        rt.aggregate_speeds(both, output_unit="mps")
+
+
+def test_colliding_interval_ids_ignored_when_dedup_off():
+    run_a = pd.DataFrame(obs(8, 10.0, interval_id=0))
+    run_b = pd.DataFrame(obs(10, 20.0, interval_id=0))
+    both = pd.concat([run_a, run_b], ignore_index=True)
+    out = rt.aggregate_speeds(both, output_unit="mps", dedup_intervals=False)
+    assert out["n"].sum() == 2
+
+
+# ------------------------------------------------ inverse-variance weighting
+def _var_obs(hour, speed_mps, var, *, interval_id, edge_id=0):
+    return [{"edge_id": edge_id, "speed_mps": speed_mps, "speed_var": var,
+             "interval_id": interval_id,
+             "time": pd.Timestamp(f"2026-06-01 {hour:02d}:15:00")}]
+
+
+def test_inverse_variance_weighting_favours_precise_observations():
+    """A speed measured to var=1 should outweigh one measured to var=4."""
+    df = pd.DataFrame(_var_obs(8, 10.0, 1.0, interval_id=0)
+                      + _var_obs(8, 20.0, 4.0, interval_id=1))
+    plain = rt.aggregate_speeds(df, output_unit="mps", statistic="mean")
+    wtd = rt.aggregate_speeds(df, output_unit="mps", statistic="mean",
+                              weight_by_variance=True)
+    assert plain["mean_speed"].iloc[0] == pytest.approx(15.0)
+    # (10/1 + 20/4) / (1/1 + 1/4) = 15 / 1.25
+    assert wtd["mean_speed"].iloc[0] == pytest.approx(12.0)
+    # SEM of an inverse-variance weighted mean is sqrt(1 / sum of weights)
+    assert wtd["sem_speed"].iloc[0] == pytest.approx((1 / 1.25) ** 0.5)
+    assert wtd["n"].iloc[0] == 2
+
+
+def test_weighting_requires_speed_var_column():
+    df = pd.DataFrame(obs(8, 10.0, interval_id=0))
+    with pytest.raises(ValueError, match="speed_var"):
+        rt.aggregate_speeds(df, weight_by_variance=True)
+
+
+def test_weighting_requires_a_mean():
+    df = pd.DataFrame(_var_obs(8, 10.0, 1.0, interval_id=0))
+    with pytest.raises(ValueError, match="weight_by_variance"):
+        rt.aggregate_speeds(df, statistic="median", weight_by_variance=True)
+
+
+def test_unusable_variances_are_dropped_with_a_warning():
+    """var <= 0 would be an infinite weight; NaN would poison the sum."""
+    df = pd.DataFrame(_var_obs(8, 10.0, 1.0, interval_id=0)
+                      + _var_obs(8, 99.0, 0.0, interval_id=1)
+                      + _var_obs(8, 99.0, float("nan"), interval_id=2))
+    with pytest.warns(UserWarning, match="speed_var"):
+        out = rt.aggregate_speeds(df, output_unit="mps", statistic="mean",
+                                  weight_by_variance=True)
+    assert out["n"].iloc[0] == 1
+    assert out["mean_speed"].iloc[0] == pytest.approx(10.0)

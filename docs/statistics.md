@@ -409,6 +409,41 @@ when any of the following hold:
 Keep `quality` rows for aggregation; `speed_var` (`= speed_sigma_mps ** 2`)
 also supports inverse-variance weighting downstream.
 
+### Inverse-variance weighting (`weight_by_variance=True`)
+
+`speed_sigma_mps ≈ sqrt(σ_i² + σ_j²) / dt` — the uncertainty of an interval's
+speed falls as the time (and distance) over which it was measured grows. An
+unweighted mean throws that away: a 3-second hop through noisy fixes counts
+exactly as much as a clean 90-second baseline. Passing
+`weight_by_variance=True` to `aggregate_speeds` weights each observation by
+`1 / speed_var`, the standard estimator for combining independent measurements
+of differing precision:
+
+$$\bar{x} = \frac{\sum x_i / \sigma_i^2}{\sum 1 / \sigma_i^2}
+\qquad
+\mathrm{Var}(\bar{x}) = \frac{1}{\sum 1 / \sigma_i^2}$$
+
+Two consequences worth understanding before using it:
+
+- **`sem_speed` changes meaning.** Unweighted it is `s / sqrt(n)`, an estimate
+  built from the observed spread. Weighted it is `sqrt(1 / Σ(1/σ²))`, a
+  *propagated measurement uncertainty*. It is therefore defined even for a
+  single observation, where the unweighted branch honestly reports NaN. It
+  answers "how precisely did we measure this?", not "how much did traffic
+  vary?" — and it will usually be the smaller number, so do not read a narrow
+  weighted CI as evidence that speeds were consistent.
+- **`std_speed` stays unweighted** on purpose. The spread of observed speeds is
+  a property of the traffic; the weights are a property of the instrument.
+  Mixing them would produce a number describing neither.
+
+This assumes the `speed_var` values are themselves trustworthy and that the
+errors are independent — reasonable for GPS position noise across distinct fix
+pairs, less so if one systematic effect (a canyon, a bad ephemeris) biases a
+whole trajectory. It weights by *measurement precision only*; it does not
+correct for uneven sampling of the road network or the clock. Rows whose
+`speed_var` is non-finite or non-positive carry no usable weight and are
+dropped with a warning.
+
 ### Adaptive baseline (`min_baseline_m`) — required for noisy, sparse fixes
 
 When fixes are close together in time and GPS is noisy, single-interval

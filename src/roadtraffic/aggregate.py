@@ -149,6 +149,49 @@ def _filter_days(df: pd.DataFrame, days: frozenset | None) -> pd.DataFrame:
     return df[np.isin(dow, list(days))]
 
 
+# The columns that identify the measurement an ``interval_id`` names. In
+# ``derive_speeds``' edge_observations the rows sharing an interval_id are the
+# same measurement attributed to several edges, so they agree on all of these
+# and differ only in ``edge_id``. Disagreement therefore means two genuinely
+# different intervals have been given the same id.
+#
+# ``traj_id`` earns its place: two runs over separately-recorded trajectories
+# can produce intervals that coincide exactly in time and speed, and those are
+# still two independent measurements that the dedup would collapse into one.
+_INTERVAL_IDENTITY = ("interval_id", "traj_id", "time", "speed_mps")
+
+
+def _require_unique_intervals(df: pd.DataFrame, fn_name: str) -> None:
+    """Raise if one ``interval_id`` names more than one distinct measurement.
+
+    ``derive_speeds`` numbers intervals from 0 on every call, so concatenating
+    the output of two runs silently makes distinct intervals collide. The
+    network-wide dedup would then keep one row per colliding group and discard
+    the rest -- roughly half the data for two equal-sized runs -- with no error
+    and no warning. Cheap to detect: dedup on the identity columns and see
+    whether any id survives more than once.
+    """
+    cols = [c for c in _INTERVAL_IDENTITY if c in df.columns]
+    if len(cols) < 2:            # nothing to cross-check the id against
+        return
+    distinct = df[cols].drop_duplicates()
+    collided = distinct["interval_id"].duplicated()
+    if not collided.any():
+        return
+    ids = distinct.loc[collided, "interval_id"].unique()
+    raise ValueError(
+        f"{fn_name}: {len(ids)} interval_id value(s) name more than one "
+        f"distinct measurement (e.g. {ids[0]!r}), so this frame concatenates "
+        "the output of more than one derive_speeds call -- each numbers its "
+        "intervals from 0. Deduplicating on interval_id would keep one row "
+        "per colliding group and silently drop the rest. Fix by one of: "
+        "(1) run derive_speeds once over all trajectories; (2) offset each "
+        "run before concatenating, via derive_speeds(..., "
+        "interval_id_start=...) or df['interval_id'] += n; (3) pass "
+        "dedup_intervals=False if these ids are not interval identifiers."
+    )
+
+
 def aggregate_speeds(
     matched: pd.DataFrame,
     *,
@@ -159,6 +202,7 @@ def aggregate_speeds(
     min_samples: int = 1,
     dedup_intervals: bool = True,
     days=None,
+    weight_by_variance: bool = False,
 ) -> pd.DataFrame:
     """Aggregate speeds into time bins.
 
@@ -197,6 +241,22 @@ def aggregate_speeds(
         filter uses the stored **local-clock** weekday, so load points with
         ``tz=`` if the study area isn't already local. See
         :func:`day_type_report` for a ready-made weekday-vs-weekend comparison.
+    weight_by_variance : bool
+        Weight each observation by ``1 / speed_var`` when computing the mean,
+        instead of counting every observation equally. ``speed_var`` is the
+        per-interval speed uncertainty :func:`~roadtraffic.speeds.derive_speeds`
+        already reports (``speed_sigma_mps ** 2``), which grows as the GPS noise
+        floor divided by the interval's duration -- so a speed measured over a
+        long, clean baseline stops being averaged on equal terms with a noisy
+        short hop. ``mean_speed`` becomes ``sum(x/var) / sum(1/var)`` and
+        ``sem_speed`` becomes ``sqrt(1 / sum(1/var))``, a propagated measurement
+        uncertainty rather than a spread-over-``sqrt(n)`` -- so it is defined
+        even for a single observation. ``std_speed`` stays the *unweighted*
+        sample spread, which describes the traffic rather than the measurement.
+        Rows whose ``speed_var`` is non-finite or non-positive carry no usable
+        weight and are dropped with a warning. Requires a ``speed_var`` column
+        and a mean (``statistic="mean"`` or ``"both"``; a ``"both"`` median is
+        left unweighted). Default False.
 
     Returns
     -------
@@ -207,6 +267,12 @@ def aggregate_speeds(
     unit = SpeedUnit.parse(output_unit)
     if statistic not in {"mean", "median", "both"}:
         raise ValueError("statistic must be 'mean', 'median' or 'both'.")
+    if weight_by_variance and statistic == "median":
+        raise ValueError(
+            "weight_by_variance applies to the mean; the median has no "
+            "inverse-variance form here. Use statistic='mean' (or 'both', "
+            "which leaves the median unweighted)."
+        )
     if 24 % block_hours != 0:
         warnings.warn(
             f"block_hours={block_hours} does not divide 24 evenly; the last "
@@ -219,7 +285,28 @@ def aggregate_speeds(
     df = _drop_unmatched(matched)
     df = df[~df["speed_mps"].isna()]
     df = _filter_days(df, day_set)
+    if weight_by_variance:
+        if "speed_var" not in df.columns:
+            raise ValueError(
+                "weight_by_variance=True needs a 'speed_var' column, which "
+                "derive_speeds emits (speed_sigma_mps ** 2). A frame from a "
+                "matcher alone carries no per-observation uncertainty, so "
+                "there is nothing to weight by."
+            )
+        var = pd.to_numeric(df["speed_var"], errors="coerce").to_numpy(float)
+        # A zero/negative variance is an infinite or negative weight and a NaN
+        # would poison the whole sum, so these rows cannot participate.
+        usable = np.isfinite(var) & (var > 0)
+        if not usable.all():
+            warnings.warn(
+                f"aggregate_speeds: dropped {int((~usable).sum())} row(s) with "
+                "a non-finite or non-positive 'speed_var'; they carry no "
+                "usable inverse-variance weight.",
+                stacklevel=2,
+            )
+            df = df[usable]
     if not by_edge and dedup_intervals and "interval_id" in df.columns:
+        _require_unique_intervals(df, "aggregate_speeds")
         df = df.drop_duplicates(subset="interval_id")
     df = df.copy()
     t = pd.to_datetime(df["time"])
@@ -244,7 +331,29 @@ def aggregate_speeds(
         bs = int(rec["block_start_hour"])
         be = min(bs + block_hours, 24)
         rec["block_label"] = f"{bs:02d}:00-{be:02d}:00"
-        if statistic in {"mean", "both"}:
+        if statistic in {"mean", "both"} and weight_by_variance:
+            # Inverse-variance (a.k.a. precision) weighting: each observation
+            # counts in proportion to 1/var, so a fix pair measured over a long
+            # baseline outweighs a noisy short one instead of counting equally.
+            # For independent measurements with known variances the combined
+            # mean is sum(x/var)/sum(1/var) and the variance OF that mean is
+            # 1/sum(1/var) -- so the SEM here is a propagated measurement
+            # uncertainty, not a spread-over-sqrt(n). It is therefore defined
+            # even for a single observation, unlike the unweighted branch.
+            w = 1.0 / g["speed_var"].to_numpy(float)
+            sum_w = float(w.sum())
+            m = float(np.dot(w, sp) / sum_w)
+            sem = float(np.sqrt(1.0 / sum_w))
+            rec["mean_speed"] = from_mps(m, unit)
+            rec["sem_speed"] = from_mps(sem, unit)
+            rec["ci95_low"] = from_mps(m - 1.96 * sem, unit)
+            rec["ci95_high"] = from_mps(m + 1.96 * sem, unit)
+            # std stays the *unweighted* sample spread: it describes how much
+            # the observed speeds actually varied, which is a property of the
+            # traffic, not of how precisely each fix pair was measured.
+            rec["std_speed"] = (from_mps(float(np.std(sp, ddof=1)), unit)
+                                if n > 1 else np.nan)
+        elif statistic in {"mean", "both"}:
             m = float(np.mean(sp))
             rec["mean_speed"] = from_mps(m, unit)
             if n > 1:

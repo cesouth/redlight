@@ -212,6 +212,7 @@ def derive_speeds(
     max_route_dist_factor: float = 6.0,
     route_cutoff_floor_m: float = 300.0,
     min_baseline_m: float | None = None,
+    interval_id_start: int = 0,
 ) -> dict:
     """Compute per-interval and per-edge speeds from matched trajectories.
 
@@ -250,6 +251,15 @@ def derive_speeds(
         are dense and GPS is noisy. Default None (one interval per fix pair). A
         trajectory's final interval is still emitted even if it runs out of
         points before reaching the baseline, but is flagged ``quality=False``.
+    interval_id_start : int
+        First ``interval_id`` to hand out. Default 0, so each call numbers its
+        intervals 0, 1, 2, ... independently -- which means concatenating the
+        output of two calls makes distinct intervals share an id, and the
+        network-wide dedup in :func:`~roadtraffic.aggregate.aggregate_speeds`
+        would drop one of each colliding group (that function now detects the
+        collision and refuses rather than silently discarding data). Prefer a
+        single call over all trajectories; when you must combine runs, give
+        each one a start beyond the last id of the previous.
 
     Returns
     -------
@@ -375,7 +385,7 @@ def derive_speeds(
             # interval midpoint time = when this average speed applies
             mid_time = tstamp[a] + (tstamp[b] - tstamp[a]) / 2
             uniq_edges = list(dict.fromkeys(int(e) for e in acc_edges))
-            interval_id = len(interval_rows)
+            interval_id = interval_id_start + len(interval_rows)
 
             interval_rows.append({
                 "interval_id": interval_id,

@@ -168,7 +168,7 @@ matched frame alone, without rejoining the original `PointSet`.
 
 ## Speed derivation from positions
 
-### `derive_speeds(network, matched, points, *, pos_accuracy_col=None, default_pos_sigma_m=15.0, min_dt_s=0.5, max_dt_s=120.0, max_snap_dist_m=60.0, max_speed_mps=60.0, min_snr=3.0, max_route_dist_factor=6.0, route_cutoff_floor_m=300.0, min_baseline_m=None) -> dict`
+### `derive_speeds(network, matched, points, *, pos_accuracy_col=None, default_pos_sigma_m=15.0, min_dt_s=0.5, max_dt_s=120.0, max_snap_dist_m=60.0, max_speed_mps=60.0, min_snr=3.0, max_route_dist_factor=6.0, route_cutoff_floor_m=300.0, min_baseline_m=None, interval_id_start=0) -> dict`
 
 Reconstruct speed from **on-road displacement** between consecutive matched
 fixes in a trajectory — the recommended way to get speed when `load_points`
@@ -227,7 +227,7 @@ is preserved. A dwell is a run of points within `dwell_radius_m` for ≥
 
 ## Aggregation & peaks
 
-### `aggregate_speeds(matched, *, block_hours=1, statistic="mean", output_unit="mph", by_edge=False, min_samples=1, dedup_intervals=True, days=None) -> DataFrame`
+### `aggregate_speeds(matched, *, block_hours=1, statistic="mean", output_unit="mph", by_edge=False, min_samples=1, dedup_intervals=True, days=None, weight_by_variance=False) -> DataFrame`
 
 Bin by hour (`block_hours=1`) or N-hour block. `statistic` ∈
 `{"mean", "median", "both"}`.

@@ -509,7 +509,7 @@ python scripts/paper_experiments.py     # ~2-3 minutes
 regenerates every figure (`docs/figures/fig1…fig7`) and number
 (`docs/figures/experiment_results.json`) in this document, from fixed seeds,
 using only the public package API plus the committed synthetic-data
-generators. The test suite (`pytest`, 206 tests) independently pins the
+generators. The test suite (`pytest`, 213 tests) independently pins the
 correctness properties the experiments rely on.
 
 ## References

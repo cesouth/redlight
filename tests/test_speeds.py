@@ -144,3 +144,35 @@ def test_parallel_roads_not_conflated(tmp_path, make_points_csv):
     res = rt.derive_speeds(net, m, pts)
     # distance per 10 s hop ~33.4 m along the straight road
     np.testing.assert_allclose(res["intervals"]["speed_mps"], 3.34, rtol=0.02)
+
+
+def test_interval_id_start_lets_two_runs_be_combined(straight_net,
+                                                     make_points_csv):
+    """Each derive_speeds call numbers intervals from 0, so two runs collide
+    on interval_id; offsetting the second makes the concatenation safe to
+    aggregate instead of silently losing half the data."""
+    import pandas as pd
+    import pytest
+
+    pts_a, m_a = _match(straight_net, make_points_csv,
+                        drive_along_road(6, traj="a"))
+    res_a = rt.derive_speeds(straight_net, m_a, pts_a)
+    obs_a = res_a["edge_observations"]
+
+    # same trajectory shape, processed as a separate run
+    pts_b, m_b = _match(straight_net, make_points_csv,
+                        drive_along_road(6, traj="b"))
+    colliding = rt.derive_speeds(straight_net, m_b, pts_b)["edge_observations"]
+    assert colliding["interval_id"].min() == 0          # restarts from 0
+
+    with pytest.raises(ValueError, match="interval_id"):
+        rt.aggregate_speeds(pd.concat([obs_a, colliding], ignore_index=True))
+
+    offset = int(res_a["intervals"]["interval_id"].max()) + 1
+    obs_b = rt.derive_speeds(straight_net, m_b, pts_b,
+                             interval_id_start=offset)["edge_observations"]
+    assert obs_b["interval_id"].min() == offset
+    combined = pd.concat([obs_a, obs_b], ignore_index=True)
+    out = rt.aggregate_speeds(combined, output_unit="mps")
+    assert out["n"].sum() == len(obs_a["interval_id"].unique()) + \
+        len(obs_b["interval_id"].unique())
