@@ -397,3 +397,108 @@ def test_unusable_variances_are_dropped_with_a_warning():
                                   weight_by_variance=True)
     assert out["n"].iloc[0] == 1
     assert out["mean_speed"].iloc[0] == pytest.approx(10.0)
+
+
+# ------------------------------------------------ quality flag consumption
+def _q(hour, speed_mps, quality, *, interval_id, edge_id=0):
+    return [{"edge_id": edge_id, "speed_mps": speed_mps, "quality": quality,
+             "interval_id": interval_id,
+             "time": pd.Timestamp(f"2026-06-01 {hour:02d}:15:00")}]
+
+
+def test_require_quality_drops_flagged_observations():
+    """derive_speeds flags intervals it does not trust; until now nothing in
+    the package could act on that flag."""
+    df = pd.DataFrame(_q(8, 10.0, True, interval_id=0)
+                      + _q(8, 99.0, False, interval_id=1))
+    every = rt.aggregate_speeds(df, output_unit="mps")
+    good = rt.aggregate_speeds(df, output_unit="mps", require_quality=True)
+    assert every["n"].iloc[0] == 2
+    assert good["n"].iloc[0] == 1
+    assert good["mean_speed"].iloc[0] == pytest.approx(10.0)
+
+
+def test_require_quality_without_the_column_raises():
+    df = pd.DataFrame(obs(8, 10.0, interval_id=0))
+    with pytest.raises(ValueError, match="quality"):
+        rt.aggregate_speeds(df, require_quality=True)
+
+
+def test_require_quality_reaches_assign_speeds(straight_net):
+    df = pd.DataFrame(_q(8, 10.0, True, interval_id=0)
+                      + _q(8, 99.0, False, interval_id=1))
+    rt.assign_speeds(straight_net, df, require_quality=True)
+    assert straight_net.edge_data(0)["obs_speed_mps"] == pytest.approx(10.0)
+
+
+def test_require_quality_reaches_day_type_report():
+    df = pd.DataFrame(_q(8, 10.0, True, interval_id=0)
+                      + _q(8, 99.0, False, interval_id=1))
+    rep = rt.day_type_report(df, groups={"wk": "weekday"}, output_unit="mps",
+                             require_quality=True)
+    assert rep["groups"]["wk"]["n"] == 1
+    assert rep["groups"]["wk"]["overall_speed"] == pytest.approx(10.0)
+
+
+def test_day_type_report_can_weight_by_variance():
+    rows = (_var_obs(8, 10.0, 1.0, interval_id=0)
+            + _var_obs(8, 20.0, 4.0, interval_id=1))
+    rep = rt.day_type_report(pd.DataFrame(rows), groups={"wk": "weekday"},
+                             statistic="mean", output_unit="mps",
+                             weight_by_variance=True)
+    assert rep["groups"]["wk"]["overall_speed"] == pytest.approx(12.0)
+
+
+# ------------------------------------------------ congestion vs posted limit
+def _limit_net(tmp_path, maxspeed="72 km/h"):   # 72 km/h == exactly 20 m/s
+    from conftest import line_feature, write_geojson
+    return rt.Network.from_geojson(write_geojson(tmp_path / "lim.json", [
+        line_feature([[0, 0], [0.01, 0]], highway="primary", maxspeed=maxspeed),
+    ]))
+
+
+def test_congestion_report_ratio_against_posted_limit(tmp_path):
+    net = _limit_net(tmp_path)
+    df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))     # half the limit
+    rep = rt.congestion_report(net, df, output_unit="mps")
+    row = rep["edges"].set_index("edge_id").loc[0]
+    assert row["observed_speed"] == pytest.approx(10.0)
+    assert row["speed_limit"] == pytest.approx(20.0)
+    assert row["ratio"] == pytest.approx(0.5)
+
+
+def test_congestion_report_unrated_edge_has_nan_ratio(tmp_path):
+    from conftest import line_feature, write_geojson
+    net = rt.Network.from_geojson(write_geojson(tmp_path / "n.json", [
+        line_feature([[0, 0], [0.01, 0]], highway="primary"),   # no maxspeed
+    ]))
+    df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))
+    rep = rt.congestion_report(net, df, output_unit="mps")
+    row = rep["edges"].set_index("edge_id").loc[0]
+    assert np.isnan(row["speed_limit"]) and np.isnan(row["ratio"])
+    assert rep["summary"]["n_edges_rated"] == 0
+
+
+def test_congestion_report_reports_speeding_honestly(tmp_path):
+    """Observed above the limit is real information, not something to clip."""
+    net = _limit_net(tmp_path)
+    df = pd.DataFrame(obs(8, 25.0, edge_id=0, n=3))
+    rep = rt.congestion_report(net, df, output_unit="mps")
+    assert rep["edges"].set_index("edge_id").loc[0]["ratio"] == pytest.approx(1.25)
+
+
+def test_congestion_report_by_hour(tmp_path):
+    net = _limit_net(tmp_path)
+    df = pd.DataFrame(obs(8, 5.0, edge_id=0, n=3) + obs(14, 20.0, edge_id=0, n=3))
+    rep = rt.congestion_report(net, df, output_unit="mps", block_hours=1)
+    e = rep["edges"].set_index("block_start_hour")
+    assert e.loc[8, "ratio"] == pytest.approx(0.25)
+    assert e.loc[14, "ratio"] == pytest.approx(1.0)
+
+
+def test_congestion_report_summary(tmp_path):
+    net = _limit_net(tmp_path)
+    df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))
+    s = rt.congestion_report(net, df, output_unit="mps")["summary"]
+    assert s["n_edges_rated"] == 1
+    assert s["median_ratio"] == pytest.approx(0.5)

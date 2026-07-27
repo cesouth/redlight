@@ -24,6 +24,7 @@ peak_analysis         : identify peak / off-peak periods.
 classify_hours        : split the day into peak vs off-peak hour blocks.
 day_type_report       : compare traffic across day-types (weekday vs weekend by
                         default) -- overall/hourly/peak speeds and their delta.
+congestion_report     : observed speed as a fraction of the posted speed limit.
 assign_speeds         : write a single aggregated speed onto network edges.
 assign_segment_speeds : write overall / peak / off-peak speeds onto network edges.
 Router                : shortest path by time (per regime), distance, or cost.
@@ -43,6 +44,7 @@ from .aggregate import (
     assign_segment_speeds,
     assign_speeds,
     classify_hours,
+    congestion_report,
     day_type_report,
     peak_analysis,
 )
@@ -56,7 +58,7 @@ from .routing import Router
 from .speeds import derive_speeds
 from .units import SpeedUnit, from_mps, to_mps
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "SpeedUnit",
@@ -77,6 +79,7 @@ __all__ = [
     "classify_hours",
     "assign_segment_speeds",
     "day_type_report",
+    "congestion_report",
     "Router",
     "to_geojson",
     "plot_speed_map",

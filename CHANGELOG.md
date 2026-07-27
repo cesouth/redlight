@@ -6,10 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (0.x: minor versions may contain breaking changes, noted below).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-27
 
 ### Added
 
+- **`congestion_report`** -- observed speed as a fraction of the **posted**
+  limit, per edge and optionally per time block. The standard level-of-service
+  framing, and the thing raw speeds cannot tell you: in one worked case a
+  motorway at 17.9 mph and a side street at 20.1 mph look comparable until you
+  divide by their limits, at which point the motorway is running at 0.28 of
+  what it should and the side street at 0.81. Ratios are **not clipped at
+  1.0** (traffic above the limit is a real finding) and edges with no usable
+  limit report NaN rather than being dropped, so coverage gaps stay visible.
+- **`require_quality=True`** on `aggregate_speeds`, `classify_hours`,
+  `assign_speeds`, `assign_segment_speeds` and `day_type_report`. `derive_speeds`
+  has always flagged intervals it does not trust -- below the SNR floor, bad
+  `dt`, bad snap distance -- and `speeds.py` has always said "keep `quality`
+  rows for aggregation", but **nothing in the package consumed the flag**:
+  filtering it was left as something every caller had to remember by hand, and
+  forgetting it silently pulled known-bad intervals into headline numbers.
 - **Inverse-variance weighting for the mean** — `aggregate_speeds(...,
   weight_by_variance=True)`. `derive_speeds` has always reported a
   per-interval `speed_var`, and the docs have always said it "supports
@@ -24,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/statistics.md` for what the weighted SEM does and does not claim.
 - **`derive_speeds(..., interval_id_start=)`** so the output of separate runs
   can be given non-overlapping interval ids and safely concatenated.
+
+### Changed
+
+- The cleaning prologue shared by `aggregate_speeds`, `assign_speeds` and
+  `assign_segment_speeds` (drop unmatched, drop missing speeds, apply `days=`)
+  is now one `_prepare` helper rather than three copies that had begun to
+  diverge, so those entry points cannot disagree about what counts as a usable
+  observation. `_usable_speed` likewise moved to `units.py`, shared by the
+  router's posted-limit fallback and `congestion_report`.
 
 ### Fixed
 
@@ -54,8 +78,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected the advertised test counts in `README.md` and `docs/methodology.md`
   (long stale at 136 and 122), and the import path documented for
   `parse_maxspeed`, which is not re-exported on the top-level namespace.
-
-### Added
 
 - **OSM posted speed limits are now parsed and used as a per-edge routing
   fallback.** `roadtraffic.osm.parse_maxspeed` converts an OSM `maxspeed` tag

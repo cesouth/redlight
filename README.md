@@ -67,6 +67,12 @@ support is an opt-in extra.
   Leaflet / Mapbox, or render a quick static PNG trafficability map
   (`pip install roadtraffic[mapping]`) — for any of the three time regimes
   (`period="peak"`).
+- **Congestion vs. the posted limit.** `congestion_report` divides observed
+  speed by each road's OSM speed limit — the standard level-of-service view,
+  and the one raw speeds can't give you: a motorway at 18 mph and a side
+  street at 20 mph look alike until you see they're at 0.28 and 0.81 of their
+  respective limits. Optional `require_quality=True` across the aggregation
+  functions keeps only the intervals `derive_speeds` actually vouched for.
 - **Network structure diagnostics.** Travel-time-weighted edge betweenness
   centrality to find chokepoints (not just topologically central roads),
   basic network stats (circuity, streets-per-node, intersection/dead-end
@@ -99,7 +105,7 @@ From source:
 git clone https://github.com/cesouth/roadtraffic.git
 cd roadtraffic
 pip install -e .[dev]
-pytest  # 213 offline tests, ~7 s
+pytest  # 223 offline tests, ~7 s
 ```
 
 ---

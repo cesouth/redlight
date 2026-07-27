@@ -5,6 +5,7 @@ mph, kph, or m/s; this module converts to and from the canonical m/s.
 """
 from __future__ import annotations
 
+import math
 from enum import Enum
 
 # Exact conversion factors (1 mile = 1609.344 m, 1 km = 1000 m).
@@ -124,3 +125,25 @@ def from_mps(value, unit: SpeedUnit):
     if unit is SpeedUnit.KPH:
         return value / _KPH_TO_MPS
     return value
+
+
+def _usable_speed(value) -> float | None:
+    """``value`` as a positive finite speed in m/s, or ``None`` if unusable.
+
+    Screens speeds that arrive from outside this package -- a caller's own
+    GeoJSON/Shapefile column, or a hand-set edge attribute -- before they are
+    divided by or divided into. A plain truthiness test is not enough:
+    **NaN is truthy**, so it would pass and then silently turn every number
+    derived from it into NaN; infinity would instead make a travel time zero
+    or a congestion ratio zero.
+
+    Uses ``float()`` rather than ``isinstance(value, float)`` because numpy
+    scalars (``numpy.float32``) are not Python float subclasses but are
+    perfectly good speeds -- the same trap that let a float32 NaN past
+    ``analysis._invalid_weight``.
+    """
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return speed if math.isfinite(speed) and speed > 0 else None

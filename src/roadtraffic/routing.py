@@ -20,41 +20,16 @@ cost of the cheapest acceptable parallel edge.
 """
 from __future__ import annotations
 
-import math
 from typing import Callable
 
 import numpy as np
-
-
-def _usable_speed(value) -> float | None:
-    """``value`` as a positive finite speed in m/s, or ``None`` if unusable.
-
-    Edge attributes are not always written by this package: a caller's own
-    GeoJSON/Shapefile can carry a ``maxspeed_mps`` column straight onto the
-    graph (an empty numeric field in a Shapefile arrives as NaN), and that
-    value is then used without ever passing through
-    :func:`~roadtraffic.osm.parse_maxspeed`. A plain truthiness test is not
-    enough to screen it: **NaN is truthy**, so it would sail through and turn
-    every travel time computed from it -- and the route total that sums them
-    -- into NaN, with no error and no warning. Infinity would instead make the
-    edge free to cross. Both, plus non-positive and non-numeric values, are
-    rejected here so the caller can fall back to a speed it trusts.
-
-    ``float()`` rather than ``isinstance(..., float)`` because numpy scalars
-    (``numpy.float32``) are not Python float subclasses but are perfectly good
-    speeds -- the same trap that let a float32 NaN past
-    ``analysis._invalid_weight``.
-    """
-    try:
-        speed = float(value)
-    except (TypeError, ValueError):
-        return None
-    return speed if math.isfinite(speed) and speed > 0 else None
 
 try:
     import networkx as nx
 except ImportError as exc:  # pragma: no cover
     raise ImportError("roadtraffic requires networkx.") from exc
+
+from .units import _usable_speed
 
 
 class Router:

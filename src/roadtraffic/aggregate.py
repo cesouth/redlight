@@ -30,7 +30,7 @@ from functools import reduce
 import numpy as np
 import pandas as pd
 
-from .units import SpeedUnit, from_mps
+from .units import SpeedUnit, _usable_speed, from_mps
 
 
 def _require_speed_mps(df: pd.DataFrame, fn_name: str) -> None:
@@ -149,6 +149,32 @@ def _filter_days(df: pd.DataFrame, days: frozenset | None) -> pd.DataFrame:
     return df[np.isin(dow, list(days))]
 
 
+def _prepare(matched: pd.DataFrame, *, days=None,
+             require_quality: bool = False,
+             fn_name: str = "aggregate") -> pd.DataFrame:
+    """The cleaning prologue every speed consumer in this module shares.
+
+    Drops unmatched rows and missing speeds, applies the ``days=`` weekday
+    filter, and -- when asked -- keeps only observations ``derive_speeds``
+    flagged ``quality=True``. Kept in one place so the three entry points
+    (:func:`aggregate_speeds`, :func:`assign_speeds`,
+    :func:`assign_segment_speeds`) cannot drift apart on what "usable
+    observation" means.
+    """
+    df = _drop_unmatched(matched)
+    df = df[~df["speed_mps"].isna()]
+    df = _filter_days(df, _resolve_days(days))
+    if require_quality:
+        if "quality" not in df.columns:
+            raise ValueError(
+                f"{fn_name}: require_quality=True needs a 'quality' column, "
+                "which derive_speeds emits. A frame straight from a matcher "
+                "has no per-observation quality assessment to filter on."
+            )
+        df = df[df["quality"].astype(bool)]
+    return df
+
+
 # The columns that identify the measurement an ``interval_id`` names. In
 # ``derive_speeds``' edge_observations the rows sharing an interval_id are the
 # same measurement attributed to several edges, so they agree on all of these
@@ -203,6 +229,7 @@ def aggregate_speeds(
     dedup_intervals: bool = True,
     days=None,
     weight_by_variance: bool = False,
+    require_quality: bool = False,
 ) -> pd.DataFrame:
     """Aggregate speeds into time bins.
 
@@ -280,11 +307,9 @@ def aggregate_speeds(
             stacklevel=2,
         )
 
-    day_set = _resolve_days(days)
     _require_speed_mps(matched, "aggregate_speeds")
-    df = _drop_unmatched(matched)
-    df = df[~df["speed_mps"].isna()]
-    df = _filter_days(df, day_set)
+    df = _prepare(matched, days=days, require_quality=require_quality,
+                  fn_name="aggregate_speeds")
     if weight_by_variance:
         if "speed_var" not in df.columns:
             raise ValueError(
@@ -503,6 +528,7 @@ def classify_hours(
     n_offpeak: int | None = None,
     min_samples: int = 1,
     days=None,
+    require_quality: bool = False,
 ) -> dict:
     """Split the 24 hours of the day into a peak and an off-peak block.
 
@@ -571,6 +597,7 @@ def classify_hours(
     agg = aggregate_speeds(
         matched, block_hours=1, statistic=statistic, output_unit="mps",
         by_edge=False, min_samples=min_samples, days=days,
+        require_quality=require_quality,
     )
     if len(agg) == 0:
         raise ValueError(
@@ -654,6 +681,7 @@ def assign_segment_speeds(
     default_speed_mps: float | None = None,
     min_samples: int = 1,
     days=None,
+    require_quality: bool = False,
 ) -> dict:
     """Write three representative speeds per edge: overall, peak, off-peak.
 
@@ -706,15 +734,14 @@ def assign_segment_speeds(
     cls = classify_hours(
         matched, statistic=statistic, peak_hours=peak_hours,
         offpeak_hours=offpeak_hours, n_peak=n_peak, n_offpeak=n_offpeak,
-        min_samples=min_samples, days=days,
+        min_samples=min_samples, days=days, require_quality=require_quality,
     )
     peak_set = set(cls["peak_hours"])
     off_set = set(cls["offpeak_hours"])
 
     day_set = _resolve_days(days)
-    df = _drop_unmatched(matched)
-    df = df[~df["speed_mps"].isna()]
-    df = _filter_days(df, day_set)
+    df = _prepare(matched, days=days, require_quality=require_quality,
+                  fn_name="assign_segment_speeds")
     hod = pd.to_datetime(df["time"]).dt.hour.to_numpy()
 
     regimes = {
@@ -788,6 +815,7 @@ def assign_speeds(
     block_hours: int = 24,
     target_hour: int | None = None,
     days=None,
+    require_quality: bool = False,
 ) -> dict:
     """Compute a representative speed per edge and write it onto the graph.
 
@@ -824,9 +852,8 @@ def assign_speeds(
         observations (not the default fallback).
     """
     _require_speed_mps(matched, "assign_speeds")
-    df = _drop_unmatched(matched)
-    df = df[~df["speed_mps"].isna()]
-    df = _filter_days(df, _resolve_days(days))
+    df = _prepare(matched, days=days, require_quality=require_quality,
+                  fn_name="assign_speeds")
     if target_hour is not None:
         t = pd.to_datetime(df["time"])
         bs = (target_hour // block_hours) * block_hours
@@ -873,6 +900,8 @@ def day_type_report(
     n_peak: int = 1,
     n_offpeak: int = 1,
     min_samples: int = 1,
+    weight_by_variance: bool = False,
+    require_quality: bool = False,
 ) -> dict:
     """Compare traffic across day-types -- weekday vs weekend by default.
 
@@ -961,6 +990,8 @@ def day_type_report(
         overall_agg = aggregate_speeds(
             matched, block_hours=24, statistic=statistic,
             output_unit=unit, by_edge=False, days=selector,
+            weight_by_variance=weight_by_variance,
+            require_quality=require_quality,
         )
         if len(overall_agg):
             overall = float(overall_agg[speed_col].iloc[0])
@@ -971,7 +1002,8 @@ def day_type_report(
         hourly = aggregate_speeds(
             matched, block_hours=block_hours, statistic=statistic,
             output_unit=unit, by_edge=False, min_samples=min_samples,
-            days=selector,
+            days=selector, weight_by_variance=weight_by_variance,
+            require_quality=require_quality,
         )
         peak = offpeak = None
         if len(hourly):
@@ -1047,3 +1079,118 @@ def day_type_report(
         "overall": overall_summary,
         "comparison": comp,
     }
+
+
+def congestion_report(
+    network,
+    matched: pd.DataFrame,
+    *,
+    statistic: str = "median",
+    output_unit="mph",
+    block_hours: int | None = None,
+    days=None,
+    min_samples: int = 1,
+    require_quality: bool = False,
+    weight_by_variance: bool = False,
+) -> dict:
+    """Observed speed as a fraction of the posted limit, per edge.
+
+    The standard level-of-service framing: congestion is the gap between how
+    fast a road is *allowed* to run and how fast it *actually* ran. A ratio of
+    1.0 means traffic moved at the posted limit; 0.45 means it crawled at 45%
+    of it. Needs the ``maxspeed_mps`` edge attribute, which
+    :meth:`~roadtraffic.network.Network.from_geojson` and friends parse from an
+    OSM ``maxspeed`` tag at load time.
+
+    Parameters
+    ----------
+    network : roadtraffic.network.Network
+        Supplies the posted limits. Edges with no usable ``maxspeed_mps``
+        (absent, or a NaN/non-positive value from the caller's own source
+        data) are reported with a NaN limit and ratio rather than dropped, so
+        the coverage gap stays visible.
+    matched : DataFrame
+        Speed observations, as :func:`aggregate_speeds` takes them.
+    statistic : {"median", "mean"}
+        Summary statistic for the observed speed. Median is the robust default.
+    output_unit : str or SpeedUnit
+        Unit for the two reported speeds. ``ratio`` is dimensionless.
+    block_hours : int, optional
+        ``None`` (default) gives one row per edge over the whole period. An
+        integer additionally bins by time of day, giving one row per edge per
+        block and a ``block_start_hour`` column -- the way to see a corridor
+        drop to 40% of its limit at 08:00 and recover by 14:00.
+    days, min_samples, require_quality, weight_by_variance
+        Passed through to :func:`aggregate_speeds`.
+
+    Returns
+    -------
+    dict
+        ``edges`` : DataFrame with ``edge_id``, ``observed_speed``,
+            ``speed_limit``, ``ratio``, ``n`` (plus ``block_start_hour`` and
+            ``block_label`` when ``block_hours`` is set). ``ratio`` is
+            ``observed / limit``, **not clipped at 1.0** -- traffic observed
+            above the posted limit is a real finding, and silently capping it
+            would hide it.
+        ``summary`` : ``n_rows``, ``n_edges_observed``, ``n_edges_rated``
+            (observed *and* carrying a usable limit -- the only ones a ratio
+            exists for), ``median_ratio``/``mean_ratio`` over those, and
+            ``unit``/``statistic`` echoes.
+
+    Notes
+    -----
+    A posted limit is a legal maximum, not a free-flow speed: roads routinely
+    run below their limit for reasons other than congestion (geometry, signals,
+    parking), and a ratio near 1.0 on a road whose limit is unrealistically low
+    is not evidence of free flow. Treat the ratio as a screening indicator, and
+    prefer comparing a road against *itself* across time blocks over comparing
+    different roads against each other.
+    """
+    if statistic not in {"mean", "median"}:
+        raise ValueError("statistic must be 'mean' or 'median'.")
+    unit = SpeedUnit.parse(output_unit)
+    speed_col = "median_speed" if statistic == "median" else "mean_speed"
+
+    agg = aggregate_speeds(
+        matched, by_edge=True, statistic=statistic, output_unit=unit,
+        block_hours=24 if block_hours is None else block_hours,
+        days=days, min_samples=min_samples, require_quality=require_quality,
+        weight_by_variance=weight_by_variance,
+    )
+
+    keep = ["edge_id", speed_col, "n"]
+    if block_hours is not None:
+        keep = ["edge_id", "block_start_hour", "block_label", speed_col, "n"]
+    edges = (agg[keep].rename(columns={speed_col: "observed_speed"})
+             if len(agg) else
+             pd.DataFrame({c: pd.Series([], dtype="float64") for c in keep}
+                          | {"observed_speed": pd.Series([], dtype="float64")}))
+
+    # posted limit per edge, in the reported unit; NaN where unusable/absent
+    limits = {}
+    for eid in network.edge_ids:
+        mps = _usable_speed(network.edge_data(int(eid)).get("maxspeed_mps"))
+        limits[int(eid)] = (float(from_mps(mps, unit)) if mps is not None
+                            else float("nan"))
+    edges = edges.copy()
+    edges["speed_limit"] = edges["edge_id"].map(limits).astype(float)
+    edges["ratio"] = edges["observed_speed"] / edges["speed_limit"]
+    if len(edges):
+        sort_cols = (["edge_id"] if block_hours is None
+                     else ["edge_id", "block_start_hour"])
+        edges = edges.sort_values(sort_cols).reset_index(drop=True)
+
+    rated = edges["ratio"].notna() if len(edges) else edges.index
+    ratios = edges.loc[rated, "ratio"] if len(edges) else pd.Series(dtype=float)
+    summary = {
+        "statistic": statistic,
+        "unit": unit.value,
+        "block_hours": block_hours,
+        "n_rows": int(len(edges)),
+        "n_edges_observed": int(edges["edge_id"].nunique()) if len(edges) else 0,
+        "n_edges_rated": (int(edges.loc[rated, "edge_id"].nunique())
+                          if len(edges) else 0),
+        "median_ratio": float(ratios.median()) if len(ratios) else float("nan"),
+        "mean_ratio": float(ratios.mean()) if len(ratios) else float("nan"),
+    }
+    return {"edges": edges, "summary": summary}

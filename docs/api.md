@@ -227,7 +227,7 @@ is preserved. A dwell is a run of points within `dwell_radius_m` for ≥
 
 ## Aggregation & peaks
 
-### `aggregate_speeds(matched, *, block_hours=1, statistic="mean", output_unit="mph", by_edge=False, min_samples=1, dedup_intervals=True, days=None, weight_by_variance=False) -> DataFrame`
+### `aggregate_speeds(matched, *, block_hours=1, statistic="mean", output_unit="mph", by_edge=False, min_samples=1, dedup_intervals=True, days=None, weight_by_variance=False, require_quality=False) -> DataFrame`
 
 Bin by hour (`block_hours=1`) or N-hour block. `statistic` ∈
 `{"mean", "median", "both"}`.
@@ -253,7 +253,7 @@ the study area isn't already local. Same `days=` is accepted by `classify_hours`
 `assign_speeds`, and `assign_segment_speeds`; `day_type_report` wraps the whole
 weekday-vs-weekend comparison.
 
-### `day_type_report(matched, *, statistic="median", output_unit="mph", block_hours=1, groups=None, n_peak=1, n_offpeak=1, min_samples=1) -> dict`
+### `day_type_report(matched, *, statistic="median", output_unit="mph", block_hours=1, groups=None, n_peak=1, n_offpeak=1, min_samples=1, weight_by_variance=False, require_quality=False) -> dict`
 
 Compare traffic across day-types — **weekday vs weekend by default**. For each
 group it reports the network-wide overall speed, the full per-hour/block
@@ -273,6 +273,30 @@ own `{label: day-selector}` to compare arbitrary groupings (e.g.
 accepts. A day-type with no observations is reported with `n=0`/NaN and a
 warning, never an error.
 
+### `congestion_report(network, matched, *, statistic="median", output_unit="mph", block_hours=None, days=None, min_samples=1, require_quality=False, weight_by_variance=False) -> dict`
+
+Observed speed as a fraction of the **posted** speed limit — the standard
+level-of-service framing, and the thing raw speeds cannot tell you: a motorway
+at 18 mph and a side street at 20 mph look similar until you divide by their
+limits (0.28 vs 0.81). Requires the `maxspeed_mps` edge attribute, parsed from
+OSM `maxspeed` at load time.
+
+Returns `edges` (DataFrame: `edge_id`, `observed_speed`, `speed_limit`,
+`ratio`, `n`, plus `block_start_hour`/`block_label` when `block_hours` is set)
+and `summary` (`n_rows`, `n_edges_observed`, `n_edges_rated`, `median_ratio`,
+`mean_ratio`). `block_hours=None` gives one row per edge; an integer bins by
+time of day as well.
+
+`ratio` is **not clipped at 1.0** — traffic above the posted limit is a real
+finding. Edges with no usable limit get a NaN limit and ratio rather than being
+dropped, so the coverage gap stays visible. A posted limit is a legal maximum,
+not a free-flow speed: prefer comparing a road against *itself* across time
+blocks over comparing different roads to each other.
+
+**`require_quality=True`** (on the aggregation functions above) keeps only
+observations `derive_speeds` flagged `quality=True`, instead of leaving that
+filter as something every caller has to remember to apply by hand.
+
 ### `peak_analysis(aggregated, *, statistic="mean", n_peak=1, n_offpeak=1) -> dict`
 
 Ranks network-wide bins; **slowest = peak**. Returns
@@ -284,7 +308,7 @@ number of bins (the lists would overlap).
 
 ## Speed assignment & routing
 
-### `assign_speeds(network, matched, *, statistic="median", default_speed_mps=None, block_hours=24, target_hour=None, days=None) -> dict`
+### `assign_speeds(network, matched, *, statistic="median", default_speed_mps=None, block_hours=24, target_hour=None, days=None, require_quality=False) -> dict`
 
 Computes a per-edge representative speed (optionally restricted to a time-of-day
 block via `target_hour`, and/or to particular weekdays via `days=` — see
@@ -292,7 +316,7 @@ block via `target_hour`, and/or to particular weekdays via `days=` — see
 `aggregate_speeds`, there is no `output_unit`, since this output feeds the
 router, not display) and `travel_time_s` onto the graph. Returns coverage counts.
 
-### `classify_hours(matched, *, statistic="median", peak_hours=None, offpeak_hours=None, n_peak=None, n_offpeak=None, min_samples=1, days=None) -> dict`
+### `classify_hours(matched, *, statistic="median", peak_hours=None, offpeak_hours=None, n_peak=None, n_offpeak=None, min_samples=1, days=None, require_quality=False) -> dict`
 
 Split the 24 hours into a peak and an off-peak block. Three modes:
 
@@ -312,7 +336,7 @@ window scores in window mode. `days=` (see `aggregate_speeds`) classifies peak
 windows from a single day-type; it has no effect in explicit-override mode. See
 [statistics §9](statistics.md).
 
-### `assign_segment_speeds(network, matched, *, statistic="median", peak_hours=None, offpeak_hours=None, n_peak=None, n_offpeak=None, default_speed_mps=None, min_samples=1, days=None) -> dict`
+### `assign_segment_speeds(network, matched, *, statistic="median", peak_hours=None, offpeak_hours=None, n_peak=None, n_offpeak=None, default_speed_mps=None, min_samples=1, days=None, require_quality=False) -> dict`
 
 Write three representative speeds per edge — `obs_speed_mps_{overall,peak,offpeak}`
 with matching `travel_time_s_{…}` (and the plain `obs_speed_mps`/`travel_time_s` =
