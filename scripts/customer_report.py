@@ -264,41 +264,6 @@ def _table(headers, rows, caption=None) -> str:
 # --------------------------------------------------------------------------- #
 # Pipeline
 # --------------------------------------------------------------------------- #
-def _attach_accuracy(pts, path: str, col: str, sep=None):
-    """Re-attach a source column that ``load_points`` did not carry through.
-
-    ``load_points`` builds a canonical frame (point_id, traj_id, lon, lat, time,
-    speed_mps) and drops everything else -- so a horizontal-accuracy column is
-    gone by the time ``derive_speeds(pos_accuracy_col=...)`` looks for it, and
-    every point silently falls back to ``default_pos_sigma_m``. That is the
-    difference between a per-point error model and a single assumed sigma, so
-    it is worth restoring rather than accepting.
-
-    ``point_id`` is a positional index into the *source* rows and survives the
-    row-dropping that ``load_points`` does (rows are filtered, not renumbered),
-    so it realigns the column exactly -- the same idiom ``points.py`` itself
-    uses to re-read a speed column after dropping rows.
-    """
-    lower = path.lower()
-    if lower.endswith((".geojson", ".json")):
-        import json
-        with open(path, encoding="utf-8") as fh:
-            feats = json.load(fh).get("features", [])
-        source = pd.DataFrame([f.get("properties") or {} for f in feats])
-    else:
-        if sep is None:
-            sep = "\t" if lower.endswith((".tsv", ".tab")) else ","
-        source = pd.read_csv(path, sep=sep)
-    if col not in source.columns:
-        return False
-    pid = pts.df["point_id"].to_numpy()
-    if pid.max() >= len(source):
-        return False                      # cannot align; better none than wrong
-    pts.df[col] = pd.to_numeric(
-        source[col].iloc[pid].to_numpy(), errors="coerce")
-    return True
-
-
 def run_pipeline(args, notes: list) -> dict:
     """Load, match, derive, clean and aggregate. Returns everything the deck needs."""
     print(f"[1/7] network  <- {args.network}", file=sys.stderr)
@@ -323,11 +288,6 @@ def run_pipeline(args, notes: list) -> dict:
             "robust to the receiver's own instantaneous-speed estimate.")
 
     acc = args.accuracy_col
-    if acc and acc not in pdf.columns:
-        # load_points keeps only its canonical columns, so the accuracy column
-        # has to be reattached before derive_speeds can use it.
-        _attach_accuracy(pts, args.points, acc)
-        pdf = pts.df
     if acc and acc in pdf.columns:
         a = pd.to_numeric(pdf[acc], errors="coerce")
         med = float(a.median()) if a.notna().any() else float("nan")

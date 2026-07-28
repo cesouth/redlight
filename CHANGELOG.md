@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (0.x: minor versions may contain breaking changes, noted below).
 
+## [Unreleased]
+
+### Fixed
+
+- **`load_points` no longer discards the source's extra columns**, which made
+  `derive_speeds(pos_accuracy_col=...)` unreachable in practice: the loader
+  built a canonical frame (`point_id`, `traj_id`, `lon`, `lat`, `time`,
+  `speed_mps`) and dropped everything else, so a per-point horizontal-accuracy
+  column was gone by the time `derive_speeds` looked for it and every point
+  silently fell back to the assumed `default_pos_sigma_m`. The per-point error
+  model was therefore inert for anyone loading data the documented way -- on a
+  sample dataset, restoring it tightens the median speed uncertainty by 36%
+  (0.707 -> 0.451 m/s). Extras are now attached *before* the row-dropping
+  passes, so they are filtered along with their own rows; re-attaching them
+  afterwards is not sound, because `point_id` is renumbered after the drop and
+  so cannot serve as a key back into the source. New `keep_cols=` selects a
+  subset (`[]` restores the old lean frame), and a source column colliding with
+  a canonical name is preserved as `<name>_src`.
+
 ## [0.4.0] - 2026-07-27
 
 ### Added

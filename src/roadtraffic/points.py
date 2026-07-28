@@ -229,6 +229,7 @@ def load_points(
     tz: str | None = None,
     sep: str | None = None,
     derive_speed: bool = False,
+    keep_cols=None,
 ) -> PointSet:
     """Load a GPS point file into a :class:`PointSet`.
 
@@ -350,6 +351,36 @@ def load_points(
         out["lat"] = pd.to_numeric(df[lat_col], errors="coerce").values
 
     out["time"] = _parse_times(df[time_col], timestamp_unit, tz)
+
+    # Carry through source columns the canonical schema does not name -- a
+    # per-point horizontal accuracy above all, since
+    # :func:`roadtraffic.speeds.derive_speeds` reads its ``pos_accuracy_col``
+    # straight off this frame and silently falls back to an assumed constant
+    # sigma when the column is absent. Attached here, BEFORE the row drops
+    # below, so the extras are filtered along with their own rows: any scheme
+    # that re-attaches them afterwards has to reconstruct the alignment, and
+    # ``point_id`` cannot serve as the key because it is renumbered after the
+    # drop.
+    consumed = {lon_col, lat_col, time_col, speed_col, id_col} - {None}
+    if has_geom_coords:
+        consumed |= {"lon", "lat"}
+    extras = [c for c in df.columns if c not in consumed]
+    if keep_cols is not None:
+        wanted = set(keep_cols)
+        missing = wanted - set(df.columns)
+        if missing:
+            warnings.warn(
+                f"keep_cols requested column(s) not in the source: "
+                f"{sorted(missing)}.",
+                stacklevel=2,
+            )
+        extras = [c for c in extras if c in wanted]
+    for col in extras:
+        # A source column named like one this loader writes must not clobber
+        # it; preserve it under "<name>_src", as Network._build does for
+        # colliding edge attributes.
+        name = f"{col}_src" if col in out.columns else col
+        out[name] = df[col].values
 
     if has_traj:
         # a row with no id cannot belong to any trajectory; keeping it would

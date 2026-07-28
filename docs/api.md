@@ -94,7 +94,7 @@ plus all source properties (e.g. `highway`, `maxspeed`).
 
 ## Loading points
 
-### `load_points(path, *, speed_unit=None, lon_col=None, lat_col=None, time_col=None, speed_col=None, id_col=None, timestamp_unit=None, tz=None, sep=None, derive_speed=False) -> PointSet`
+### `load_points(path, *, speed_unit=None, lon_col=None, lat_col=None, time_col=None, speed_col=None, id_col=None, timestamp_unit=None, tz=None, sep=None, derive_speed=False, keep_cols=None) -> PointSet`
 
 Load GPS observations from CSV/TSV or GeoJSON Point features.
 
@@ -109,6 +109,7 @@ Load GPS observations from CSV/TSV or GeoJSON Point features.
 | `tz` | IANA timezone of the study area (e.g. `"America/New_York"`). Aware timestamps/epochs are converted to it; naive input is treated as UTC when `tz` is given. Stored times are always naive **local clock** — what hour-of-day peak statistics need. Aware input without `tz` warns. |
 | `sep` | Delimiter for text files; inferred from extension otherwise. |
 | `derive_speed` | If `True`, compute speed per unique id from successive GPS positions instead of reading a speed column (needs `id_col`). See [statistics §7](statistics.md). |
+| `keep_cols` | Source columns to carry through beyond the canonical ones. `None` (default) keeps **all** extras — notably a per-point accuracy column, which `derive_speeds(pos_accuracy_col=...)` reads straight off this frame. A list keeps only those; `[]` restores the lean canonical frame. A name colliding with a canonical column is preserved as `<name>_src`. |
 
 Three ways to end up with speed (or not): (1) a speed column is found/given —
 read and converted to m/s; (2) `derive_speed=True` — a per-point speed is
