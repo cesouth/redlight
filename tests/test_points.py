@@ -161,3 +161,78 @@ def test_save_round_trip_csv_and_geojson(make_points_csv, tmp_path):
         again = rt.load_points(out, speed_unit="mps")
         np.testing.assert_allclose(again.df["speed_mps"], pts.df["speed_mps"])
         np.testing.assert_allclose(again.df["lon"], pts.df["lon"])
+
+
+# ------------------------------------------------ extra source columns
+def test_extra_columns_are_preserved(make_points_csv):
+    """A per-point accuracy column must survive loading: derive_speeds'
+    pos_accuracy_col is otherwise unreachable and silently degrades to the
+    assumed default sigma."""
+    path = make_points_csv([
+        {"lon": 1.0, "lat": 2.0, "time": "2026-06-01T08:00:00",
+         "accuracy": 5.0, "sats": 11, "id": "a"},
+    ])
+    pts = rt.load_points(path)
+    assert pts.df["accuracy"].tolist() == [5.0]
+    assert pts.df["sats"].tolist() == [11]
+
+
+def test_extra_columns_stay_aligned_when_rows_are_dropped(make_points_csv):
+    """The alignment case that matters: a dropped row must take its own extra
+    values with it, not shift the column against the surviving points."""
+    path = make_points_csv([
+        {"lon": 1.0, "lat": 2.0, "time": "2026-06-01T08:00:00",
+         "accuracy": 5.0, "id": "a"},
+        {"lon": 1.0, "lat": 2.0, "time": "not-a-timestamp",
+         "accuracy": 99.0, "id": "a"},          # dropped: unparseable time
+        {"lon": 1.1, "lat": 2.1, "time": "2026-06-01T08:00:30",
+         "accuracy": 7.0, "id": "a"},
+    ])
+    with pytest.warns(UserWarning, match="Dropped"):
+        pts = rt.load_points(path)
+    assert pts.df["accuracy"].tolist() == [5.0, 7.0]     # never [5.0, 99.0]
+
+
+def test_keep_cols_selects_a_subset(make_points_csv):
+    path = make_points_csv([
+        {"lon": 1.0, "lat": 2.0, "time": "2026-06-01T08:00:00",
+         "accuracy": 5.0, "sats": 11, "id": "a"},
+    ])
+    pts = rt.load_points(path, keep_cols=["accuracy"])
+    assert "accuracy" in pts.df.columns
+    assert "sats" not in pts.df.columns
+
+
+def test_keep_cols_empty_restores_lean_frame(make_points_csv):
+    path = make_points_csv([
+        {"lon": 1.0, "lat": 2.0, "time": "2026-06-01T08:00:00",
+         "accuracy": 5.0, "id": "a"},
+    ])
+    pts = rt.load_points(path, keep_cols=[])
+    assert "accuracy" not in pts.df.columns
+
+
+def test_extra_column_colliding_with_canonical_is_suffixed(make_points_csv):
+    """A source column named like a canonical one must not overwrite it."""
+    path = make_points_csv([
+        {"longitude": 1.0, "latitude": 2.0, "time": "2026-06-01T08:00:00",
+         "point_id": "device-A-0007", "id": "a"},
+    ])
+    pts = rt.load_points(path)
+    assert pts.df["point_id"].tolist() == [0]             # canonical wins
+    assert pts.df["point_id_src"].tolist() == ["device-A-0007"]
+
+
+def test_accuracy_reaches_derive_speeds(straight_net, make_points_csv):
+    """End-to-end: the whole point of preserving the column."""
+    rows = drive_along_road(8, traj="a")
+    for i, r in enumerate(rows):
+        r["accuracy"] = 4.0 + i * 0.5
+    path = make_points_csv(rows)
+    pts = rt.load_points(path, id_col="id")
+    m = rt.NearestMatcher(straight_net, max_dist=60).match(pts)
+    tight = rt.derive_speeds(straight_net, m, pts, pos_accuracy_col="accuracy")
+    loose = rt.derive_speeds(straight_net, m, pts, default_pos_sigma_m=40.0)
+    # a ~4 m accuracy must yield a tighter speed uncertainty than an assumed 40 m
+    assert (tight["intervals"]["speed_sigma_mps"].median()
+            < loose["intervals"]["speed_sigma_mps"].median())
