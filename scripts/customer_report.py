@@ -11,14 +11,26 @@ time, a mover id and a horizontal-accuracy value are enough:
       -> dwell-aware + robust cleaning
       -> assign overall / peak / off-peak speeds onto the network
       -> analytics (temporal, day-type, congestion vs posted limit, structure)
-      -> a single self-contained HTML deck
+      -> the deliverable, in one of three formats
 
-The report is one ``.html`` file with every image inlined as base64, so it can
-be emailed as-is and opened with no dependencies, and printed to PDF from any
-browser (Ctrl/Cmd-P). It commits deliberately to a light, print-oriented look
-rather than following the reader's OS theme -- the embedded raster maps cannot
-re-theme, and a document that prints predictably is worth more here than one
-that adapts to a screen.
+Formats (``--format``, inferred from ``--out``'s extension when omitted):
+
+``html``
+    One self-contained file with every image inlined as base64 and a table view
+    under each figure. Emails as-is, opens with no dependencies, prints to PDF
+    from any browser (Ctrl/Cmd-P).
+``pdf``
+    A fixed, print-ready multi-page document. No dependencies beyond matplotlib,
+    but not editable and without the table views.
+``png``
+    A numbered PNG per section plus ``captions.md``, for dropping into your own
+    template or deck. ``--out`` names the directory; ``--dpi`` sets resolution.
+
+All three run the same analysis and share the same figures and section
+headings, so they cannot disagree with each other. The look commits
+deliberately to light, print-oriented styling rather than following the
+reader's OS theme -- the raster maps cannot re-theme, and a document that
+prints predictably is worth more here than one that adapts to a screen.
 
 Usage
 -----
@@ -29,7 +41,7 @@ Usage
         --tz America/New_York \\
         --title "Route 1 Corridor Study" \\
         --customer "Example County DOT" \\
-        --out report.html
+        --out report.html          # or report.pdf, or --format png --out figs/
 
 Requires the ``mapping`` extra for figures: ``pip install roadtraffic[mapping]``
 (matplotlib). Every stage degrades gracefully -- a study area with no posted
@@ -633,6 +645,58 @@ def fig_chokepoints(plt, net, bc):
 
 
 # --------------------------------------------------------------------------- #
+# Section headings, in one place so the HTML deck, the PDF and the PNG captions
+# cannot drift apart. ``sub`` is a template filled from the context built in
+# :func:`_section_ctx`.
+# --------------------------------------------------------------------------- #
+SECTIONS = [
+    ("coverage", "01 — Survey coverage", "Where the data actually is",
+     "Roads in grey were never traversed by the survey and carry no measured "
+     "speed. Every statistic in this report describes the blue extent only."),
+    ("speed_overall", "02 — Measured speed", "Overall speed by segment",
+     "The {statistic} speed across the whole survey period. Darker is faster."),
+    ("speed_peak", "03 — Peak vs off-peak",
+     "The same roads, at their worst and their best",
+     "Both maps share one colour scale, so they are directly comparable. Peak "
+     "hours ({peak_h}) were chosen from the data as the slowest contiguous "
+     "window; off-peak ({off_h}) the fastest."),
+    ("speed_offpeak", "03 — Peak vs off-peak (continued)",
+     "Off-peak speed by segment",
+     "The fastest contiguous window, on the same scale as the peak map."),
+    ("hourly", "04 — Time of day", "When the network slows down",
+     "Network-wide {statistic} speed by hour. Each interval counts once "
+     "regardless of how many segments it crossed, so the sample sizes are "
+     "independent measurements."),
+    ("daytype", "05 — Day type",
+     "Weekday and weekend traffic are different populations",
+     "Pooling them into one hour-of-day average hides both. Split here so a "
+     "Tuesday 09:00 is never averaged with a Saturday 09:00."),
+    ("congestion_map", "06 — Congestion vs posted limit",
+     "How the network performs against its own speed limits",
+     "A ratio of 1.00 means traffic moved at the posted limit; 0.45 means it "
+     "crawled at 45% of it. This is the comparison raw speeds cannot make."),
+    ("worst", "06 — Congestion vs posted limit (continued)",
+     "Worst-performing roads",
+     "One row per physical road, showing its slower direction."),
+    ("chokepoints", "07 — Network structure", "Chokepoints",
+     "Edge betweenness weighted by measured travel time: the share of fastest "
+     "routes that must cross each segment. This finds roads that are "
+     "structurally load-bearing, not merely central on a map."),
+]
+SECTION_META = {k: (e, h, sb) for k, e, h, sb in SECTIONS}
+
+
+def _section_ctx(args, R):
+    """Values the section ``sub`` templates interpolate."""
+    seg = R["seg"]
+    return {
+        "statistic": args.statistic,
+        "peak_h": ", ".join(f"{h:02d}:00" for h in seg["peak_hours"][:6]),
+        "off_h": ", ".join(f"{h:02d}:00" for h in seg["offpeak_hours"][:6]),
+    }
+
+
+# --------------------------------------------------------------------------- #
 # HTML
 # --------------------------------------------------------------------------- #
 CSS = """
@@ -925,6 +989,182 @@ def build_html(args, R, figs, notes) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Figures, then one renderer per output format
+# --------------------------------------------------------------------------- #
+def build_figures(plt, R, args) -> dict:
+    """Every figure the report can show, as live matplotlib figures.
+
+    Returned open rather than serialised so each renderer can decide what to do
+    with them -- base64 for the HTML deck, a page for the PDF, a file for the
+    PNG bundle -- without the analysis being run three times. Sections whose
+    data is missing are simply absent from the dict, and every renderer keys off
+    that rather than testing conditions again.
+    """
+    figs, net = {}, R["net"]
+    figs["coverage"] = fig_coverage(plt, net, R["seg"])
+    f, lim = fig_speed_map(plt, net, "overall", args.unit)
+    if f:
+        figs["speed_overall"] = f
+    # Peak and off-peak share the overall scale so the maps compare directly.
+    for period in ("peak", "offpeak"):
+        f, _ = fig_speed_map(plt, net, period, args.unit, vlim=lim)
+        if f:
+            figs[f"speed_{period}"] = f
+    if len(R["hourly"]):
+        figs["hourly"] = fig_hourly(plt, R["hourly"], args.unit, R["peaks"])
+    f = fig_daytype(plt, R["daytype"], args.unit)
+    if f:
+        figs["daytype"] = f
+    if R["congestion"]:
+        f = fig_congestion_map(plt, net, R["congestion"])
+        if f:
+            figs["congestion_map"] = f
+        f = fig_worst_corridors(plt, net, R["congestion"])
+        if f:
+            figs["worst"] = f
+    if R["bc"]:
+        f = fig_chokepoints(plt, net, R["bc"])
+        if f:
+            figs["chokepoints"] = f
+    return figs
+
+
+def render_html(args, R, live, notes, plt):
+    """Self-contained HTML deck: images inlined, prints to PDF from a browser."""
+    import io as _io
+    b64 = {}
+    for k, fig in live.items():
+        buf = _io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight",
+                    facecolor=fig.get_facecolor())
+        b64[k] = base64.b64encode(buf.getvalue()).decode("ascii")
+    html = build_html(args, R, b64, notes)
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(html)
+    return args.out
+
+
+def _pdf_text_page(plt, pdf, *, eyebrow, heading, paragraphs, tiles=None,
+                   size=(11.0, 8.5)):
+    """A text-only PDF page laid out to match the deck's typographic rhythm."""
+    fig = plt.figure(figsize=size, facecolor=SURFACE)
+    y = 0.90
+    if eyebrow:
+        fig.text(0.07, y, eyebrow.upper(), fontsize=9, color=MUTED,
+                 fontweight="bold")
+        y -= 0.045
+    fig.text(0.07, y, heading, fontsize=21, color=INK, fontweight="bold")
+    y -= 0.06
+    if tiles:
+        for i, (val, key) in enumerate(tiles):
+            x = 0.07 + (i % 4) * 0.225
+            row = i // 4
+            fig.text(x, y - row * 0.10, str(val), fontsize=20, color=INK,
+                     fontweight="bold")
+            fig.text(x, y - row * 0.10 - 0.032, key.upper(), fontsize=8,
+                     color=MUTED, fontweight="bold")
+        y -= 0.10 * (1 + (len(tiles) - 1) // 4) + 0.02
+    for para in paragraphs:
+        for line in textwrap.wrap(para, width=104) or [""]:
+            fig.text(0.07, y, line, fontsize=10.5, color=INK_2)
+            y -= 0.028
+        y -= 0.018
+    pdf.savefig(fig, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def render_pdf(args, R, live, notes, plt):
+    """Multi-page PDF -- no extra dependencies, fixed and print-ready."""
+    from matplotlib.backends.backend_pdf import PdfPages
+    ctx = _section_ctx(args, R)
+    pdf_ctx = R["points"]
+    t0, t1 = pdf_ctx["time"].min(), pdf_ctx["time"].max()
+    n_mov = (int(pdf_ctx["traj_id"].nunique())
+             if "traj_id" in pdf_ctx.columns else 0)
+    with PdfPages(args.out) as pdf:
+        _pdf_text_page(
+            plt, pdf, eyebrow="Trafficability study", heading=args.title,
+            tiles=[(f"{len(pdf_ctx):,}", "GPS fixes"), (f"{n_mov:,}", "Movers"),
+                   (f"{len(R['intervals']):,}", "Speed intervals"),
+                   (f"{max((t1 - t0).days + 1, 1):,}", "Days observed")],
+            paragraphs=[
+                args.customer,
+                f"Period {t0:%Y-%m-%d %H:%M} to {t1:%Y-%m-%d %H:%M}"
+                f"  |  network {R['net'].number_of_edges():,} edges"
+                f"  |  generated {datetime.now(timezone.utc):%Y-%m-%d} UTC",
+                "Speeds in this report were not read from the GPS receiver. "
+                "Each fix was map-matched to the road network with a hidden "
+                "Markov model, and speed reconstructed from on-road "
+                "displacement between consecutive fixes of the same mover.",
+            ])
+        for key, eyebrow, _heading, sub_t in SECTIONS:
+            if key not in live:
+                continue
+            fig = live[key]
+            # Eyebrow and caption go ABOVE the plot, anchored va="bottom" so
+            # they grow upward into empty space. Below the plot is already
+            # occupied on some figures (the hourly chart puts its legend
+            # there), and a caption placed underneath lands on top of it.
+            fig.text(0.02, 1.02, textwrap.fill(sub_t.format(**ctx), 116),
+                     va="bottom", fontsize=9, color=INK_2)
+            fig.text(0.02, 1.13, eyebrow.upper(), fontsize=8, color=MUTED,
+                     fontweight="bold", va="bottom")
+            pdf.savefig(fig, bbox_inches="tight", facecolor=SURFACE)
+        _pdf_text_page(
+            plt, pdf, eyebrow="09 — Method",
+            heading="How these numbers were produced",
+            paragraphs=[
+                "Matching. Each fix was assigned to a road with a hidden Markov "
+                "model decoded by Viterbi (Newson & Krumm, 2009), which uses the "
+                "whole trajectory rather than snapping each point independently.",
+                "Speed. Derived from on-road displacement between consecutive "
+                "fixes of one mover, divided by elapsed time, with per-point GPS "
+                "accuracy propagated into an explicit uncertainty per interval.",
+                f"Aggregation. {args.statistic.capitalize()} statistics; each "
+                "interval counts once network-wide however many segments it "
+                "crossed. Peak and off-peak windows were selected from the data.",
+                "Limitations. Speeds describe the surveyed vehicles, not all "
+                "traffic, and only where and when they drove. A posted limit is "
+                "a legal maximum, not a free-flow speed, so the congestion ratio "
+                "is a screening indicator; comparing a road against itself "
+                "across time blocks is sounder than comparing different roads.",
+            ])
+        if notes:
+            _pdf_text_page(plt, pdf, eyebrow="Data notes",
+                           heading="Caveats on this dataset",
+                           paragraphs=[f"- {n}" for n in notes])
+    return args.out
+
+
+def render_png(args, R, live, notes, plt):
+    """A numbered PNG per section plus a captions file, for your own template."""
+    import os
+    out_dir = args.out
+    if out_dir.lower().endswith((".png", ".pdf", ".html")):
+        out_dir = os.path.splitext(out_dir)[0]
+    os.makedirs(out_dir, exist_ok=True)
+    ctx = _section_ctx(args, R)
+    lines = [f"# {args.title}", ""]
+    if args.customer:
+        lines += [args.customer, ""]
+    n = 0
+    for key, eyebrow, heading, sub_t in SECTIONS:
+        if key not in live:
+            continue
+        n += 1
+        name = f"{n:02d}_{key}.png"
+        live[key].savefig(os.path.join(out_dir, name), dpi=args.dpi,
+                          bbox_inches="tight", facecolor=SURFACE)
+        lines += [f"## {name}", f"**{eyebrow} — {heading}**", "",
+                  textwrap.fill(sub_t.format(**ctx), 92), ""]
+    if notes:
+        lines += ["## Data notes", ""] + [f"- {x}" for x in notes]
+    with open(os.path.join(out_dir, "captions.md"), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return f"{out_dir}/ ({n} PNGs + captions.md)"
+
+
+# --------------------------------------------------------------------------- #
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Build a customer-ready congestion report from GPS + a road network.",
@@ -938,7 +1178,14 @@ def parse_args(argv=None):
             """))
     p.add_argument("--network", required=True, help="road network GeoJSON")
     p.add_argument("--points", required=True, help="GPS points CSV/TSV/GeoJSON")
-    p.add_argument("--out", default="report.html", help="output HTML file")
+    p.add_argument("--out", default="report.html",
+                   help="output file (or directory, for --format png)")
+    p.add_argument("--format", default=None,
+                   choices=["html", "pdf", "png"],
+                   help="deliverable format; inferred from --out's extension "
+                        "when omitted (default html)")
+    p.add_argument("--dpi", type=int, default=200,
+                   help="raster resolution for --format png (default 200)")
     p.add_argument("--title", default="Road Network Trafficability Study")
     p.add_argument("--customer", default="")
     p.add_argument("--tz", default=None,
@@ -975,48 +1222,21 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    if args.format is None:
+        low = args.out.lower()
+        args.format = ("pdf" if low.endswith(".pdf")
+                       else "png" if low.endswith(".png") else "html")
     notes: list = []
     R = run_pipeline(args, notes)
     plt = _mpl()
 
     print("      rendering figures", file=sys.stderr)
-    figs = {}
-    net = R["net"]
-    f = fig_coverage(plt, net, R["seg"])
-    figs["coverage"] = _fig_to_b64(f, plt)
-
-    f, lim = fig_speed_map(plt, net, "overall", args.unit)
-    if f:
-        figs["speed_overall"] = _fig_to_b64(f, plt)
-    # Peak and off-peak share the overall scale so the two maps compare directly.
-    for period in ("peak", "offpeak"):
-        f, _ = fig_speed_map(plt, net, period, args.unit, vlim=lim)
-        if f:
-            figs[f"speed_{period}"] = _fig_to_b64(f, plt)
-
-    if len(R["hourly"]):
-        figs["hourly"] = _fig_to_b64(
-            fig_hourly(plt, R["hourly"], args.unit, R["peaks"]), plt)
-    f = fig_daytype(plt, R["daytype"], args.unit)
-    if f:
-        figs["daytype"] = _fig_to_b64(f, plt)
-    if R["congestion"]:
-        f = fig_congestion_map(plt, net, R["congestion"])
-        if f:
-            figs["congestion_map"] = _fig_to_b64(f, plt)
-        f = fig_worst_corridors(plt, net, R["congestion"])
-        if f:
-            figs["worst"] = _fig_to_b64(f, plt)
-    if R["bc"]:
-        f = fig_chokepoints(plt, net, R["bc"])
-        if f:
-            figs["chokepoints"] = _fig_to_b64(f, plt)
-
-    html = build_html(args, R, figs, notes)
-    with open(args.out, "w", encoding="utf-8") as fh:
-        fh.write(html)
-    size_mb = len(html.encode("utf-8")) / 1e6
-    print(f"\nWrote {args.out}  ({size_mb:.1f} MB, {len(figs)} figures)",
+    live = build_figures(plt, R, args)
+    render = {"html": render_html, "pdf": render_pdf, "png": render_png}
+    out = render[args.format](args, R, live, notes, plt)
+    for f in live.values():                 # renderers must not close them
+        plt.close(f)
+    print(f"\nWrote {out}  ({len(live)} figures, format={args.format})",
           file=sys.stderr)
     if notes:
         print(f"{len(notes)} data note(s) included in the report.", file=sys.stderr)
