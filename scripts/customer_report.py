@@ -15,13 +15,14 @@ time, a mover id and a horizontal-accuracy value are enough:
 
 Formats (``--format``, inferred from ``--out``'s extension when omitted):
 
-``html``
-    One self-contained file with every image inlined as base64 and a table view
-    under each figure. Emails as-is, opens with no dependencies, prints to PDF
-    from any browser (Ctrl/Cmd-P).
-``pdf``
-    A fixed, print-ready multi-page document. No dependencies beyond matplotlib,
-    but not editable and without the table views.
+``pdf`` (default)
+    A fixed, print-ready multi-page document. No dependencies beyond
+    matplotlib. Not editable.
+``pptx``
+    An editable 16:9 PowerPoint deck, one slide per section, with the
+    supporting numbers as **native tables** rather than pictures of tables --
+    the format to choose when the customer will restyle it or fold it into
+    their own template. Requires ``pip install python-pptx``.
 ``png``
     A numbered PNG per section plus ``captions.md``, for dropping into your own
     template or deck. ``--out`` names the directory; ``--dpi`` sets resolution.
@@ -41,7 +42,7 @@ Usage
         --tz America/New_York \\
         --title "Route 1 Corridor Study" \\
         --customer "Example County DOT" \\
-        --out report.html          # or report.pdf, or --format png --out figs/
+        --out report.pdf           # or report.pptx, or --format png --out figs/
 
 Requires the ``mapping`` extra for figures: ``pip install roadtraffic[mapping]``
 (matplotlib). Every stage degrades gracefully -- a study area with no posted
@@ -51,8 +52,6 @@ and says so in "Data notes" rather than failing or inventing a number.
 from __future__ import annotations
 
 import argparse
-import base64
-import io
 import sys
 import textwrap
 import warnings
@@ -153,21 +152,6 @@ def _cmaps():
 # --------------------------------------------------------------------------- #
 # Small helpers
 # --------------------------------------------------------------------------- #
-def _fig_to_b64(fig, plt) -> str:
-    """Render a figure to a base64 PNG and close it."""
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight",
-                facecolor=fig.get_facecolor())
-    plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
-
-
-def _esc(text) -> str:
-    """Minimal HTML escaping for interpolated text."""
-    return (str(text).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;").replace('"', "&quot;"))
-
-
 def _fmt(value, digits=1, dash="--"):
     """Format a number for display, rendering NaN/None as an em-dash."""
     if value is None:
@@ -175,7 +159,7 @@ def _fmt(value, digits=1, dash="--"):
     try:
         f = float(value)
     except (TypeError, ValueError):
-        return _esc(value)
+        return str(value)
     if not np.isfinite(f):
         return dash
     return f"{f:,.{digits}f}"
@@ -256,21 +240,105 @@ def _runs(sorted_ints):
     yield start, prev
 
 
-def _table(headers, rows, caption=None) -> str:
-    """A table view for a figure -- the accessible twin of every chart here.
+def build_tables(args, R):
+    """The numbers behind the figures, as plain data.
 
-    The maps and charts are rasterised PNGs, so they cannot carry a hover
-    tooltip. Every figure therefore ships the underlying numbers as a real
-    table rather than leaving colour as the only way to read a value.
+    Kept format-neutral so a renderer can lay them out natively -- a real
+    PowerPoint table rather than a picture of one. Every figure that encodes a
+    value in colour needs its numbers readable some other way; that is the
+    whole point of carrying these alongside the maps.
     """
-    head = "".join(f"<th>{_esc(h)}</th>" for h in headers)
-    body = "".join(
-        "<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows
-    )
-    cap = f"<caption>{_esc(caption)}</caption>" if caption else ""
-    return (f'<details class="tv"><summary>Data table</summary>'
-            f'<div class="tw"><table>{cap}<thead><tr>{head}</tr></thead>'
-            f"<tbody>{body}</tbody></table></div></details>")
+    net, unit, out = R["net"], args.unit, {}
+    h = R["hourly"]
+    if len(h):
+        col = "median_speed" if "median_speed" in h.columns else "mean_speed"
+        out["hourly"] = (
+            "Network-wide speed by hour of day",
+            ["Hour", f"Speed ({unit})", "n"],
+            [(f"{int(r.block_start_hour):02d}:00", _fmt(getattr(r, col)),
+              f"{int(r.n):,}")
+             for r in h.sort_values("block_start_hour").itertuples()])
+    if R["congestion"]:
+        e = R["congestion"]["edges"]
+        rated = _by_road(net, e[e["ratio"].notna()]).sort_values("ratio")
+        rows = []
+        for r in rated.head(12).itertuples():
+            d = net.edge_data(int(r.edge_id))
+            rows.append((str(d.get("name") or d.get("highway") or r.edge_id),
+                         _fmt(r.observed_speed), _fmt(r.speed_limit),
+                         f"{r.ratio:.2f}", f"{int(r.n):,}"))
+        out["worst"] = ("Most congested roads (slower direction)",
+                        ["Road", f"Observed ({unit})", f"Limit ({unit})",
+                         "Ratio", "n"], rows)
+    if R["bc"]:
+        # Betweenness is per directed edge, so a two-way road appears twice
+        # with near-identical scores; collapse to the physical road and keep
+        # its busier direction, as the congestion ranking does.
+        best = {}
+        for eid, v in R["bc"].items():
+            rid = min(net.road_edge_ids(int(eid)))
+            if rid not in best or v > best[rid][1]:
+                best[rid] = (int(eid), float(v))
+        rows = []
+        for eid, v in sorted(best.values(), key=lambda kv: -kv[1])[:12]:
+            d = net.edge_data(int(eid))
+            rows.append((str(d.get("name") or d.get("highway") or eid),
+                         f"{v:.4f}", _fmt(d.get("length_m"), 0)))
+        out["chokepoints"] = ("Highest-betweenness segments",
+                              ["Segment", "Betweenness", "Length (m)"], rows)
+    return out
+
+
+def build_tiles(args, R):
+    """Headline numbers per section, as (value, label, note) triples."""
+    net, unit = R["net"], args.unit
+    seg, stats, conn = R["seg"], R["stats"], R["conn"]
+    pdf, out = R["points"], {}
+    t0, t1 = pdf["time"].min(), pdf["time"].max()
+    n_mov = int(pdf["traj_id"].nunique()) if "traj_id" in pdf.columns else 0
+    out["cover"] = [
+        (f"{len(pdf):,}", "GPS fixes", ""), (f"{n_mov:,}", "Movers", ""),
+        (f"{len(R['intervals']):,}", "Speed intervals", "independent"),
+        (f"{max((t1 - t0).days + 1, 1):,}", "Days observed", "")]
+    obs = seg["coverage"]["overall"]
+    out["coverage"] = [
+        (f"{obs:,}", "Edges observed", ""),
+        (f"{100.0 * obs / max(net.number_of_edges(), 1):.0f}%", "Of network", ""),
+        (f"{seg['coverage']['peak']:,}", "In peak window", ""),
+        (f"{seg['coverage']['offpeak']:,}", "In off-peak window", "")]
+    ov = R["daytype"]["overall"]
+    tiles = [(_fmt(ov.get(f"{lb}_speed")), f"{lb} ({unit})",
+              f"n = {R['daytype']['groups'][lb]['n']:,}")
+             for lb in R["daytype"]["groups"]]
+    delta = ov.get("delta_pct")
+    if delta is not None and np.isfinite(delta):
+        tiles.append((f"{delta:+.1f}%", "Weekend vs weekday",
+                      "positive = weekends faster"))
+    out["daytype"] = tiles
+    if R["congestion"]:
+        c = R["congestion"]["summary"]
+        e = R["congestion"]["edges"]
+        rated = e[e["ratio"].notna()]
+        out["congestion_map"] = [
+            (f"{c['median_ratio']:.2f}", "Median ratio", "network-wide"),
+            (f"{c['n_edges_rated']:,}", "Segments rated", "observed + posted"),
+            (f"{int((rated['ratio'] < 0.5).sum()):,}", "Below 50% of limit", ""),
+            (f"{int((rated['ratio'] > 1.0).sum()):,}", "Above the limit", "")]
+    scc = conn.get("largest_scc_frac")
+    structure = [
+        (f"{stats['n_intersections']:,}", "Intersections", ""),
+        (f"{stats.get('n_dead_ends', 0):,}", "Dead ends", ""),
+        (_fmt(stats.get("streets_per_node_avg"), 2), "Streets per node", ""),
+        (_fmt(stats.get("circuity_avg"), 3), "Circuity", "1.00 = straight"),
+        ("Yes" if conn.get("is_strongly_connected") else "No",
+         "Fully drivable", "every segment reaches every other"),
+        (f"{100.0 * scc:.1f}%" if scc is not None else "--",
+         "Largest connected part", "")]
+    if stats.get("edge_density_km2") is not None:
+        structure.insert(4, (_fmt(stats["edge_density_km2"], 1),
+                             "Edges / km2", ""))
+    out["structure"] = structure
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -697,298 +765,6 @@ def _section_ctx(args, R):
 
 
 # --------------------------------------------------------------------------- #
-# HTML
-# --------------------------------------------------------------------------- #
-CSS = """
-:root{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;
- --muted:#898781;--grid:#e1e0d9;--warning:#fab219}
-*{box-sizing:border-box}
-body{margin:0;background:var(--plane);color:var(--ink);
- font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
- line-height:1.55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.slide{background:var(--surface);max-width:1080px;margin:0 auto 22px;padding:40px 46px;
- border:1px solid rgba(11,11,11,.10);border-radius:10px}
-.slide.cover{padding:64px 46px}
-h1{font-size:31px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
-h2{font-size:21px;margin:0 0 4px;letter-spacing:-.01em}
-.eyebrow{font-size:11px;letter-spacing:.13em;text-transform:uppercase;
- color:var(--muted);margin:0 0 14px;font-weight:600}
-.sub{color:var(--ink2);font-size:14px;margin:0 0 22px;max-width:74ch}
-p{font-size:14px;color:var(--ink2);max-width:80ch}
-img{width:100%;height:auto;display:block;margin:8px 0 4px}
-.tiles{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0 6px}
-.tile{flex:1 1 165px;background:var(--plane);border:1px solid rgba(11,11,11,.08);
- border-radius:8px;padding:14px 16px}
-.tile .v{font-size:27px;font-weight:650;letter-spacing:-.02em;line-height:1.15}
-.tile .k{font-size:11px;color:var(--muted);text-transform:uppercase;
- letter-spacing:.07em;margin-top:5px;font-weight:600}
-.tile .n{font-size:11.5px;color:var(--ink2);margin-top:5px}
-.tv{margin-top:10px}
-.tv summary{cursor:pointer;font-size:12px;color:var(--ink2);padding:5px 0;
- font-weight:600}
-.tw{overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-size:12.5px;
- font-variant-numeric:tabular-nums;margin-top:6px}
-th,td{text-align:right;padding:6px 10px;border-bottom:1px solid var(--grid)}
-th:first-child,td:first-child{text-align:left}
-th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10.5px;
- letter-spacing:.05em}
-caption{caption-side:top;text-align:left;color:var(--muted);font-size:11.5px;
- padding-bottom:5px}
-.notes{border-left:3px solid var(--warning);padding:2px 0 2px 16px;margin:16px 0}
-.notes li{font-size:13px;color:var(--ink2);margin:7px 0}
-.foot{max-width:1080px;margin:0 auto 40px;padding:0 46px;color:var(--muted);
- font-size:11.5px}
-.kv{display:flex;gap:26px;flex-wrap:wrap;margin:18px 0 0}
-.kv div{font-size:13px;color:var(--ink2)}
-.kv b{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;
- letter-spacing:.07em;font-weight:600;margin-bottom:2px}
-@media print{body{background:#fff}
- .slide{break-after:page;border:none;border-radius:0;margin:0;max-width:none}
- .tv[open] summary{display:none}}
-"""
-
-
-def tile(value, key, note=""):
-    n = f'<div class="n">{_esc(note)}</div>' if note else ""
-    return (f'<div class="tile"><div class="v">{value}</div>'
-            f'<div class="k">{_esc(key)}</div>{n}</div>')
-
-
-def slide(body, cover=False):
-    return f'<section class="slide{" cover" if cover else ""}">{body}</section>'
-
-
-def img(b64, alt):
-    return f'<img src="data:image/png;base64,{b64}" alt="{_esc(alt)}">'
-
-
-def build_html(args, R, figs, notes) -> str:
-    net, unit = R["net"], args.unit
-    pdf, intervals = R["points"], R["intervals"]
-    seg, stats, conn = R["seg"], R["stats"], R["conn"]
-    t0, t1 = pdf["time"].min(), pdf["time"].max()
-    days = max((t1 - t0).days + 1, 1)
-    n_mov = int(pdf["traj_id"].nunique()) if "traj_id" in pdf.columns else 0
-    S = []
-
-    # ---- 1. cover ------------------------------------------------------- #
-    S.append(slide(f"""
-      <p class="eyebrow">Trafficability study</p>
-      <h1>{_esc(args.title)}</h1>
-      <p class="sub">{_esc(args.customer)}</p>
-      <div class="tiles">
-        {tile(f"{len(pdf):,}", "GPS fixes")}
-        {tile(f"{n_mov:,}", "Movers")}
-        {tile(f"{len(intervals):,}", "Speed intervals", "independent measurements")}
-        {tile(f"{days:,}", "Days observed")}
-      </div>
-      <div class="kv">
-        <div><b>Period</b>{t0:%Y-%m-%d %H:%M} — {t1:%Y-%m-%d %H:%M}</div>
-        <div><b>Network</b>{net.number_of_edges():,} edges /
-             {net.number_of_nodes():,} nodes</div>
-        <div><b>Timezone</b>{_esc(args.tz or "as supplied")}</div>
-        <div><b>Generated</b>{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC</div>
-      </div>
-      <p style="margin-top:26px">Speeds in this report were not read from the
-      GPS receiver. Each fix was map-matched to the road network with a hidden
-      Markov model, and speed reconstructed from <b>on-road displacement</b>
-      between consecutive fixes of the same mover — the distance actually
-      travelled along the roadway, divided by elapsed time.</p>""", cover=True))
-
-    # ---- 2. coverage ---------------------------------------------------- #
-    if figs.get("coverage"):
-        obs_edges = seg["coverage"]["overall"]
-        S.append(slide(f"""
-          <p class="eyebrow">01 — Survey coverage</p>
-          <h2>Where the data actually is</h2>
-          <p class="sub">Roads in grey were never traversed by the survey and
-          carry no measured speed. Every statistic in this report describes the
-          blue extent only.</p>
-          {img(figs["coverage"], "Survey coverage map")}
-          <div class="tiles">
-            {tile(f"{obs_edges:,}", "Edges observed")}
-            {tile(f"{100.0 * obs_edges / max(net.number_of_edges(), 1):.0f}%", "Of network")}
-            {tile(f"{seg['coverage']['peak']:,}", "In peak window")}
-            {tile(f"{seg['coverage']['offpeak']:,}", "In off-peak window")}
-          </div>"""))
-
-    # ---- 3-4. speed maps ------------------------------------------------ #
-    if figs.get("speed_overall"):
-        S.append(slide(f"""
-          <p class="eyebrow">02 — Measured speed</p>
-          <h2>Overall speed by segment</h2>
-          <p class="sub">The {args.statistic} speed across the whole survey
-          period. Darker is faster.</p>
-          {img(figs["speed_overall"], "Overall speed map")}"""))
-
-    if figs.get("speed_peak") or figs.get("speed_offpeak"):
-        peak_h = ", ".join(f"{h:02d}:00" for h in seg["peak_hours"][:6])
-        off_h = ", ".join(f"{h:02d}:00" for h in seg["offpeak_hours"][:6])
-        both = "".join(img(figs[k], f"{k} speed map")
-                       for k in ("speed_peak", "speed_offpeak") if figs.get(k))
-        S.append(slide(f"""
-          <p class="eyebrow">03 — Peak vs off-peak</p>
-          <h2>The same roads, at their worst and their best</h2>
-          <p class="sub">Both maps share one colour scale, so they are directly
-          comparable. Peak hours ({_esc(peak_h)}) were chosen from the data as
-          the slowest contiguous window; off-peak ({_esc(off_h)}) the fastest.</p>
-          {both}"""))
-
-    # ---- 5. hourly profile ---------------------------------------------- #
-    if figs.get("hourly"):
-        h = R["hourly"].sort_values("block_start_hour")
-        col = "median_speed" if "median_speed" in h.columns else "mean_speed"
-        rows = [(f"{int(r.block_start_hour):02d}:00", _fmt(getattr(r, col)),
-                 f"{int(r.n):,}") for r in h.itertuples()]
-        S.append(slide(f"""
-          <p class="eyebrow">04 — Time of day</p>
-          <h2>When the network slows down</h2>
-          <p class="sub">Network-wide {args.statistic} speed by hour. Each
-          interval counts once regardless of how many segments it crossed, so
-          the sample sizes below are independent measurements.</p>
-          {img(figs["hourly"], "Speed by hour of day")}
-          {_table(["Hour", f"Speed ({unit})", "n"], rows,
-                  "Network-wide speed by hour of day")}"""))
-
-    # ---- 6. weekday vs weekend ------------------------------------------ #
-    if figs.get("daytype"):
-        ov = R["daytype"]["overall"]
-        dt_tiles = "".join(
-            tile(_fmt(ov.get(f"{lb}_speed")), f"{lb} ({unit})",
-                 f"n = {R['daytype']['groups'][lb]['n']:,}")
-            for lb in R["daytype"]["groups"])
-        delta = ov.get("delta_pct")
-        if delta is not None and np.isfinite(delta):
-            dt_tiles += tile(f"{delta:+.1f}%", "Weekend vs weekday",
-                             "positive = weekends run faster")
-        S.append(slide(f"""
-          <p class="eyebrow">05 — Day type</p>
-          <h2>Weekday and weekend traffic are different populations</h2>
-          <p class="sub">Pooling them into one hour-of-day average hides both.
-          Split here so a Tuesday 09:00 is never averaged with a Saturday 09:00.</p>
-          {img(figs["daytype"], "Weekday versus weekend speed")}
-          <div class="tiles">{dt_tiles}</div>"""))
-
-    # ---- 7. congestion --------------------------------------------------- #
-    if figs.get("congestion_map") or figs.get("worst"):
-        c = R["congestion"]["summary"]
-        e = R["congestion"]["edges"]
-        # Same one-row-per-physical-road collapse the chart uses, so the table
-        # and the figure cannot tell different stories.
-        rated = _by_road(net, e[e["ratio"].notna()]).sort_values("ratio")
-        rows = []
-        for r in rated.head(15).itertuples():
-            d = net.edge_data(int(r.edge_id))
-            rows.append((_esc(d.get("name") or d.get("highway") or r.edge_id),
-                         _fmt(r.observed_speed), _fmt(r.speed_limit),
-                         f"{r.ratio:.2f}", f"{int(r.n):,}"))
-        maps = "".join(img(figs[k], k) for k in ("congestion_map", "worst")
-                       if figs.get(k))
-        S.append(slide(f"""
-          <p class="eyebrow">06 — Congestion vs posted limit</p>
-          <h2>How the network performs against its own speed limits</h2>
-          <p class="sub">A ratio of 1.00 means traffic moved at the posted
-          limit; 0.45 means it crawled at 45% of it. This is the comparison raw
-          speeds cannot make — a 30&nbsp;mph arterial and a 55&nbsp;mph highway
-          both at 25&nbsp;mph are in completely different states.</p>
-          {maps}
-          <div class="tiles">
-            {tile(f"{c['median_ratio']:.2f}", "Median ratio", "network-wide")}
-            {tile(f"{c['n_edges_rated']:,}", "Segments rated", "observed and posted")}
-            {tile(f"{int((rated['ratio'] < 0.5).sum()):,}", "Below 50% of limit")}
-            {tile(f"{int((rated['ratio'] > 1.0).sum()):,}", "Above the limit")}
-          </div>
-          {_table(["Segment", f"Observed ({unit})", f"Limit ({unit})", "Ratio", "n"],
-                  rows, "Most congested segments")}"""))
-
-    # ---- 8. chokepoints -------------------------------------------------- #
-    if figs.get("chokepoints"):
-        top = sorted(R["bc"].items(), key=lambda kv: -kv[1])[:12]
-        rows = []
-        for eid, v in top:
-            d = net.edge_data(int(eid))
-            rows.append((_esc(d.get("name") or d.get("highway") or eid),
-                         f"{v:.4f}", _fmt(d.get("length_m"), 0)))
-        S.append(slide(f"""
-          <p class="eyebrow">07 — Network structure</p>
-          <h2>Chokepoints</h2>
-          <p class="sub">Edge betweenness weighted by <i>measured travel time</i>:
-          the share of fastest routes that must cross each segment. This finds
-          roads that are structurally load-bearing, which is not the same as
-          roads that are merely central on a map.</p>
-          {img(figs["chokepoints"], "Chokepoint map")}
-          {_table(["Segment", "Betweenness", "Length (m)"], rows,
-                  "Highest-betweenness segments")}"""))
-
-    # ---- 9. structure stats ---------------------------------------------- #
-    dens = ""
-    if stats.get("edge_density_km2") is not None:
-        dens = tile(_fmt(stats["edge_density_km2"], 1), "Edges / km²")
-    scc = conn.get("largest_scc_frac")
-    S.append(slide(f"""
-      <p class="eyebrow">08 — Network structure</p>
-      <h2>Structural summary</h2>
-      <p class="sub">Properties of the road network itself, independent of the
-      GPS survey.</p>
-      <div class="tiles">
-        {tile(f"{stats['n_intersections']:,}", "Intersections")}
-        {tile(f"{stats.get('n_dead_ends', 0):,}", "Dead ends")}
-        {tile(_fmt(stats.get('streets_per_node_avg'), 2), "Streets per node")}
-        {tile(_fmt(stats.get('circuity_avg'), 3), "Circuity",
-              "1.00 = perfectly straight")}
-        {dens}
-      </div>
-      <div class="tiles">
-        {tile("Yes" if conn.get("is_strongly_connected") else "No",
-              "Fully drivable", "every segment reaches every other")}
-        {tile(f"{100.0 * scc:.1f}%" if scc is not None else "--",
-              "Largest connected part")}
-        {tile("Yes" if conn.get("is_weakly_connected") else "No",
-              "Geometrically joined",
-              "if yes but not fully drivable, one-way rules are the cause")}
-      </div>"""))
-
-    # ---- 10. method ------------------------------------------------------ #
-    note_html = ""
-    if notes:
-        note_html = ('<h2 style="margin-top:26px">Data notes</h2><ul class="notes">'
-                     + "".join(f"<li>{_esc(n)}</li>" for n in notes) + "</ul>")
-    S.append(slide(f"""
-      <p class="eyebrow">09 — Method</p>
-      <h2>How these numbers were produced</h2>
-      <p><b>Matching.</b> Each fix was assigned to a road with a hidden Markov
-      model decoded by Viterbi (Newson &amp; Krumm, 2009), which uses the whole
-      trajectory rather than snapping each point independently — near
-      intersections, independent snapping makes correlated errors that bias
-      speed.</p>
-      <p><b>Speed.</b> Derived from on-road displacement between consecutive
-      fixes of one mover, divided by elapsed time, with per-point GPS accuracy
-      propagated into an explicit uncertainty for every interval. Intervals
-      whose displacement is not clearly above the noise floor are flagged.</p>
-      <p><b>Aggregation.</b> {args.statistic.capitalize()} statistics; each
-      interval counts once network-wide however many segments it crossed.
-      Peak and off-peak windows were selected from the data as the slowest and
-      fastest contiguous blocks.</p>
-      <p><b>Limitations.</b> Speeds describe <i>the surveyed vehicles</i>, not
-      all traffic, and only where and when they drove — see the coverage map.
-      A posted limit is a legal maximum, not a free-flow speed; roads run below
-      their limit for reasons other than congestion, so the congestion ratio is
-      a screening indicator. Comparing a road against itself across time blocks
-      is sounder than comparing different roads to each other.</p>
-      {note_html}"""))
-
-    return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            f"<title>{_esc(args.title)}</title><style>{CSS}</style></head><body>"
-            + "".join(S)
-            + f'<div class="foot">Generated with roadtraffic v{rt.__version__}. '
-              f'Speeds reconstructed from on-road displacement after HMM map '
-              f'matching; see the method section for assumptions and limits.</div>'
-            + "</body></html>")
-
-
-# --------------------------------------------------------------------------- #
 # Figures, then one renderer per output format
 # --------------------------------------------------------------------------- #
 def build_figures(plt, R, args) -> dict:
@@ -1027,21 +803,6 @@ def build_figures(plt, R, args) -> dict:
         if f:
             figs["chokepoints"] = f
     return figs
-
-
-def render_html(args, R, live, notes, plt):
-    """Self-contained HTML deck: images inlined, prints to PDF from a browser."""
-    import io as _io
-    b64 = {}
-    for k, fig in live.items():
-        buf = _io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight",
-                    facecolor=fig.get_facecolor())
-        b64[k] = base64.b64encode(buf.getvalue()).decode("ascii")
-    html = build_html(args, R, b64, notes)
-    with open(args.out, "w", encoding="utf-8") as fh:
-        fh.write(html)
-    return args.out
 
 
 def _pdf_text_page(plt, pdf, *, eyebrow, heading, paragraphs, tiles=None,
@@ -1136,11 +897,207 @@ def render_pdf(args, R, live, notes, plt):
     return args.out
 
 
+# 16:9 slide geometry, shared by the layout helpers below.
+SLIDE_W, SLIDE_H = 13.333, 7.5
+PIC_TOP = 2.15
+
+
+def _png_size(path):
+    """Pixel dimensions of a PNG, for aspect-correct placement."""
+    from PIL import Image
+    with Image.open(path) as im:
+        return im.size
+
+
+def _pptx_rgb(hex_str):
+    from pptx.dml.color import RGBColor
+    return RGBColor.from_string(hex_str.lstrip("#").upper())
+
+
+def _pptx_textbox(slide, x, y, w, h, text, *, size, color, bold=False,
+                  caps=False, space_after=0):
+    from pptx.util import Inches, Pt
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = box.text_frame
+    tf.word_wrap = True
+    for i, para_text in enumerate(text if isinstance(text, list) else [text]):
+        para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        run = para.add_run()
+        run.text = para_text.upper() if caps else para_text
+        run.font.size = Pt(size)
+        run.font.bold = bold
+        run.font.color.rgb = _pptx_rgb(color)
+        run.font.name = "Calibri"
+        para.space_after = Pt(space_after)
+    return box
+
+
+def _pptx_tiles(slide, tiles, y):
+    """A row of headline numbers, wrapping every four."""
+    for i, (val, label, note) in enumerate(tiles):
+        x = 0.55 + (i % 4) * 3.05
+        row_y = y + (i // 4) * 1.05
+        _pptx_textbox(slide, x, row_y, 2.9, 0.5, str(val), size=26,
+                      color=INK, bold=True)
+        _pptx_textbox(slide, x, row_y + 0.48, 2.9, 0.3, label, size=9,
+                      color=MUTED, bold=True, caps=True)
+        if note:
+            _pptx_textbox(slide, x, row_y + 0.70, 2.9, 0.3, note, size=9,
+                          color=INK_2)
+
+
+def _pptx_table(slide, headers, rows, x, y, w, h):
+    from pptx.util import Inches, Pt
+    shape = slide.shapes.add_table(len(rows) + 1, len(headers),
+                                   Inches(x), Inches(y), Inches(w), Inches(h))
+    table = shape.table
+    for c, head in enumerate(headers):
+        cell = table.cell(0, c)
+        cell.text = str(head)
+        para = cell.text_frame.paragraphs[0]
+        para.runs[0].font.size = Pt(10)
+        para.runs[0].font.bold = True
+        para.runs[0].font.color.rgb = _pptx_rgb(MUTED)
+    for r, row in enumerate(rows, start=1):
+        for c, val in enumerate(row):
+            cell = table.cell(r, c)
+            cell.text = str(val)
+            run = cell.text_frame.paragraphs[0].runs[0]
+            run.font.size = Pt(10)
+            run.font.color.rgb = _pptx_rgb(INK)
+    return shape
+
+
+def render_pptx(args, R, live, notes, plt):
+    """Editable PowerPoint deck -- one slide per section, native tables.
+
+    The only format the customer can restyle or fold into their own template,
+    which is the reason to pay for the extra dependency. Tables are real
+    PowerPoint tables rather than pictures of tables, so every value a figure
+    encodes in colour stays readable (and selectable) without it.
+    """
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches
+    except ImportError as exc:
+        raise SystemExit(
+            "The pptx format needs python-pptx:\n    pip install python-pptx\n"
+            "(or use --format pdf / --format png, which need no extra deps)"
+        ) from exc
+    import os
+    import tempfile
+
+    ctx = _section_ctx(args, R)
+    tables, tiles = build_tables(args, R), build_tiles(args, R)
+    prs = Presentation()
+    prs.slide_width = Inches(SLIDE_W)
+    prs.slide_height = Inches(SLIDE_H)
+    blank = prs.slide_layouts[6]
+
+    def new_slide(eyebrow, heading, sub=None):
+        sl = prs.slides.add_slide(blank)
+        sl.background.fill.solid()
+        sl.background.fill.fore_color.rgb = _pptx_rgb(SURFACE)
+        _pptx_textbox(sl, 0.55, 0.35, 12.2, 0.3, eyebrow, size=10,
+                      color=MUTED, bold=True, caps=True)
+        _pptx_textbox(sl, 0.55, 0.68, 12.2, 0.6, heading, size=26, color=INK,
+                      bold=True)
+        if sub:
+            _pptx_textbox(sl, 0.55, 1.32, 12.2, 0.7, sub, size=12, color=INK_2)
+        return sl
+
+    pdf_pts = R["points"]
+    t0, t1 = pdf_pts["time"].min(), pdf_pts["time"].max()
+    cover = new_slide("Trafficability study", args.title, args.customer)
+    _pptx_tiles(cover, tiles["cover"], 2.3)
+    _pptx_textbox(
+        cover, 0.55, 4.6, 12.2, 1.6,
+        [f"Period {t0:%Y-%m-%d %H:%M} to {t1:%Y-%m-%d %H:%M}   |   "
+         f"network {R['net'].number_of_edges():,} edges   |   "
+         f"generated {datetime.now(timezone.utc):%Y-%m-%d} UTC",
+         "Speeds were not read from the GPS receiver. Each fix was map-matched "
+         "to the road network with a hidden Markov model, and speed "
+         "reconstructed from on-road displacement between consecutive fixes of "
+         "the same mover."],
+        size=12, color=INK_2, space_after=8)
+
+    tmp = tempfile.mkdtemp(prefix="rt_pptx_")
+    for key, eyebrow, heading, sub_t in SECTIONS:
+        if key not in live:
+            continue
+        sl = new_slide(eyebrow, heading, sub_t.format(**ctx))
+        png = os.path.join(tmp, f"{key}.png")
+        live[key].savefig(png, dpi=args.dpi, bbox_inches="tight",
+                          facecolor=SURFACE)
+        has_side = key in tables or key in tiles
+        # Fit the picture to BOTH the available width and the space left above
+        # the bottom of the slide. Sizing on width alone silently runs tall
+        # figures -- the maps are 9x6.2in, so they scale to over 9in high --
+        # straight off the bottom of a 7.5in slide.
+        max_w = 8.2 if has_side else 11.4
+        max_h = SLIDE_H - PIC_TOP - 0.3
+        img_w, img_h = _png_size(png)
+        aspect = img_h / img_w
+        w = min(max_w, max_h / aspect)
+        sl.shapes.add_picture(png, Inches(0.55 + (max_w - w) / 2),
+                              Inches(PIC_TOP), width=Inches(w))
+        if key in tables:
+            caption, headers, rows = tables[key]
+            _pptx_textbox(sl, 9.05, 2.15, 3.7, 0.3, caption, size=9,
+                          color=MUTED, bold=True, caps=True)
+            _pptx_table(sl, headers, rows[:10], 9.05, 2.5, 3.75,
+                        min(0.28 * (len(rows[:10]) + 1), 4.6))
+        elif key in tiles:
+            for i, (val, label, note) in enumerate(tiles[key]):
+                y = 2.3 + i * 1.05
+                _pptx_textbox(sl, 9.05, y, 3.7, 0.4, str(val), size=22,
+                              color=INK, bold=True)
+                _pptx_textbox(sl, 9.05, y + 0.42, 3.7, 0.3, label, size=9,
+                              color=MUTED, bold=True, caps=True)
+                if note:
+                    _pptx_textbox(sl, 9.05, y + 0.62, 3.7, 0.3, note, size=8,
+                                  color=INK_2)
+
+    sl = new_slide("08 — Network structure", "Structural summary",
+                   "Properties of the road network itself, independent of the "
+                   "GPS survey.")
+    _pptx_tiles(sl, tiles["structure"], 2.3)
+
+    sl = new_slide("09 — Method", "How these numbers were produced")
+    _pptx_textbox(sl, 0.55, 1.5, 12.2, 4.6, [
+        "Matching. Each fix was assigned to a road with a hidden Markov model "
+        "decoded by Viterbi (Newson & Krumm, 2009), using the whole trajectory "
+        "rather than snapping each point independently.",
+        "Speed. Derived from on-road displacement between consecutive fixes of "
+        "one mover, divided by elapsed time, with per-point GPS accuracy "
+        "propagated into an explicit uncertainty for every interval.",
+        f"Aggregation. {args.statistic.capitalize()} statistics; each interval "
+        "counts once network-wide however many segments it crossed. Peak and "
+        "off-peak windows were selected from the data.",
+        "Limitations. Speeds describe the surveyed vehicles, not all traffic, "
+        "and only where and when they drove. A posted limit is a legal maximum, "
+        "not a free-flow speed, so the congestion ratio is a screening "
+        "indicator; comparing a road against itself across time blocks is "
+        "sounder than comparing different roads to each other.",
+    ], size=12, color=INK_2, space_after=12)
+    if notes:
+        sl = new_slide("Data notes", "Caveats on this dataset")
+        _pptx_textbox(sl, 0.55, 1.5, 12.2, 4.8,
+                      [f"\u2022  {n}" for n in notes], size=11, color=INK_2,
+                      space_after=10)
+
+    prs.save(args.out)
+    for f in os.listdir(tmp):
+        os.remove(os.path.join(tmp, f))
+    os.rmdir(tmp)
+    return args.out
+
+
 def render_png(args, R, live, notes, plt):
     """A numbered PNG per section plus a captions file, for your own template."""
     import os
     out_dir = args.out
-    if out_dir.lower().endswith((".png", ".pdf", ".html")):
+    if out_dir.lower().endswith((".png", ".pdf", ".pptx")):
         out_dir = os.path.splitext(out_dir)[0]
     os.makedirs(out_dir, exist_ok=True)
     ctx = _section_ctx(args, R)
@@ -1174,16 +1131,16 @@ def parse_args(argv=None):
               python scripts/customer_report.py --network roads.geojson \\
                 --points probes.csv --accuracy-col accuracy \\
                 --tz America/New_York --title "Route 1 Study" \\
-                --customer "Example DOT" --out report.html
+                --customer "Example DOT" --out report.pdf
             """))
     p.add_argument("--network", required=True, help="road network GeoJSON")
     p.add_argument("--points", required=True, help="GPS points CSV/TSV/GeoJSON")
-    p.add_argument("--out", default="report.html",
+    p.add_argument("--out", default="report.pdf",
                    help="output file (or directory, for --format png)")
     p.add_argument("--format", default=None,
-                   choices=["html", "pdf", "png"],
+                   choices=["pdf", "pptx", "png"],
                    help="deliverable format; inferred from --out's extension "
-                        "when omitted (default html)")
+                        "when omitted (default pdf)")
     p.add_argument("--dpi", type=int, default=200,
                    help="raster resolution for --format png (default 200)")
     p.add_argument("--title", default="Road Network Trafficability Study")
@@ -1224,15 +1181,15 @@ def main(argv=None):
     args = parse_args(argv)
     if args.format is None:
         low = args.out.lower()
-        args.format = ("pdf" if low.endswith(".pdf")
-                       else "png" if low.endswith(".png") else "html")
+        args.format = ("pptx" if low.endswith(".pptx")
+                       else "png" if low.endswith(".png") else "pdf")
     notes: list = []
     R = run_pipeline(args, notes)
     plt = _mpl()
 
     print("      rendering figures", file=sys.stderr)
     live = build_figures(plt, R, args)
-    render = {"html": render_html, "pdf": render_pdf, "png": render_png}
+    render = {"pdf": render_pdf, "pptx": render_pptx, "png": render_png}
     out = render[args.format](args, R, live, notes, plt)
     for f in live.values():                 # renderers must not close them
         plt.close(f)
