@@ -821,12 +821,18 @@ def test_mode_screening_recovers_vehicle_only_speeds(straight_net, make_points_c
     assert screened == pytest.approx(truth, rel=0.10)
 ```
 
-- [ ] **Step 3: Run the test to verify it fails, then passes**
+- [ ] **Step 3: Run the test**
 
 Run: `python -m pytest tests/test_pipeline_e2e.py -q -k mode_screening`
-Expected first: FAIL (helpers not importable). After Step 1 is in place it should PASS.
+Expected: PASS.
 
-If `contaminated < truth * 0.9` fails, the walkers are not being matched onto the road — check `max_dist` and that the 25 walking fixes at 21 m spacing stay inside the 1113 m road.
+**This test does not fail-first, and that is expected.** It exercises functions Tasks 1-4 already built, so there is no red phase to observe — it is an integration check on finished units, not the driver of new code. Do not manufacture a failure to satisfy the TDD rhythm.
+
+What it *can* catch, and what to do:
+
+- `contaminated < truth * 0.9` fails → the walkers are not reaching the road. Check `max_dist=60` and confirm the 25 walking fixes at ~21 m spacing stay inside the 1113 m road (start 0.0002 deg ≈ 22 m in, so they end around 526 m).
+- `screened == approx(truth, rel=0.10)` fails → check that `threshold=3.0` with `unit="mps"` sits between the planted 1.4 m/s and 12.0 m/s, and that `classify_movers` is being handed the **intervals** frame.
+- Both assertions passing while the middle one fails is impossible; if you see it, the fixtures are not deterministic and that is the bug.
 
 - [ ] **Step 4: Run the full suite**
 
@@ -1012,20 +1018,33 @@ p.add_argument("--keep-unknown", action="store_true",
 
 In `run_pipeline`, after the `[4/7]` derive block and before `[5/7] cleaning`. Renumber every existing banner from `[N/7]` to `[N/8]` and add:
 
+`classify_movers` does not report back which threshold `"auto"` resolved to, and the deck section in Task 9 needs that number to draw its threshold line. So resolve it in the report *before* classifying, and pass a plain float in both cases:
+
 ```python
 movers, mode_threshold = None, None
 if args.mode_threshold is not None:
     print("[5/8] mode screening", file=sys.stderr)
-    thr = (args.mode_threshold if args.mode_threshold == "auto"
-           else float(args.mode_threshold))
+    if args.mode_threshold == "auto":
+        feat = rt.mover_features(intervals, unit=args.unit)
+        thr = rt.suggest_mode_threshold(feat[f"speed_p85_{args.unit}"],
+                                        unit=args.unit)
+        if thr is None:
+            raise SystemExit(
+                "--mode-threshold auto found no walking-speed population to "
+                "split off. Either the feed is all vehicles (nothing to "
+                "exclude), or the populations overlap too much to separate on "
+                "speed. Inspect it with scripts/mover_screen.py, then pass an "
+                "explicit number.")
+    else:
+        thr = float(args.mode_threshold)
+    mode_threshold = float(thr)
+
     movers = rt.classify_movers(intervals, threshold=thr, unit=args.unit)
     keep = ("vehicle", "unknown") if args.keep_unknown else ("vehicle",)
     n_before, mov_before = len(obs), int(intervals["traj_id"].nunique())
     obs = rt.filter_by_mode(obs, movers, keep=keep)
     intervals = rt.filter_by_mode(intervals, movers, keep=keep)
     kept = int(movers["mode"].isin(keep).sum())
-    mode_threshold = float(
-        movers.attrs.get("threshold", 0.0)) or None  # see note below
     notes.append(
         f"Mode screening excluded {mov_before - kept:,} of {mov_before:,} "
         f"movers and {n_before - len(obs):,} of {n_before:,} observations as "
@@ -1038,24 +1057,6 @@ if args.mode_threshold is not None:
         "and is excluded with the pedestrians. Re-run without "
         "--mode-threshold and compare peak speeds; the gap is the uncertainty.")
 ```
-
-**Note on `mode_threshold`:** `classify_movers` does not currently return the resolved threshold when `"auto"` is used. Rather than reach into `attrs`, resolve it in the report before classifying so the value is known:
-
-```python
-if thr == "auto":
-    pct_col = f"speed_p85_{args.unit}"
-    feat = rt.mover_features(intervals, unit=args.unit)
-    thr = rt.suggest_mode_threshold(feat[pct_col], unit=args.unit)
-    if thr is None:
-        raise SystemExit(
-            "--mode-threshold auto found no walking-speed population. Either "
-            "the feed is all vehicles, or the populations overlap too much. "
-            "Inspect it with scripts/mover_screen.py and pass a number.")
-mode_threshold = float(thr)
-movers = rt.classify_movers(intervals, threshold=thr, unit=args.unit)
-```
-
-Use this form and drop the `attrs` line.
 
 - [ ] **Step 3: Return the new keys**
 
