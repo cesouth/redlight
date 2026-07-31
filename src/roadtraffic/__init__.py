@@ -52,6 +52,12 @@ from .analysis import connectivity_report, edge_betweenness_centrality, network_
 from .cleaning import filter_by_speed, filter_trajectory_speed
 from .mapping import plot_speed_map, to_geojson
 from .matching import HMMMatcher, NearestMatcher
+from .modes import (
+    MODE_PEDESTRIAN,
+    MODE_UNKNOWN,
+    MODE_VEHICLE,
+    mover_features,
+)
 from .network import Network
 from .points import PointSet, load_points, save_points
 from .routing import Router
@@ -86,5 +92,9 @@ __all__ = [
     "edge_betweenness_centrality",
     "network_stats",
     "connectivity_report",
+    "mover_features",
+    "MODE_PEDESTRIAN",
+    "MODE_VEHICLE",
+    "MODE_UNKNOWN",
     "__version__",
 ]
