@@ -102,6 +102,13 @@ SEQ_BLUE = ["#86b6ef", "#5598e7", "#3987e5", "#2a78d6", "#256abf",
 # (it carries no hue) while staying legible as a 2px line.
 DIV_LOW, DIV_MID, DIV_HIGH = "#d03b3b", "#c3c2b7", "#2a78d6"
 
+# Categorical: three unordered classes. Distinct hues, not a ramp.
+# Slots 1-3 of the validated categorical theme; these three clear the
+# all-pairs CVD and normal-vision floors on this deck's surface.
+CAT_1, CAT_2, CAT_3 = "#2a78d6", "#eb6834", "#1baf7a"
+MODE_COLORS = {"vehicle": CAT_1, "pedestrian": CAT_2, "unknown": CAT_3}
+MODE_ORDER = ("vehicle", "pedestrian", "unknown")
+
 FONT_STACK = ["system-ui", "-apple-system", "Segoe UI", "Helvetica", "Arial",
               "DejaVu Sans", "sans-serif"]
 
@@ -249,6 +256,19 @@ def build_tables(args, R):
     whole point of carrying these alongside the maps.
     """
     net, unit, out = R["net"], args.unit, {}
+    if R.get("movers") is not None:
+        mv = R["movers"]
+        total = int(mv["n_intervals"].sum()) or 1
+        rows = []
+        for m in MODE_ORDER:
+            sub = mv[mv["mode"] == m]
+            if not len(sub):
+                continue
+            n_iv = int(sub["n_intervals"].sum())
+            rows.append((m.capitalize(), f"{len(sub):,}", f"{n_iv:,}",
+                         f"{100.0 * n_iv / total:.0f}%"))
+        out["modes"] = ("Feed composition by mover mode",
+                        ["Mode", "Movers", "Intervals", "Share of intervals"], rows)
     h = R["hourly"]
     if len(h):
         col = "median_speed" if "median_speed" in h.columns else "mean_speed"
@@ -300,6 +320,16 @@ def build_tiles(args, R):
         (f"{len(pdf):,}", "GPS fixes", ""), (f"{n_mov:,}", "Movers", ""),
         (f"{len(R['intervals']):,}", "Speed intervals", "independent"),
         (f"{max((t1 - t0).days + 1, 1):,}", "Days observed", "")]
+    if R.get("movers") is not None:
+        mv = R["movers"]
+        kept = int((mv["mode"] == "vehicle").sum())
+        thr = R["mode_threshold"]
+        out["modes"] = [
+            (f"{kept:,}", "Movers kept", "classified as vehicles"),
+            (f"{len(mv) - kept:,}", "Movers excluded", "pedestrian or unclassified"),
+            (f"{thr:.1f}" if thr is not None else "--", f"Screen ({unit})",
+             "per-mover 85th percentile"),
+            (f"{100.0 * kept / max(len(mv), 1):.0f}%", "Of all movers", "")]
     obs = seg["coverage"]["overall"]
     out["coverage"] = [
         (f"{obs:,}", "Edges observed", ""),
@@ -662,6 +692,44 @@ def fig_daytype(plt, daytype, unit):
     return fig
 
 
+def fig_modes(plt, movers, threshold, unit, percentile=85.0):
+    """Feed composition, and the distribution the screen actually cut on."""
+    if movers is None or not len(movers):
+        return None
+    pct_col = f"speed_p{percentile:g}_{unit}"
+    if pct_col not in movers.columns:
+        return None
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(9, 4.0),
+                                   gridspec_kw={"width_ratios": [1, 2]})
+
+    counts = [int((movers["mode"] == m).sum()) for m in MODE_ORDER]
+    present = [(m, c) for m, c in zip(MODE_ORDER, counts) if c]
+    ax0.barh([m for m, _ in present], [c for _, c in present],
+             color=[MODE_COLORS[m] for m, _ in present])
+    ax0.set_xlabel("Movers")
+    ax0.invert_yaxis()
+    for i, (_, c) in enumerate(present):
+        ax0.text(c, i, f" {c:,}", va="center", fontsize=8)
+    ax0.spines[["top", "right"]].set_visible(False)
+
+    speeds = movers[pct_col].to_numpy(dtype=float)
+    speeds = speeds[np.isfinite(speeds)]
+    hi = float(np.percentile(speeds, 98)) if len(speeds) else 1.0
+    ax1.hist(speeds, bins=np.linspace(0, max(hi, 1.0), 40),
+             color=SEQ_BLUE[-2], edgecolor="none")
+    if threshold is not None:
+        ax1.axvline(threshold, color=INK, lw=1.4, ls="--")
+        ax1.annotate(f"screen at {threshold:.1f} {unit}",
+                     xy=(threshold, ax1.get_ylim()[1]),
+                     xytext=(4, -10), textcoords="offset points",
+                     fontsize=8, color=INK, ha="left", va="top")
+    ax1.set_xlabel(f"Per-mover {percentile:g}th-percentile speed ({unit})")
+    ax1.set_ylabel("Movers")
+    ax1.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
 def fig_congestion_map(plt, net, congestion):
     _, div = _cmaps()
     e = congestion["edges"]
@@ -757,32 +825,37 @@ SECTIONS = [
     ("coverage", "01 — Survey coverage", "Where the data actually is",
      "Roads in grey were never traversed by the survey and carry no measured "
      "speed. Every statistic in this report describes the blue extent only."),
-    ("speed_overall", "02 — Measured speed", "Overall speed by segment",
+    ("modes", "02 — Feed composition", "What the feed is made of",
+     "Movers are classified by their own 85th-percentile speed, not by "
+     "individual observations: a pedestrian is slow for a whole track, while "
+     "a congested vehicle is slow here and free-flowing elsewhere. A vehicle "
+     "kept by the screen keeps every one of its slow observations."),
+    ("speed_overall", "03 — Measured speed", "Overall speed by segment",
      "The {statistic} speed across the whole survey period. Darker is faster."),
-    ("speed_peak", "03 — Peak vs off-peak",
+    ("speed_peak", "04 — Peak vs off-peak",
      "The same roads, at their worst and their best",
      "Both maps share one colour scale, so they are directly comparable. Peak "
      "hours ({peak_h}) were chosen from the data as the slowest contiguous "
      "window; off-peak ({off_h}) the fastest."),
-    ("speed_offpeak", "03 — Peak vs off-peak (continued)",
+    ("speed_offpeak", "04 — Peak vs off-peak (continued)",
      "Off-peak speed by segment",
      "The fastest contiguous window, on the same scale as the peak map."),
-    ("hourly", "04 — Time of day", "When the network slows down",
+    ("hourly", "05 — Time of day", "When the network slows down",
      "Network-wide {statistic} speed by hour. Each interval counts once "
      "regardless of how many segments it crossed, so the sample sizes are "
      "independent measurements."),
-    ("daytype", "05 — Day type",
+    ("daytype", "06 — Day type",
      "Weekday and weekend traffic are different populations",
      "Pooling them into one hour-of-day average hides both. Split here so a "
      "Tuesday 09:00 is never averaged with a Saturday 09:00."),
-    ("congestion_map", "06 — Congestion vs posted limit",
+    ("congestion_map", "07 — Congestion vs posted limit",
      "How the network performs against its own speed limits",
      "A ratio of 1.00 means traffic moved at the posted limit; 0.45 means it "
      "crawled at 45% of it. This is the comparison raw speeds cannot make."),
-    ("worst", "06 — Congestion vs posted limit (continued)",
+    ("worst", "07 — Congestion vs posted limit (continued)",
      "Worst-performing roads",
      "One row per physical road, showing its slower direction."),
-    ("chokepoints", "07 — Network structure", "Chokepoints",
+    ("chokepoints", "08 — Network structure", "Chokepoints",
      "Edge betweenness weighted by measured travel time: the share of fastest "
      "routes that must cross each segment. This finds roads that are "
      "structurally load-bearing, not merely central on a map."),
@@ -814,6 +887,10 @@ def build_figures(plt, R, args) -> dict:
     """
     figs, net = {}, R["net"]
     figs["coverage"] = fig_coverage(plt, net, R["seg"])
+    if R.get("movers") is not None:
+        f = fig_modes(plt, R["movers"], R["mode_threshold"], args.unit)
+        if f:
+            figs["modes"] = f
     f, lim = fig_speed_map(plt, net, "overall", args.unit)
     if f:
         figs["speed_overall"] = f
@@ -908,7 +985,7 @@ def render_pdf(args, R, live, notes, plt):
                      fontweight="bold", va="bottom")
             pdf.savefig(fig, bbox_inches="tight", facecolor=SURFACE)
         _pdf_text_page(
-            plt, pdf, eyebrow="09 — Method",
+            plt, pdf, eyebrow="10 — Method",
             heading="How these numbers were produced",
             paragraphs=[
                 "Matching. Each fix was assigned to a road with a hidden Markov "
@@ -1094,12 +1171,12 @@ def render_pptx(args, R, live, notes, plt):
                     _pptx_textbox(sl, 9.05, y + 0.62, 3.7, 0.3, note, size=8,
                                   color=INK_2)
 
-    sl = new_slide("08 — Network structure", "Structural summary",
+    sl = new_slide("09 — Network structure", "Structural summary",
                    "Properties of the road network itself, independent of the "
                    "GPS survey.")
     _pptx_tiles(sl, tiles["structure"], 2.3)
 
-    sl = new_slide("09 — Method", "How these numbers were produced")
+    sl = new_slide("10 — Method", "How these numbers were produced")
     _pptx_textbox(sl, 0.55, 1.5, 12.2, 4.6, [
         "Matching. Each fix was assigned to a road with a hidden Markov model "
         "decoded by Viterbi (Newson & Krumm, 2009), using the whole trajectory "
