@@ -715,8 +715,12 @@ def fig_modes(plt, movers, threshold, unit, percentile=85.0):
     speeds = movers[pct_col].to_numpy(dtype=float)
     speeds = speeds[np.isfinite(speeds)]
     hi = float(np.percentile(speeds, 98)) if len(speeds) else 1.0
+    # Neutral achromatic grey, not a series/categorical color: this histogram
+    # pools every mode, and a hue here (especially one from CAT_1's blue
+    # family) would read as "vehicles only" right next to the left panel's
+    # blue = vehicle bar.
     ax1.hist(speeds, bins=np.linspace(0, max(hi, 1.0), 40),
-             color=SEQ_BLUE[-2], edgecolor="none")
+             color=INK_2, edgecolor="none")
     if threshold is not None:
         ax1.axvline(threshold, color=INK, lw=1.4, ls="--")
         ax1.annotate(f"screen at {threshold:.1f} {unit}",
