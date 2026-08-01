@@ -18,6 +18,14 @@ derive_speeds         : reconstruct speed from on-road displacement after matchi
                         (more accurate than ``load_points(derive_speed=True)``).
 filter_by_speed       : drop observations outside a plausible speed band.
 filter_trajectory_speed : dwell-aware cleaning that keeps slow-but-moving traffic.
+mover_features        : per-mover evidence table (speed percentile, sample
+                        count, distance) from matched or derived speeds.
+suggest_mode_threshold : density-valley speed separating walkers from drivers,
+                        or None when no walking population exists.
+classify_movers       : label movers pedestrian / vehicle / unknown, judging
+                        the whole trajectory rather than each observation.
+filter_by_mode        : keep the observations of movers with a given mode --
+                        every retained mover keeps its slow rows.
 aggregate_speeds      : average speed by hour or by N-hour block, mean or median
                         (optional ``days=`` filter for weekday/weekend splits).
 peak_analysis         : identify peak / off-peak periods.
@@ -67,7 +75,7 @@ from .routing import Router
 from .speeds import derive_speeds
 from .units import SpeedUnit, from_mps, to_mps
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "SpeedUnit",
