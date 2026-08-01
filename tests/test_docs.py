@@ -83,7 +83,11 @@ def _build_namespace(workdir: Path):
     for trip in range(14):
         speed = 12.0 if trip % 3 else 3.0        # a few genuinely slow movers
         step = speed * 15.0 / 111319.5
-        t0 = pd.Timestamp("2026-06-01 06:00:00") + pd.Timedelta(hours=trip)
+        # Spread the trips across a full week starting Monday 2026-06-01, so
+        # snippets calling day_type_report have both weekdays and a weekend to
+        # compare and do not warn about an empty day-type.
+        t0 = (pd.Timestamp("2026-06-01 06:00:00")
+              + pd.Timedelta(days=trip % 7, hours=trip))
         for i in range(10):
             rows.append({
                 # Both spellings, because different docs use different names

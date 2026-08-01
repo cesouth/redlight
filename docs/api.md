@@ -29,14 +29,19 @@ open segments first. Source properties that collide with the reserved edge
 attributes (`edge_id`, `length_m`, `geometry`) are preserved under an `_src`
 suffix.
 
-### `Network.from_file(path, ..., layer=None)`
+### `Network.from_file(path, *, metric_epsg=None, directed=True, oneway_attr="oneway", length_attr=None, layer=None)`
 
-Same signature as `from_geojson`, plus `layer` (name or index of a layer to
+Every parameter of `from_geojson`, plus `layer` (name or index of a layer to
 read from a multi-layer file, e.g. one table in a GeoPackage that holds
 several; default: the file's own default layer). Dispatches GeoJSON to
 `from_geojson`; Shapefile (`.shp`) and GeoPackage (`.gpkg`) require the
 `shapefile` extra (`pip install roadtraffic[shapefile]`, needs Python 3.10+).
 Source CRS is auto-reprojected to WGS84.
+
+<!-- skip-test: needs the shapefile extra and a .gpkg fixture -->
+```python
+net = rt.Network.from_file("roads.gpkg", layer="highways")
+```
 
 ### `Network.from_overpass(bbox, *, metric_epsg=None, directed=True, oneway_attr="oneway", highway_regex=None, url=None, timeout=90.0)`
 
@@ -131,6 +136,30 @@ Write a `PointSet` to disk (GeoJSON for `.geojson`/`.json`, else CSV). Speed is
 written in both m/s (`speed_mps`) and `speed_unit` (`speed_<unit>`) if present —
 handy for persisting a set loaded with `derive_speed=True`.
 
+```python
+out = rt.save_points(points, "cleaned.geojson", speed_unit="mph")
+```
+
+### `PointSet`
+
+The container `load_points` returns. You rarely construct one directly; you
+read from it and hand it to a matcher.
+
+| Attribute | What it is |
+|---|---|
+| `.df` | The canonical DataFrame: `point_id`, `traj_id`, `lon`, `lat`, `time`, optionally `speed_mps`, plus any source columns kept by `keep_cols`. |
+| `.has_traj` | Whether a trajectory id was found. `HMMMatcher` and `derive_speeds` need this to be `True`. |
+| `len(points)` | Number of fixes. |
+
+```python
+print(len(points), points.has_traj)
+print(points.df.columns.tolist())
+
+# point_id is 0..n-1 assigned AFTER unparseable rows are dropped, so it is an
+# index into this frame -- not a key back into your source file.
+print(points.df["point_id"].tolist()[:5])
+```
+
 ---
 
 ## Matching
@@ -203,6 +232,25 @@ Returns `{"intervals": DataFrame, "edge_observations": DataFrame}`:
   `filter_by_speed`, `aggregate_speeds` and `assign_speeds` — feed it straight
   in. Network-wide aggregations deduplicate on `interval_id` automatically, so
   the deliberate per-edge replication never inflates sample sizes.
+
+```python
+derived = rt.derive_speeds(
+    net, matched, points,
+    pos_accuracy_col="accuracy_m",   # per-fix sigma beats one assumed value
+    min_baseline_m=150,              # merge hops until they clear GPS noise
+)
+intervals, obs = derived["intervals"], derived["edge_observations"]
+
+# Use `intervals` for network-wide statistics -- one row per independent
+# measurement -- and `obs` for anything per-edge.
+print(len(intervals), "measurements;", len(obs), "edge observations")
+print(f"{intervals['quality'].mean():.0%} passed the quality screen")
+```
+
+Rows that fail the quality screen are **returned, not dropped**. Excluding them
+biases speeds upward, because slow traffic covers the least ground per fix and
+fails most often. Raising `min_baseline_m` is usually the better fix: it lifts
+displacement clear of the noise floor instead of deleting the slow rows.
 
 ---
 
@@ -291,6 +339,44 @@ keeps **all** of its observations, including its slowest — filtering the slow
 ones out is what this module exists to avoid. Warns (does not raise) when no
 mover survives.
 
+### Mode constants
+
+`MODE_PEDESTRIAN`, `MODE_VEHICLE`, `MODE_UNKNOWN` — the exact strings
+`classify_movers` writes into its `mode` column. Compare against these rather
+than against literals, so a future rename is a name error rather than a silent
+mismatch.
+
+```python
+import roadtraffic as rt
+
+assert (rt.MODE_VEHICLE, rt.MODE_PEDESTRIAN, rt.MODE_UNKNOWN) == (
+    "vehicle", "pedestrian", "unknown")
+```
+
+### The whole workflow, end to end
+
+```python
+import roadtraffic as rt
+
+# 1. Reduce every mover to one evidence row and look at the distribution.
+feat = rt.mover_features(intervals, unit="mph")
+
+# 2. Let the density valley suggest a cut. None means "no walking population
+#    here" -- an honest answer, not a failure. Never substitute a default.
+threshold = rt.suggest_mode_threshold(feat["speed_p85_mph"], unit="mph")
+
+if threshold is not None:
+    # 3. Classify movers, then apply the verdict to their observations.
+    movers = rt.classify_movers(intervals, threshold=threshold, unit="mph")
+    vehicles_only = rt.filter_by_mode(obs, movers)
+    print(movers["mode"].value_counts().to_dict())
+    print(f"{len(obs)} -> {len(vehicles_only)} observations")
+```
+
+Run the study **both ways** and compare peak speeds. Where they disagree, the
+gap is your uncertainty: a vehicle gridlocked for its entire track looks like a
+walker and is excluded with them, biasing speeds upward.
+
 ---
 
 ## Aggregation & peaks
@@ -340,6 +426,24 @@ own `{label: day-selector}` to compare arbitrary groupings (e.g.
 `{"Mon-Thu": [0,1,2,3], "Fri": "fri"}`), where each selector is anything `days=`
 accepts. A day-type with no observations is reported with `n=0`/NaN and a
 warning, never an error.
+
+```python
+# Speed by hour, both statistics, suppressing thin bins that read as spikes.
+hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
+                             output_unit="mph", min_samples=3)
+
+# Peak = slowest. Windows are contiguous and may wrap midnight.
+peaks = rt.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
+print([r["block_label"] for r in peaks["peak"]])
+
+# Weekday and weekend are different populations; do not pool them.
+report = rt.day_type_report(clean, statistic="median", output_unit="mph")
+print({k: round(v["overall_speed"], 1) for k, v in report["groups"].items()})
+```
+
+`weight_by_variance=True` weights each observation by the precision
+`derive_speeds` measured it to, so a noisy three-second hop stops counting as
+much as a clean ninety-second baseline.
 
 ### `congestion_report(network, matched, *, statistic="median", output_unit="mph", block_hours=None, days=None, min_samples=1, require_quality=False, weight_by_variance=False) -> dict`
 
@@ -486,6 +590,28 @@ disconnected extract (`is_weakly_connected=False`) — the same diagnosis
 `Router.route` already makes internally on a failed query, exposed here
 proactively.
 
+```python
+stats = rt.network_stats(net, area_km2=8.3)
+print(stats["circuity_avg"], stats["n_intersections"],
+      stats["streets_per_node_avg"])
+
+# Run this BEFORE routing on an unfamiliar or clipped extract.
+report = rt.connectivity_report(net)
+if not report["is_strongly_connected"]:
+    print("stranded edges:", report["stranded_edge_ids"][:5])
+
+# Chokepoints. weight= is mandatory -- silently picking one is worse than an
+# error. Every edge needs travel_time_s first, so assign speeds beforehand.
+bc = rt.edge_betweenness_centrality(net, weight="travel_time_s",
+                                    write_attr="betweenness")
+top = sorted(bc.items(), key=lambda kv: -kv[1])[:3]
+print([(net.edge_data(int(e)).get("name"), round(s, 3)) for e, s in top])
+```
+
+The density fields are `None` unless you pass `area_km2` — they are never
+guessed from a bounding box, because a clipped extract's bounds are not its
+study area.
+
 ---
 
 ## Mapping / visualization
@@ -517,4 +643,42 @@ given. Requires the `mapping` extra: `pip install roadtraffic[mapping]`.
 
 ## Units
 
-`SpeedUnit` (`MPH`/`KPH`/`MPS`), `to_mps(value, unit)`, `from_mps(value, unit)`.
+Everything inside the package is computed in **metres per second**. Conversion
+happens at the boundary, so a `unit=` or `output_unit=` argument is the only
+place a unit ever appears.
+
+### `SpeedUnit`
+
+An enum with members `MPH`, `KPH`, `MPS`. It subclasses `str`, so a member
+compares equal to its own value and can be passed anywhere a plain unit string
+is expected.
+
+`SpeedUnit.parse(value)` resolves a string or an existing member, accepting
+aliases case-insensitively — `"km/h"`, `"kmph"`, `"m/s"`, `"mi/h"` and others.
+Unknown units raise rather than defaulting.
+
+```python
+from roadtraffic import SpeedUnit
+
+assert SpeedUnit.parse("km/h") is SpeedUnit.KPH
+assert SpeedUnit.MPH == "mph"          # str subclass
+```
+
+### `to_mps(value, unit)` and `from_mps(value, unit)`
+
+Convert into and out of the canonical unit. Both accept scalars, numpy arrays
+and pandas Series, since the conversion is a single multiply that broadcasts.
+
+```python
+import roadtraffic as rt
+
+rt.to_mps(60, "mph")                    # 26.8224
+rt.from_mps(26.8224, "kph")             # 96.56...
+
+# The usual reason you reach for these: a frame's speed_mps in your own unit.
+mph = rt.from_mps(intervals["speed_mps"], "mph")
+print(f"median {mph.median():.1f} mph")
+```
+
+Never hardcode a conversion factor in your own code — these are exact
+(1 mile = 1609.344 m) and keep your numbers consistent with the library's.
