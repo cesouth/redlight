@@ -93,3 +93,17 @@ def test_suggest_threshold_accepts_a_series():
                              np.clip(rng.normal(12.0, 3.0, 200), 5.0, None)])
     s = pd.Series(speeds, index=[f"m{i}" for i in range(len(speeds))])
     assert rt.suggest_mode_threshold(s, unit="mps") is not None
+
+
+def test_suggest_threshold_is_unit_consistent():
+    """The same population must yield the same physical speed whatever unit it
+    is expressed in. Every existing test uses mps, where both conversions are
+    the identity, so a swapped to_mps/from_mps would go undetected."""
+    rng = np.random.default_rng(0)
+    mps = np.concatenate([rng.normal(1.4, 0.15, 90),
+                          np.clip(rng.normal(12.0, 3.0, 200), 5.0, None)])
+    t_mps = rt.suggest_mode_threshold(mps, unit="mps")
+    t_mph = rt.suggest_mode_threshold(mps / 0.44704, unit="mph")
+    assert t_mps is not None and t_mph is not None
+    # same physical speed, expressed two ways
+    assert t_mph * 0.44704 == pytest.approx(t_mps, rel=1e-6)

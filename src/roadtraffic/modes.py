@@ -33,7 +33,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .units import SpeedUnit, from_mps
+from .units import SpeedUnit, from_mps, to_mps
 
 MODE_PEDESTRIAN = "pedestrian"
 MODE_VEHICLE = "vehicle"
@@ -174,15 +174,16 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
     x = x[np.isfinite(x) & (x > 0)]
     if len(x) < _MIN_MOVERS:
         return None
+    x = to_mps(x, unit)
     try:
         from scipy.stats import gaussian_kde
     except ImportError:  # pragma: no cover - scipy is a core dependency
         return None
 
-    lo = float(from_mps(_SEARCH_LO_MPS, unit))
-    hi = float(from_mps(_SEARCH_HI_MPS, unit))
-    walk_lo = float(from_mps(_WALK_MODE_LO_MPS, unit))
-    walk_hi = float(from_mps(_WALK_MODE_HI_MPS, unit))
+    lo = _SEARCH_LO_MPS
+    hi = _SEARCH_HI_MPS
+    walk_lo = _WALK_MODE_LO_MPS
+    walk_hi = _WALK_MODE_HI_MPS
 
     grid = np.linspace(np.log(lo / 4.0), np.log(hi * 8.0), 1200)
     dens = gaussian_kde(np.log(x), bw_method=0.20)(grid)
@@ -207,4 +208,4 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
     walkers = [i for i in viable if walk_lo <= lower_hump(i) <= walk_hi]
     if not walkers:
         return None
-    return float(np.exp(grid[max(walkers, key=prominence)]))
+    return float(from_mps(np.exp(grid[max(walkers, key=prominence)]), unit))
