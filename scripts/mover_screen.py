@@ -28,6 +28,8 @@ Usage
        python scripts/customer_report.py --network net.geojson \
            --points vehicles.csv --id-col device_id --out report.pdf
 
+   Or let the screen pick the threshold itself with ``--threshold auto``.
+
 Threshold choice
 ----------------
 Put it in the *valley* between the two humps the histogram shows, not at a round
@@ -48,108 +50,6 @@ import pandas as pd
 
 import roadtraffic as rt
 from roadtraffic.units import SpeedUnit, from_mps
-
-
-def per_mover_features(net, pts, args) -> pd.DataFrame:
-    """Match, derive speeds, and reduce to one row per mover."""
-    print("[1/3] matching (HMM/Viterbi)", file=sys.stderr)
-    matched = rt.HMMMatcher(net, max_dist=args.max_dist).match(pts)
-
-    print("[2/3] deriving speeds from on-road displacement", file=sys.stderr)
-    acc = args.accuracy_col if args.accuracy_col in pts.df.columns else None
-    if args.accuracy_col and acc is None:
-        print(f"      accuracy column {args.accuracy_col!r} not found; "
-              f"using the default sigma", file=sys.stderr)
-    derived = rt.derive_speeds(net, matched, pts, pos_accuracy_col=acc,
-                               min_baseline_m=args.min_baseline)
-    iv = derived["intervals"]
-    if not len(iv):
-        raise SystemExit("No speed intervals could be derived; check --id-col.")
-
-    print("[3/3] reducing to per-mover features", file=sys.stderr)
-    g = iv.groupby("traj_id")
-    feat = pd.DataFrame({
-        "n_intervals": g.size(),
-        "speed_pct": g["speed_mps"].quantile(args.percentile / 100.0),
-        "speed_median": g["speed_mps"].median(),
-        "distance_m": g["distance_m"].sum(),
-        "snap_dist_m": g["snap_dist_m"].median(),
-    })
-    return feat
-
-
-def suggest_threshold(x: np.ndarray, lo: float, hi: float,
-                      walk_lo: float, walk_hi_mode: float) -> float | None:
-    """Density valley in [lo, hi] separating a *walking* hump from a driving
-    hump. None when there is no such split, which is the honest answer when the
-    data is single-mode.
-
-    The hard part is that a valley alone proves nothing. A vehicle-only feed is
-    itself multi-modal -- residential free-flow, arterial free-flow and rush-hour
-    crawl form separate humps -- so density has interior valleys whether or not
-    pedestrians are present. Measured on a clean vehicle-only set, valley depth
-    alone nominated 13.2 mph, which would have deleted every congested vehicle
-    in the study.
-
-    What separates the two situations is not the valley but the hump below it:
-    a pedestrian population must peak at walking pace. So the hump to the left
-    of the candidate is required to sit in [walk_lo, walk_hi_mode]. A dip whose
-    lower hump peaks at 11 mph is a boundary between two kinds of driving, and
-    is rejected.
-
-    The density is estimated in LOG speed. A fixed relative bandwidth on raw
-    speed is set by the spread of the whole sample, and the driving hump runs
-    out to motorway speeds -- wide enough to smooth away a valley only a couple
-    of mph across. Log speed makes the bandwidth scale-free, so the resolution
-    near walking pace does not depend on how fast the fastest vehicle was.
-    """
-    x = np.asarray(x, dtype=float)
-    x = x[np.isfinite(x) & (x > 0)]
-    if len(x) < 20:
-        return None
-    try:
-        from scipy.stats import gaussian_kde
-    except ImportError:
-        return None
-    # Evaluate well past the selection window in both directions: the driving
-    # hump peaks above `hi`, and a density that is merely falling towards the
-    # edge of a truncated grid produces a "minimum" at the boundary that is not
-    # a valley at all. Candidates are still only taken from inside [lo, hi].
-    span = np.log(np.array([lo / 4.0, hi * 8.0]))
-    grid = np.linspace(span[0], span[1], 1200)
-    dens = gaussian_kde(np.log(x), bw_method=0.20)(grid)
-
-    interior = np.arange(1, len(grid) - 1)
-    is_min = (dens[interior] < dens[interior - 1]) & (dens[interior] < dens[interior + 1])
-    in_window = (grid[interior] >= np.log(lo)) & (grid[interior] <= np.log(hi))
-    candidates = interior[is_min & in_window]
-    if not len(candidates):
-        return None
-
-    # Rank by prominence -- how much of a dip it is between the humps on either
-    # side -- not by absolute depth. The deepest point of a monotone tail is not
-    # a mode boundary, and picking on depth alone selects exactly that.
-    def prominence(i: int) -> float:
-        left = dens[:i].max(initial=0.0)
-        right = dens[i + 1:].max(initial=0.0)
-        return min(left, right) / dens[i] if dens[i] > 0 else 0.0
-
-    # A valley is only meaningful if it sits between two real humps. Without
-    # this, a ripple on the shoulder of a single-mode distribution reads as a
-    # split and invents a threshold where there is nothing to separate.
-    viable = [i for i in candidates if prominence(i) >= 1.5]
-    if not viable:
-        return None
-
-    def lower_hump(i: int) -> float:
-        """Speed at which the density below candidate `i` peaks."""
-        return float(np.exp(grid[int(np.argmax(dens[:i]))]))
-
-    # ...and the hump below it has to be walkers, not simply slower drivers.
-    walkers = [i for i in viable if walk_lo <= lower_hump(i) <= walk_hi_mode]
-    if not walkers:
-        return None
-    return float(np.exp(grid[max(walkers, key=prominence)]))
 
 
 def histogram(x: np.ndarray, unit_label: str, focus_hi: float,
@@ -201,9 +101,11 @@ def main(argv=None) -> int:
                    help="per-mover speed percentile to classify on (default 85). "
                         "High enough to catch a vehicle's free-flowing stretch, "
                         "low enough to ignore a single GPS jump.")
-    p.add_argument("--threshold", type=float, default=None,
+    p.add_argument("--threshold", type=str, default=None,
                    help="keep movers whose percentile speed is at or above this, "
-                        "in --unit. Omit to diagnose only.")
+                        "in --unit, or 'auto' to use the suggested threshold "
+                        "(and fail loudly if none can be found). Omit to "
+                        "diagnose only.")
     p.add_argument("--min-intervals", type=int, default=3,
                    help="movers with fewer derived intervals are too short to "
                         "classify; see --keep-unclassified (default 3)")
@@ -216,6 +118,15 @@ def main(argv=None) -> int:
                    help="write the per-mover feature table + verdict here")
     args = p.parse_args(argv)
 
+    threshold: float | str | None = args.threshold
+    if threshold is not None and threshold != "auto":
+        try:
+            threshold = float(threshold)
+        except ValueError as exc:
+            raise SystemExit(
+                f"--threshold must be a number or 'auto', got "
+                f"{args.threshold!r}.") from exc
+
     unit = SpeedUnit.parse(args.unit)
     net = rt.Network.from_geojson(args.network)
     pts = rt.load_points(args.points, tz=args.tz, id_col=args.id_col,
@@ -226,21 +137,30 @@ def main(argv=None) -> int:
             "Mode separation is per-mover, so it needs a trajectory id. "
             "Pass --id-col.")
 
-    feat = per_mover_features(net, pts, args)
-    speed = from_mps(feat["speed_pct"].to_numpy(float), unit)
-    feat[f"speed_p{args.percentile:.0f}_{unit.value}"] = speed
-    feat[f"speed_median_{unit.value}"] = from_mps(
-        feat["speed_median"].to_numpy(float), unit)
+    print("[1/3] matching (HMM/Viterbi)", file=sys.stderr)
+    matched = rt.HMMMatcher(net, max_dist=args.max_dist).match(pts)
+
+    print("[2/3] deriving speeds from on-road displacement", file=sys.stderr)
+    acc = args.accuracy_col if args.accuracy_col in pts.df.columns else None
+    if args.accuracy_col and acc is None:
+        print(f"      accuracy column {args.accuracy_col!r} not found; "
+              f"using the default sigma", file=sys.stderr)
+    derived = rt.derive_speeds(net, matched, pts, pos_accuracy_col=acc,
+                               min_baseline_m=args.min_baseline)
+    iv = derived["intervals"]
+    if not len(iv):
+        raise SystemExit("No speed intervals could be derived; check --id-col.")
+
+    print("[3/3] reducing to per-mover features", file=sys.stderr)
+    feat = rt.mover_features(iv, percentile=args.percentile, unit=unit)
+    pct_col = f"speed_p{args.percentile:g}_{unit.value}"
 
     # 6 m/s (~13 mph) is comfortably above any walking or jogging pace and
     # below urban free flow, so the split -- if there is one -- lies under it.
     walk_hi = float(from_mps(6.0, unit))
-    histogram(speed, f"p{args.percentile:.0f}", focus_hi=2.5 * walk_hi)
-    # A pedestrian population peaks at walking pace: 0.6-2.5 m/s covers a slow
-    # stroll through a brisk walk, measured at the 85th percentile of a track.
-    sugg = suggest_threshold(speed, float(from_mps(0.5, unit)), walk_hi,
-                             walk_lo=float(from_mps(0.6, unit)),
-                             walk_hi_mode=float(from_mps(2.5, unit)))
+    histogram(feat[pct_col].to_numpy(float), f"p{args.percentile:g}",
+              focus_hi=2.5 * walk_hi)
+    sugg = rt.suggest_mode_threshold(feat[pct_col], unit=unit)
     print()
     if sugg is None:
         print("  No walking-speed population found. Either the feed is all "
@@ -254,25 +174,25 @@ def main(argv=None) -> int:
           "threshold belongs in the gap BETWEEN two humps, and if there is only "
           "one hump there is no gap to find.")
 
-    thresh = args.threshold
-    if thresh is None:
+    if threshold is None:
         print("\n  Diagnostic only -- pass --threshold to apply.", file=sys.stderr)
         if args.out_movers:
             feat.to_csv(args.out_movers)
             print(f"  wrote {args.out_movers}", file=sys.stderr)
         return 0
 
-    short = feat["n_intervals"] < args.min_intervals
-    fast = speed >= thresh
-    keep = fast | (short if args.keep_unclassified else False)
-    feat["verdict"] = np.where(short & args.keep_unclassified, "unclassified",
-                               np.where(fast, "vehicle", "slow-mover"))
+    movers = rt.classify_movers(iv, threshold=threshold,
+                                percentile=args.percentile,
+                                min_intervals=args.min_intervals, unit=unit)
+    keep = ("vehicle", "unknown") if args.keep_unclassified else ("vehicle",)
+    kept_ids = set(movers.index[movers["mode"].isin(keep)])
 
-    kept_ids = set(feat.index[keep])
-    n_drop = len(feat) - len(kept_ids)
-    print(f"\n  threshold {thresh:g} {unit.value}: keeping {len(kept_ids)} of "
-          f"{len(feat)} movers, dropping {n_drop} "
-          f"({100.0 * n_drop / max(len(feat), 1):.0f}%)")
+    thresh_label = "auto" if threshold == "auto" else f"{threshold:g}"
+    n_drop = len(movers) - len(kept_ids)
+    print(f"\n  threshold {thresh_label} {unit.value}: keeping {len(kept_ids)} of "
+          f"{len(movers)} movers, dropping {n_drop} "
+          f"({100.0 * n_drop / max(len(movers), 1):.0f}%)")
+    short = movers["n_intervals"] < args.min_intervals
     if short.any():
         verb = "kept" if args.keep_unclassified else "dropped"
         print(f"  {int(short.sum())} movers had fewer than "
@@ -285,7 +205,7 @@ def main(argv=None) -> int:
         raise SystemExit("The threshold removed every mover; lower it.")
 
     if args.out_movers:
-        feat.to_csv(args.out_movers)
+        movers.to_csv(args.out_movers)
         print(f"  wrote {args.out_movers}")
 
     if args.out_points:
