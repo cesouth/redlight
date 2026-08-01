@@ -252,6 +252,7 @@ it wrong is worse than an error here).
 
 ## Next steps
 
-- Worked, runnable scripts: [`examples/`](../examples).
+- Worked, runnable scripts:
+  [`examples/`](https://github.com/cesouth/roadtraffic/tree/main/examples).
 - Why each number is what it is: [statistics](statistics.md).
 - Full signatures: [API reference](api.md).

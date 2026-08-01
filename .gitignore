@@ -12,6 +12,9 @@ dist/
 .ruff_cache/
 .superpowers/
 
+# mkdocs build output
+site/
+
 # Generated deliverables from scripts/customer_report.py. These are outputs of
 # a run against your own data, not source -- regenerate rather than commit:
 #   python scripts/customer_report.py --network ... --points ... --out report.pdf
