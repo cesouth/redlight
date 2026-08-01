@@ -191,7 +191,8 @@ def main(argv=None) -> int:
     movers = rt.classify_movers(iv, threshold=threshold,
                                 percentile=args.percentile,
                                 min_intervals=args.min_intervals, unit=unit)
-    keep = ("vehicle", "unknown") if args.keep_unclassified else ("vehicle",)
+    keep = ((rt.MODE_VEHICLE, rt.MODE_UNKNOWN) if args.keep_unclassified
+            else (rt.MODE_VEHICLE,))
     kept_ids = set(movers.index[movers["mode"].isin(keep)])
 
     thresh_label = "auto" if threshold == "auto" else f"{threshold:g}"
@@ -206,8 +207,8 @@ def main(argv=None) -> int:
               f"{args.min_intervals} intervals and were {verb} "
               f"(--keep-unclassified flips this)")
 
-    dropped_frac_fixes = float(pts.df["traj_id"].isin(kept_ids).mean())
-    print(f"  that retains {100.0 * dropped_frac_fixes:.0f}% of GPS fixes")
+    retained_frac_fixes = float(pts.df["traj_id"].isin(kept_ids).mean())
+    print(f"  that retains {100.0 * retained_frac_fixes:.0f}% of GPS fixes")
     if not kept_ids:
         raise SystemExit("The threshold removed every mover; lower it.")
 

@@ -131,6 +131,10 @@ _SEARCH_LO_MPS = 0.5
 _SEARCH_HI_MPS = 6.0
 _MIN_MOVERS = 20
 _MIN_PROMINENCE = 1.5
+# A walking hump has to carry real mass to be a population rather than a ripple
+# in the left tail. Measured on vehicle-only feeds, the spurious "humps" that
+# used to pass the location check sat at ~1% of the peak density.
+_MIN_HUMP_SHARE = 0.15
 
 
 def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
@@ -167,9 +171,11 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
        valley``, and the density is evaluated well beyond the selection window
        in both directions. Ranking by absolute depth instead selects the lowest
        point of a monotone tail at the window edge, which is not a valley.
-    2. The density peak **below** the candidate must sit at walking pace. A
-       vehicle-only feed has interior valleys of its own; without this guard
-       the boundary between gridlock and free flow is accepted as a mode split.
+    2. There must be a real walking **hump** below the candidate: an interior
+       local maximum of the density, located at walking pace, carrying at least
+       ``_MIN_HUMP_SHARE`` of the peak density. A vehicle-only feed has interior
+       valleys of its own; without this guard the boundary between gridlock and
+       free flow is accepted as a mode split.
     """
     unit = SpeedUnit.parse(unit)
     x = np.asarray(pd.Series(mover_speeds).to_numpy(), dtype=float)
@@ -188,7 +194,14 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
     walk_hi = _WALK_MODE_HI_MPS
 
     grid = np.linspace(np.log(lo / 4.0), np.log(hi * 8.0), 1200)
-    dens = gaussian_kde(np.log(x), bw_method=0.20)(grid)
+    try:
+        dens = gaussian_kde(np.log(x), bw_method=0.20)(grid)
+    except np.linalg.LinAlgError:
+        # Every mover at one speed (a quantised or synthetic field) gives a
+        # singular covariance. That distribution is a spike, not two humps with
+        # a valley between them, so there is nothing to find -- report the same
+        # "no walking population" answer rather than aborting the caller.
+        return None
 
     interior = np.arange(1, len(grid) - 1)
     is_min = ((dens[interior] < dens[interior - 1])
@@ -203,11 +216,43 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
         right = dens[i + 1:].max(initial=0.0)
         return min(left, right) / dens[i] if dens[i] > 0 else 0.0
 
-    def lower_hump(i: int) -> float:
-        return float(np.exp(grid[int(np.argmax(dens[:i]))]))
+    peak_density = float(dens.max())
+
+    def lower_hump(i: int) -> int | None:
+        """Index of the tallest interior local maximum strictly below ``i``.
+
+        Deliberately not ``argmax(dens[:i])``. On a monotone left tail that
+        returns the grid point immediately below the candidate, whose position
+        is by construction just under the candidate's own -- so a candidate
+        anywhere inside the walking band satisfies a "the hump below is at
+        walking pace" test automatically, and the test verifies nothing. A hump
+        is a place where the density turns over, so require that it does.
+        """
+        below = np.arange(1, i)
+        if not len(below):
+            return None
+        turns_over = ((dens[below] > dens[below - 1])
+                      & (dens[below] > dens[below + 1]))
+        humps = below[turns_over]
+        if not len(humps):
+            return None
+        return int(humps[np.argmax(dens[humps])])
+
+    def has_walking_hump(i: int) -> bool:
+        j = lower_hump(i)
+        if j is None:
+            return False
+        if not (walk_lo <= float(np.exp(grid[j])) <= walk_hi):
+            return False
+        # Location alone is not enough: a vehicle-only feed ripples in its far
+        # left tail at a fraction of a percent of the peak, and treating that as
+        # a walking population invents pedestrians -- out of noise, and worse,
+        # out of genuinely gridlocked vehicles, which is the very congestion the
+        # study exists to measure.
+        return dens[j] >= _MIN_HUMP_SHARE * peak_density
 
     viable = [i for i in candidates if prominence(i) >= _MIN_PROMINENCE]
-    walkers = [i for i in viable if walk_lo <= lower_hump(i) <= walk_hi]
+    walkers = [i for i in viable if has_walking_hump(i)]
     if not walkers:
         return None
     return float(from_mps(np.exp(grid[max(walkers, key=prominence)]), unit))
@@ -320,8 +365,17 @@ def filter_by_mode(obs, movers, *, keep=(MODE_VEHICLE,)) -> pd.DataFrame:
             "filter_by_mode needs the DataFrame returned by classify_movers "
             "(it must carry a 'mode' column).")
     wanted = {keep} if isinstance(keep, str) else set(keep)
-    kept_ids = set(movers.index[movers["mode"].isin(wanted)])
-    out = obs[obs["traj_id"].isin(kept_ids)].reset_index(drop=True)
+    kept = movers.index[movers["mode"].isin(wanted)]
+    mask = obs["traj_id"].isin(set(kept[kept.notna()]))
+    # A frame loaded without a trajectory id carries traj_id = None, which
+    # groupby collapses into a single null-indexed mover. Nulls are not equal to
+    # each other, so `isin` matches that mover against zero rows and a "keep"
+    # verdict silently deletes all of its data -- and dtype-dependently, since
+    # an object column of None kept nothing where a float column of NaN kept
+    # everything. Match the null-id mover explicitly instead.
+    if kept.isna().any():
+        mask = mask | obs["traj_id"].isna()
+    out = obs[mask].reset_index(drop=True)
     if not len(out):
         warnings.warn(
             f"filter_by_mode removed every observation: no mover matched "

@@ -219,3 +219,82 @@ def test_verdicts_match_between_intervals_and_edge_observations():
     a = rt.classify_movers(obs, threshold=3.0, min_intervals=3, unit="mps")
     b = rt.classify_movers(long_form, threshold=3.0, min_intervals=3, unit="mps")
     assert a["mode"].to_dict() == b["mode"].to_dict()
+
+
+def test_suggest_threshold_rejects_a_monotone_tail_with_no_walking_hump():
+    """REGRESSION: a candidate valley in the far-left tail of a vehicle-only
+    feed had no hump below it at all, but `argmax(dens[:i])` returned the point
+    immediately below the candidate, so the walking-band guard passed
+    trivially. Measured before the fix: 4 of these 20 seeds returned a
+    threshold, and adding gridlocked vehicles made it label 37 of 430 real
+    vehicles as pedestrians."""
+    for seed in range(20):
+        rng = np.random.default_rng(seed)
+        mph = rng.lognormal(np.log(13), 0.45, 400)
+        assert rt.suggest_mode_threshold(mph, unit="mph") is None, f"seed {seed}"
+
+
+def test_gridlock_is_indistinguishable_from_walking_on_speed_alone():
+    """Gridlocked vehicles and pedestrians at the same speed are the SAME input.
+
+    The reviewer asked for a test asserting that 400 vehicles plus 30
+    gridlocked ones at 2-4 mph yields no threshold. That is not achievable on
+    speed alone, and this test pins down why: the "gridlocked vehicles" array
+    and a "real pedestrians" array drawn identically are bit-for-bit equal, so
+    no function of the speed distribution can return None for one and a
+    threshold for the other. Rejecting this feed would require
+    `_MIN_HUMP_SHARE > 0.22`, which would also blind the detector to any
+    genuine walking population under ~8% of the feed.
+
+    This is the limitation documented at the top of roadtraffic.modes: a
+    fully-gridlocked vehicle is classified as a pedestrian, the bias is upward,
+    and the mitigation is to run the study screened and unscreened and report
+    the gap. It is a known cost of the method, not a bug in the detector.
+    """
+    rng = np.random.default_rng(0)
+    vehicles = rng.lognormal(np.log(13), 0.45, 400)
+    gridlocked = rng.uniform(2.0, 4.0, 30)
+
+    other = np.random.default_rng(0)
+    other.lognormal(np.log(13), 0.45, 400)
+    pedestrians = other.uniform(2.0, 4.0, 30)
+
+    assert np.array_equal(gridlocked, pedestrians)
+    assert (rt.suggest_mode_threshold(np.concatenate([vehicles, gridlocked]),
+                                      unit="mph")
+            == rt.suggest_mode_threshold(np.concatenate([vehicles, pedestrians]),
+                                         unit="mph"))
+
+
+def test_suggest_threshold_survives_a_degenerate_distribution():
+    """A quantised/synthetic speed field where every mover shares one speed
+    makes gaussian_kde raise LinAlgError on the singular covariance. A spike
+    has no valley, so the answer is None -- not a traceback out of the CLI."""
+    assert rt.suggest_mode_threshold(np.full(40, 2.0), unit="mps") is None
+
+
+def test_a_null_trajectory_id_keeps_its_rows_through_classify_and_filter():
+    """REGRESSION: speeds.py sets traj_id = None when the input carries no
+    trajectory id. classify_movers grouped those into one null-indexed mover
+    and labelled it a vehicle, but filter_by_mode's `isin` never matches null
+    against null -- so a "keep" verdict silently deleted every row. Measured
+    before the fix: all-None kept 0 of 6 rows while all-NaN kept 6 of 6."""
+    obs = pd.DataFrame({
+        "traj_id": [None] * 6,
+        "speed_mps": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+        "distance_m": [100.0] * 6,
+    })
+    movers = rt.classify_movers(obs, threshold=5.0, unit="mps")
+    assert list(movers["mode"]) == ["vehicle"]
+    assert len(rt.filter_by_mode(obs, movers)) == len(obs)
+
+
+def test_null_and_nan_trajectory_ids_filter_identically():
+    """The None and NaN spellings of "no trajectory id" must not disagree."""
+    base = {"speed_mps": [10.0, 11.0, 12.0, 13.0], "distance_m": [100.0] * 4}
+    none_obs = pd.DataFrame({"traj_id": [None] * 4, **base})
+    nan_obs = pd.DataFrame({"traj_id": [np.nan] * 4, **base})
+    kept = [len(rt.filter_by_mode(o, rt.classify_movers(o, threshold=5.0,
+                                                        unit="mps")))
+            for o in (none_obs, nan_obs)]
+    assert kept == [4, 4]

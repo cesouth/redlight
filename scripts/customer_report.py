@@ -106,8 +106,16 @@ DIV_LOW, DIV_MID, DIV_HIGH = "#d03b3b", "#c3c2b7", "#2a78d6"
 # Slots 1-3 of the validated categorical theme; these three clear the
 # all-pairs CVD and normal-vision floors on this deck's surface.
 CAT_1, CAT_2, CAT_3 = "#2a78d6", "#eb6834", "#1baf7a"
-MODE_COLORS = {"vehicle": CAT_1, "pedestrian": CAT_2, "unknown": CAT_3}
-MODE_ORDER = ("vehicle", "pedestrian", "unknown")
+MODE_COLORS = {rt.MODE_VEHICLE: CAT_1, rt.MODE_PEDESTRIAN: CAT_2,
+               rt.MODE_UNKNOWN: CAT_3}
+MODE_ORDER = (rt.MODE_VEHICLE, rt.MODE_PEDESTRIAN, rt.MODE_UNKNOWN)
+# How each mode reads in prose on a slide, so the tiles can describe whichever
+# keep set the pipeline actually used instead of assuming vehicles-only.
+MODE_PHRASE = {rt.MODE_VEHICLE: "vehicles", rt.MODE_PEDESTRIAN: "pedestrians",
+               rt.MODE_UNKNOWN: "unclassified"}
+# The per-mover percentile the screen classifies on. One value, so the column
+# name built from it and the classification that reads it cannot disagree.
+MODE_PERCENTILE = 85.0
 
 FONT_STACK = ["system-ui", "-apple-system", "Segoe UI", "Helvetica", "Arial",
               "DejaVu Sans", "sans-serif"]
@@ -322,13 +330,20 @@ def build_tiles(args, R):
         (f"{max((t1 - t0).days + 1, 1):,}", "Days observed", "")]
     if R.get("movers") is not None:
         mv = R["movers"]
-        kept = int((mv["mode"] == "vehicle").sum())
+        # Read the keep set the pipeline actually filtered on. Hardcoding
+        # vehicles here made the tiles contradict the data note on the same
+        # slide under --keep-unknown, counting retained movers as "excluded".
+        keep = R.get("mode_keep") or (rt.MODE_VEHICLE,)
+        kept = int(mv["mode"].isin(keep).sum())
+        in_phrase = " or ".join(MODE_PHRASE[m] for m in MODE_ORDER if m in keep)
+        out_phrase = " or ".join(MODE_PHRASE[m] for m in MODE_ORDER
+                                 if m not in keep)
         thr = R["mode_threshold"]
         out["modes"] = [
-            (f"{kept:,}", "Movers kept", "classified as vehicles"),
-            (f"{len(mv) - kept:,}", "Movers excluded", "pedestrian or unclassified"),
+            (f"{kept:,}", "Movers kept", f"classified as {in_phrase}"),
+            (f"{len(mv) - kept:,}", "Movers excluded", out_phrase),
             (f"{thr:.1f}" if thr is not None else "--", f"Screen ({unit})",
-             "per-mover 85th percentile"),
+             f"per-mover {MODE_PERCENTILE:g}th percentile"),
             (f"{100.0 * kept / max(len(mv), 1):.0f}%", "Of all movers", "")]
     obs = seg["coverage"]["overall"]
     out["coverage"] = [
@@ -470,13 +485,17 @@ def run_pipeline(args, notes: list) -> dict:
             "with --min-baseline 150 (or larger) to merge hops until the "
             "displacement clears the noise floor, then compare the two runs.")
 
-    movers, mode_threshold = None, None
+    movers, mode_threshold, mode_keep = None, None, None
     if args.mode_threshold is not None:
         print("[5/8] mode screening", file=sys.stderr)
+        # One percentile drives the feature column, the suggestion and the
+        # classification below, so the column name can never drift out from
+        # under the classifier's default and turn into a KeyError.
+        pct_col = f"speed_p{MODE_PERCENTILE:g}_{args.unit}"
         if args.mode_threshold == "auto":
-            feat = rt.mover_features(intervals, unit=args.unit)
-            thr = rt.suggest_mode_threshold(feat[f"speed_p85_{args.unit}"],
-                                            unit=args.unit)
+            feat = rt.mover_features(intervals, percentile=MODE_PERCENTILE,
+                                     unit=args.unit)
+            thr = rt.suggest_mode_threshold(feat[pct_col], unit=args.unit)
             if thr is None:
                 raise SystemExit(
                     "--mode-threshold auto found no walking-speed population to "
@@ -488,18 +507,23 @@ def run_pipeline(args, notes: list) -> dict:
             thr = float(args.mode_threshold)
         mode_threshold = float(thr)
 
-        movers = rt.classify_movers(intervals, threshold=thr, unit=args.unit)
-        keep = ("vehicle", "unknown") if args.keep_unknown else ("vehicle",)
+        movers = rt.classify_movers(intervals, threshold=thr,
+                                    percentile=MODE_PERCENTILE, unit=args.unit)
+        keep = ((rt.MODE_VEHICLE, rt.MODE_UNKNOWN) if args.keep_unknown
+                else (rt.MODE_VEHICLE,))
+        mode_keep = keep
         n_before, mov_before = len(obs), int(intervals["traj_id"].nunique())
         obs = rt.filter_by_mode(obs, movers, keep=keep)
         intervals = rt.filter_by_mode(intervals, movers, keep=keep)
         kept = int(movers["mode"].isin(keep).sum())
+        excluded_phrase = " or ".join(MODE_PHRASE[m] for m in MODE_ORDER
+                                      if m not in keep)
         notes.append(
             f"Mode screening excluded {mov_before - kept:,} of {mov_before:,} "
-            f"movers and {n_before - len(obs):,} of {n_before:,} observations as "
-            "pedestrians or other non-vehicle movers. Mode is judged per mover on "
-            "its 85th-percentile speed, so a vehicle kept by the screen retains "
-            "all of its slow observations.")
+            f"movers and {n_before - len(obs):,} of {n_before:,} observations "
+            f"as {excluded_phrase}. Mode is judged per mover on its "
+            f"{MODE_PERCENTILE:g}th-percentile speed, so a vehicle kept by the "
+            "screen retains all of its slow observations.")
         notes.append(
             "WARNING -- mode screening biases speeds UPWARD when it is wrong. A "
             "vehicle whose entire track is gridlocked never shows a fast stretch "
@@ -568,6 +592,7 @@ def run_pipeline(args, notes: list) -> dict:
         "clean": clean, "seg": seg, "hourly": hourly, "peaks": peaks,
         "daytype": daytype, "congestion": congestion, "stats": stats,
         "conn": conn, "bc": bc, "movers": movers, "mode_threshold": mode_threshold,
+        "mode_keep": mode_keep,
     }
 
 
@@ -692,7 +717,7 @@ def fig_daytype(plt, daytype, unit):
     return fig
 
 
-def fig_modes(plt, movers, threshold, unit, percentile=85.0):
+def fig_modes(plt, movers, threshold, unit, percentile=MODE_PERCENTILE):
     """Feed composition, and the distribution the screen actually cut on."""
     if movers is None or not len(movers):
         return None
