@@ -56,6 +56,7 @@ from .modes import (
     MODE_PEDESTRIAN,
     MODE_UNKNOWN,
     MODE_VEHICLE,
+    classify_movers,
     mover_features,
     suggest_mode_threshold,
 )
@@ -95,6 +96,7 @@ __all__ = [
     "connectivity_report",
     "mover_features",
     "suggest_mode_threshold",
+    "classify_movers",
     "MODE_PEDESTRIAN",
     "MODE_VEHICLE",
     "MODE_UNKNOWN",

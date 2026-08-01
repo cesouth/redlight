@@ -209,3 +209,77 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
     if not walkers:
         return None
     return float(from_mps(np.exp(grid[max(walkers, key=prominence)]), unit))
+
+
+def classify_movers(obs, *, threshold, percentile: float = 85.0,
+                    min_intervals: int = 3, min_distance_m: float = 0.0,
+                    unit="mph") -> pd.DataFrame:
+    """Label each mover ``pedestrian``, ``vehicle`` or ``unknown``.
+
+    Parameters
+    ----------
+    obs : DataFrame
+        As :func:`mover_features`.
+    threshold : float or ``"auto"``
+        Movers whose ``percentile`` speed is at or above this are vehicles.
+        ``"auto"`` delegates to :func:`suggest_mode_threshold` and **raises**
+        when it finds no walking population, rather than falling back to a
+        default that would silently reshape the study.
+    percentile, unit
+        As :func:`mover_features`. ``threshold`` is read in ``unit``.
+    min_intervals, min_distance_m
+        Evidence floors. A mover below either is ``unknown``.
+
+    Returns
+    -------
+    DataFrame
+        :func:`mover_features`' columns plus ``mode``.
+
+    Notes
+    -----
+    There is deliberately no ``require_quality`` parameter. Classification uses
+    every interval, including ``quality=False`` ones. The quality screen rejects
+    intervals whose displacement is small relative to GPS noise -- exactly what
+    a walking mover produces -- so filtering on it would delete the evidence
+    that identifies slow movers and push them into ``unknown``.
+
+    ``unknown`` never arises from speed ambiguity, only from insufficient
+    evidence. A congested vehicle is a ``vehicle``.
+    """
+    unit = SpeedUnit.parse(unit)
+    feat = mover_features(obs, percentile=percentile, unit=unit)
+    pct_col = f"speed_p{_percentile_label(percentile)}_{unit.value}"
+    if not len(feat):
+        feat["mode"] = pd.Series(dtype=object)
+        return feat
+
+    if isinstance(threshold, str):
+        if threshold != "auto":
+            raise ValueError(
+                f"threshold must be a number or 'auto', got {threshold!r}.")
+        auto = suggest_mode_threshold(feat[pct_col], unit=unit)
+        if auto is None:
+            raise ValueError(
+                "classify_movers(threshold='auto') found no walking-speed "
+                "population to split off, so there is no defensible cut. "
+                "Either the feed is all vehicles (nothing to exclude), or the "
+                "two populations overlap too much to separate on speed. "
+                "Inspect the distribution of "
+                f"mover_features(...)['{pct_col}'] and pass an explicit "
+                "threshold if you still want to screen.")
+        threshold = auto
+
+    speed = feat[pct_col].to_numpy(dtype=float)
+    n_iv = feat["n_intervals"].to_numpy()
+    dist = feat["distance_m"].to_numpy(dtype=float)
+
+    insufficient = n_iv < min_intervals
+    if min_distance_m > 0:
+        # Negated >= rather than <, so a NaN distance (no distance_m column in
+        # the source) counts as insufficient instead of silently passing.
+        insufficient = insufficient | ~(dist >= min_distance_m)
+
+    feat["mode"] = np.where(
+        insufficient, MODE_UNKNOWN,
+        np.where(speed >= float(threshold), MODE_VEHICLE, MODE_PEDESTRIAN))
+    return feat

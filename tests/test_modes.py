@@ -107,3 +107,63 @@ def test_suggest_threshold_is_unit_consistent():
     assert t_mps is not None and t_mph is not None
     # same physical speed, expressed two ways
     assert t_mph * 0.44704 == pytest.approx(t_mps, rel=1e-6)
+
+
+def test_classify_labels_pedestrians_and_vehicles():
+    obs = obs_frame({"walker": [1.3, 1.5, 1.4, 1.6],
+                     "car": [3.0, 18.0, 20.0, 22.0]})
+    m = rt.classify_movers(obs, threshold=3.0, unit="mps")
+    assert m.loc["walker", "mode"] == "pedestrian"
+    assert m.loc["car", "mode"] == "vehicle"
+
+
+def test_a_congested_vehicle_is_still_a_vehicle():
+    """It crawls for most of its trip but shows one free-flowing stretch, and
+    the 85th percentile is chosen precisely so that stretch is visible."""
+    obs = obs_frame({"stuck": [1.5, 1.6, 1.4, 1.5, 1.6, 1.5, 14.0, 15.0]})
+    m = rt.classify_movers(obs, threshold=3.0, unit="mps")
+    assert m.loc["stuck", "mode"] == "vehicle"
+
+
+def test_unknown_comes_from_too_few_intervals():
+    m = rt.classify_movers(obs_frame({"brief": [20.0, 21.0]}),
+                           threshold=3.0, min_intervals=3, unit="mps")
+    assert m.loc["brief", "mode"] == "unknown"
+
+
+def test_unknown_comes_from_too_little_distance():
+    m = rt.classify_movers(obs_frame({"short": [20.0] * 4}, distance_m=10.0),
+                           threshold=3.0, min_distance_m=500.0, unit="mps")
+    assert m.loc["short", "mode"] == "unknown"
+
+
+def test_threshold_is_read_in_the_requested_unit():
+    obs = obs_frame({"a": [1.4] * 5, "b": [12.0] * 5})
+    mph = rt.classify_movers(obs, threshold=6.0, unit="mph")
+    kph = rt.classify_movers(obs, threshold=6.0 * 1.609344, unit="kph")
+    assert list(mph["mode"]) == list(kph["mode"])
+    assert list(mph["mode"]) == ["pedestrian", "vehicle"]
+
+
+def test_auto_threshold_raises_rather_than_guessing():
+    rng = np.random.default_rng(2)
+    obs = obs_frame({f"v{i}": [float(s)] * 4
+                     for i, s in enumerate(rng.normal(12.0, 2.0, 60))})
+    with pytest.raises(ValueError, match="walking"):
+        rt.classify_movers(obs, threshold="auto", unit="mps")
+
+
+def test_auto_threshold_works_when_there_are_walkers():
+    rng = np.random.default_rng(0)
+    specs = {f"p{i}": [float(v)] * 4
+             for i, v in enumerate(rng.normal(1.4, 0.15, 90))}
+    specs.update({f"v{i}": [float(v)] * 4
+                  for i, v in enumerate(np.clip(rng.normal(12.0, 3.0, 200), 5.0, None))})
+    m = rt.classify_movers(obs_frame(specs), threshold="auto", unit="mps")
+    assert set(m["mode"]) == {"pedestrian", "vehicle"}
+    assert (m["mode"] == "pedestrian").sum() == 90
+
+
+def test_bad_threshold_string_raises():
+    with pytest.raises(ValueError, match="'auto'"):
+        rt.classify_movers(obs_frame({"a": [1.0] * 4}), threshold="fast", unit="mps")
