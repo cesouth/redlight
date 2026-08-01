@@ -346,12 +346,12 @@ def build_tiles(args, R):
 # --------------------------------------------------------------------------- #
 def run_pipeline(args, notes: list) -> dict:
     """Load, match, derive, clean and aggregate. Returns everything the deck needs."""
-    print(f"[1/7] network  <- {args.network}", file=sys.stderr)
+    print(f"[1/8] network  <- {args.network}", file=sys.stderr)
     net = rt.Network.from_geojson(args.network)
     print(f"      {net.number_of_nodes():,} nodes / {net.number_of_edges():,} edges",
           file=sys.stderr)
 
-    print(f"[2/7] points   <- {args.points}", file=sys.stderr)
+    print(f"[2/8] points   <- {args.points}", file=sys.stderr)
     pts = rt.load_points(args.points, tz=args.tz, id_col=args.id_col,
                          time_col=args.time_col, lon_col=args.lon_col,
                          lat_col=args.lat_col)
@@ -389,7 +389,7 @@ def run_pipeline(args, notes: list) -> dict:
                      f"to the default sigma of {args.default_sigma} m.")
         acc = None
 
-    print("[3/7] matching (HMM/Viterbi)", file=sys.stderr)
+    print("[3/8] matching (HMM/Viterbi)", file=sys.stderr)
     matched = rt.HMMMatcher(net, max_dist=args.max_dist).match(pts)
     n_unmatched = int((matched["edge_id"] == -1).sum())
     if n_unmatched:
@@ -398,7 +398,7 @@ def run_pipeline(args, notes: list) -> dict:
                      f"snapped to no road within {args.max_dist} m and are "
                      "excluded from every statistic below.")
 
-    print("[4/7] deriving speeds from on-road displacement", file=sys.stderr)
+    print("[4/8] deriving speeds from on-road displacement", file=sys.stderr)
     derived = rt.derive_speeds(
         net, matched, pts,
         pos_accuracy_col=acc,
@@ -440,7 +440,43 @@ def run_pipeline(args, notes: list) -> dict:
             "with --min-baseline 150 (or larger) to merge hops until the "
             "displacement clears the noise floor, then compare the two runs.")
 
-    print("[5/7] cleaning", file=sys.stderr)
+    movers, mode_threshold = None, None
+    if args.mode_threshold is not None:
+        print("[5/8] mode screening", file=sys.stderr)
+        if args.mode_threshold == "auto":
+            feat = rt.mover_features(intervals, unit=args.unit)
+            thr = rt.suggest_mode_threshold(feat[f"speed_p85_{args.unit}"],
+                                            unit=args.unit)
+            if thr is None:
+                raise SystemExit(
+                    "--mode-threshold auto found no walking-speed population to "
+                    "split off. Either the feed is all vehicles (nothing to "
+                    "exclude), or the populations overlap too much to separate on "
+                    "speed. Inspect it with scripts/mover_screen.py, then pass an "
+                    "explicit number.")
+        else:
+            thr = float(args.mode_threshold)
+        mode_threshold = float(thr)
+
+        movers = rt.classify_movers(intervals, threshold=thr, unit=args.unit)
+        keep = ("vehicle", "unknown") if args.keep_unknown else ("vehicle",)
+        n_before, mov_before = len(obs), int(intervals["traj_id"].nunique())
+        obs = rt.filter_by_mode(obs, movers, keep=keep)
+        intervals = rt.filter_by_mode(intervals, movers, keep=keep)
+        kept = int(movers["mode"].isin(keep).sum())
+        notes.append(
+            f"Mode screening excluded {mov_before - kept:,} of {mov_before:,} "
+            f"movers and {n_before - len(obs):,} of {n_before:,} observations as "
+            "pedestrians or other non-vehicle movers. Mode is judged per mover on "
+            "its 85th-percentile speed, so a vehicle kept by the screen retains "
+            "all of its slow observations.")
+        notes.append(
+            "WARNING -- mode screening biases speeds UPWARD when it is wrong. A "
+            "vehicle whose entire track is gridlocked never shows a fast stretch "
+            "and is excluded with the pedestrians. Re-run without "
+            "--mode-threshold and compare peak speeds; the gap is the uncertainty.")
+
+    print("[6/8] cleaning", file=sys.stderr)
     # filter_trajectory_speed is deliberately NOT used here: it is the cleaner
     # for matched *point* frames (it needs lon/lat/traj_id to detect dwells),
     # whereas derive_speeds emits interval observations that carry no position.
@@ -460,7 +496,7 @@ def run_pipeline(args, notes: list) -> dict:
         raise SystemExit("Cleaning removed every observation; raise --max-speed.")
 
     rq = args.require_quality
-    print("[6/7] assigning speeds + aggregating", file=sys.stderr)
+    print("[7/8] assigning speeds + aggregating", file=sys.stderr)
     seg = rt.assign_segment_speeds(net, clean, statistic=args.statistic,
                                    n_peak=args.n_peak, n_offpeak=args.n_offpeak,
                                    require_quality=rq)
@@ -488,7 +524,7 @@ def run_pipeline(args, notes: list) -> dict:
                      "congestion-vs-posted-limit section is omitted. Re-export "
                      "the network with maxspeed to enable it.")
 
-    print("[7/7] network structure", file=sys.stderr)
+    print("[8/8] network structure", file=sys.stderr)
     stats = rt.network_stats(net, area_km2=args.area_km2)
     conn = rt.connectivity_report(net)
     try:
@@ -501,7 +537,7 @@ def run_pipeline(args, notes: list) -> dict:
         "net": net, "points": pdf, "matched": matched, "intervals": intervals,
         "clean": clean, "seg": seg, "hourly": hourly, "peaks": peaks,
         "daytype": daytype, "congestion": congestion, "stats": stats,
-        "conn": conn, "bc": bc,
+        "conn": conn, "bc": bc, "movers": movers, "mode_threshold": mode_threshold,
     }
 
 
@@ -1174,6 +1210,13 @@ def parse_args(argv=None):
     p.add_argument("--require-quality", action="store_true",
                    help="drop intervals that failed the quality screen "
                         "(recommended for customer deliverables)")
+    p.add_argument("--mode-threshold", default=None,
+                   help="exclude movers whose p85 speed is below this (in --unit), "
+                        "or 'auto' to pick the density valley. Off by default: "
+                        "screening changes the study, so it is never implicit.")
+    p.add_argument("--keep-unknown", action="store_true",
+                   help="keep movers with too little data to classify "
+                        "(default: excluded along with pedestrians)")
     return p.parse_args(argv)
 
 
