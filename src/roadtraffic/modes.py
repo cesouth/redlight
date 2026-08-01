@@ -117,3 +117,94 @@ def mover_features(obs, *, percentile: float = 85.0, unit="mph") -> pd.DataFrame
         out["snap_dist_m"] = g["snap_dist_m"].median()
     out.index.name = "traj_id"
     return out
+
+
+# Physical anchors, in m/s. A pedestrian population peaks at walking pace;
+# 0.6-2.5 m/s spans a slow stroll to a brisk walk measured at the 85th
+# percentile of a track. The split, if there is one, lies below 6 m/s
+# (~13 mph) -- above any walking or jogging pace, below urban free flow.
+_WALK_MODE_LO_MPS = 0.6
+_WALK_MODE_HI_MPS = 2.5
+_SEARCH_LO_MPS = 0.5
+_SEARCH_HI_MPS = 6.0
+_MIN_MOVERS = 20
+_MIN_PROMINENCE = 1.5
+
+
+def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
+    """Speed at the density valley separating walkers from drivers.
+
+    Parameters
+    ----------
+    mover_speeds : array-like
+        One speed per mover, in ``unit`` -- typically the
+        ``speed_p85_<unit>`` column of :func:`mover_features`. Any index is
+        ignored; non-finite and non-positive values are dropped.
+    unit : str or SpeedUnit
+        Unit of ``mover_speeds`` and of the returned threshold.
+
+    Returns
+    -------
+    float or None
+        ``None`` when there is no walking-speed population to split off,
+        which is the honest answer for a single-mode feed. Callers must not
+        substitute a default: a silently chosen threshold that is wrong
+        produces a study that looks correct.
+
+    Notes
+    -----
+    The density is estimated in **log** speed. A fixed relative bandwidth on
+    raw speed is set by the spread of the whole sample, and the driving hump
+    runs out to motorway speeds -- wide enough to smooth away a valley only a
+    couple of mph across. Log speed makes the bandwidth scale-free, so
+    resolution near walking pace does not depend on the fastest vehicle.
+
+    Two guards decide whether a valley is a *mode* boundary at all:
+
+    1. Candidates are ranked by **prominence**, ``min(left_peak, right_peak) /
+       valley``, and the density is evaluated well beyond the selection window
+       in both directions. Ranking by absolute depth instead selects the lowest
+       point of a monotone tail at the window edge, which is not a valley.
+    2. The density peak **below** the candidate must sit at walking pace. A
+       vehicle-only feed has interior valleys of its own; without this guard
+       the boundary between gridlock and free flow is accepted as a mode split.
+    """
+    unit = SpeedUnit.parse(unit)
+    x = np.asarray(pd.Series(mover_speeds).to_numpy(), dtype=float)
+    x = x[np.isfinite(x) & (x > 0)]
+    if len(x) < _MIN_MOVERS:
+        return None
+    try:
+        from scipy.stats import gaussian_kde
+    except ImportError:  # pragma: no cover - scipy is a core dependency
+        return None
+
+    lo = float(from_mps(_SEARCH_LO_MPS, unit))
+    hi = float(from_mps(_SEARCH_HI_MPS, unit))
+    walk_lo = float(from_mps(_WALK_MODE_LO_MPS, unit))
+    walk_hi = float(from_mps(_WALK_MODE_HI_MPS, unit))
+
+    grid = np.linspace(np.log(lo / 4.0), np.log(hi * 8.0), 1200)
+    dens = gaussian_kde(np.log(x), bw_method=0.20)(grid)
+
+    interior = np.arange(1, len(grid) - 1)
+    is_min = ((dens[interior] < dens[interior - 1])
+              & (dens[interior] < dens[interior + 1]))
+    in_window = (grid[interior] >= np.log(lo)) & (grid[interior] <= np.log(hi))
+    candidates = interior[is_min & in_window]
+    if not len(candidates):
+        return None
+
+    def prominence(i: int) -> float:
+        left = dens[:i].max(initial=0.0)
+        right = dens[i + 1:].max(initial=0.0)
+        return min(left, right) / dens[i] if dens[i] > 0 else 0.0
+
+    def lower_hump(i: int) -> float:
+        return float(np.exp(grid[int(np.argmax(dens[:i]))]))
+
+    viable = [i for i in candidates if prominence(i) >= _MIN_PROMINENCE]
+    walkers = [i for i in viable if walk_lo <= lower_hump(i) <= walk_hi]
+    if not walkers:
+        return None
+    return float(np.exp(grid[max(walkers, key=prominence)]))

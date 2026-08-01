@@ -57,6 +57,7 @@ from .modes import (
     MODE_UNKNOWN,
     MODE_VEHICLE,
     mover_features,
+    suggest_mode_threshold,
 )
 from .network import Network
 from .points import PointSet, load_points, save_points
@@ -93,6 +94,7 @@ __all__ = [
     "network_stats",
     "connectivity_report",
     "mover_features",
+    "suggest_mode_threshold",
     "MODE_PEDESTRIAN",
     "MODE_VEHICLE",
     "MODE_UNKNOWN",
