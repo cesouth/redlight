@@ -8,6 +8,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-01
+
+### Added
+
+- **Mode screening: `roadtraffic.modes`.** A mixed GPS feed that also carries
+  people on foot drags every road's score down, and the obvious remedy is the
+  one that breaks the study. A pedestrian at 3 mph and a vehicle crawling
+  through a chokepoint at 3 mph are indistinguishable in a single observation,
+  so a `min_speed` filter deletes both -- removing exactly the congestion a
+  trafficability study exists to measure.
+
+  Mode is a property of the **mover**, not the fix: a pedestrian is slow for
+  their whole track, while a congested vehicle is slow on one segment and
+  free-flowing elsewhere in the same trip. The new functions classify whole
+  trajectories and apply each verdict to *all* of that mover's observations, so
+  a mover kept as a vehicle keeps its slow rows.
+
+  - `mover_features(obs, *, percentile=85.0, unit="mph")` -- one evidence row
+    per `traj_id`. Deduplicates on `interval_id` when present, so a long-format
+    `edge_observations` frame does not weight each mover by how many edges its
+    hops crossed.
+  - `suggest_mode_threshold(mover_speeds, *, unit="mph")` -- the density valley
+    separating walkers from drivers, or `None` when there is no walking
+    population to split off. It never substitutes a default: a silently chosen
+    wrong threshold produces a study that looks correct.
+  - `classify_movers(obs, *, threshold, ...)` -- labels `pedestrian`,
+    `vehicle` or `unknown`, where `unknown` means *insufficient evidence*
+    (`min_intervals`, `min_distance_m`) and never speed ambiguity. A congested
+    vehicle is a vehicle. `threshold="auto"` delegates to the suggester and
+    raises rather than guessing.
+  - `filter_by_mode(obs, movers, *, keep=("vehicle",))` -- applies the verdict.
+    Warns and returns an empty frame when nothing survives; a library does not
+    exit the process.
+
+  Measured against vehicles-only ground truth on a mixed synthetic set (231
+  vehicles, 88 pedestrians): per-edge error fell from 6.0 mph unscreened to
+  0.6 mph, where a 12 mph observation floor overshot peak speeds by +5.0 mph
+  and `require_quality` alone recovered under a third of the error.
+
+  Known limitation, documented in the module and in `docs/methodology.md`: a
+  vehicle gridlocked for its entire track never shows a fast stretch and is
+  excluded with the walkers, biasing speeds **upward**. Run the study screened
+  and unscreened, compare, and report the gap. Automatic threshold detection
+  needs roughly an 8% pedestrian share before a walking hump is detectable.
+
+- **`scripts/mover_screen.py`** -- a CLI to diagnose a feed's mover-speed
+  distribution, pick a threshold from it, and write a screened points file.
+- **`--mode-threshold` in `scripts/customer_report.py`**, off by default, with
+  a "what the feed is made of" deck section and the upward-bias caveat recorded
+  in the report's data notes.
+- **Documentation examples are now executed by the test suite**
+  (`tests/test_docs.py`). Every fenced Python block in `README.md` and
+  `docs/*.md` runs against a real network and GPS sample, so a renamed
+  parameter or changed return key fails the build instead of rotting quietly.
+
+### Changed
+
+- `examples/` restructured into topic folders, covering the current API:
+  speed derivation from positions, cleaning, peak and day-type analysis, mode
+  screening, congestion against posted limits, network structure, routing and
+  mapping. The previous examples ran, but described the 0.2-era package and
+  demonstrated `filter_by_speed(min_speed=...)` -- the anti-pattern this
+  release's documentation argues against.
+- Internal design documents moved out of `docs/` to `.plans/`, so they are no
+  longer published with the user documentation.
+
 ### Fixed
 
 - **`load_points` no longer discards the source's extra columns**, which made

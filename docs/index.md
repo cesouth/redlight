@@ -1,141 +1,83 @@
 # roadtraffic
 
-**Lightweight, bring-your-own-data trafficability analysis for road networks.**
+**Trafficability analysis for road networks, from your own GPS data.**
 
-`roadtraffic` turns your own road network and GPS point observations into
-statistically defensible trafficability studies: average speed by time of day,
-peak / off-peak detection, and shortest-path routing by time, distance, or a
-custom cost.
+Turn a road network and a pile of GPS fixes into a defensible study of how
+traffic actually moves: speed by time of day, peak and off-peak windows,
+congestion against posted limits, chokepoints, and routing on measured speeds.
 
-It is deliberately built on a small, well-understood dependency set
-(`numpy`, `pandas`, `scipy`, `shapely`, `pyproj`, `networkx`) — **no GDAL
-required** for the core. GeoJSON works out of the box; Shapefile/GeoPackage
-support is an opt-in extra.
+Built on `numpy`, `pandas`, `scipy`, `shapely`, `pyproj` and `networkx`.
+**No GDAL required** for the core.
 
----
+## Where to go
 
-## Features
+| If you want to… | Read |
+|---|---|
+| Get something running in ten minutes | [Quickstart & concepts](quickstart.md) |
+| Understand what a number means | [Statistical methodology](statistics.md) |
+| See why the methods were chosen, with evidence | [Methodology paper](methodology.md) |
+| Look up a function | [API reference](api.md) |
+| Copy a runnable script | [`examples/`](https://github.com/cesouth/roadtraffic/tree/main/examples) |
 
-- **Bring your own data — or fetch it.** Road network as GeoJSON (native),
-  Shapefile/GPKG (optional extra), or straight from OpenStreetMap via
-  `Network.from_overpass(bbox)` (stdlib only). GPS points as CSV/TSV or
-  GeoJSON, with auto-detected columns, unit-aware speed parsing
-  (`speed_kph` columns convert as kph), and timezone handling (`tz=`) so
-  peak hours are computed on the local clock.
-- **No speed column? Two ways to get one.** Opt-in `derive_speed=True`
-  reconstructs a per-point speed from successive GPS positions (geodesic
-  distance / time); `save_points` writes the result back out. Or, for
-  noisy/sparse GPS, match first and call `derive_speeds` to reconstruct speed
-  from **on-road displacement** after map matching — more accurate, and
-  robust to the matcher flip-flopping between the two directions of a
-  two-way road.
-- **Units handled for you.** Input speed in mph, kph, or m/s; everything is
-  computed internally in m/s and reported in the unit you choose.
-- **Two GPS-to-road matchers, one interface.**
-  - `NearestMatcher` — fast independent nearest-edge snapping.
-  - `HMMMatcher` — trajectory-aware HMM / Viterbi map matching
-    (Newson & Krumm, 2009). No extra dependencies.
-- **Sound speed cleaning.** Hard physical bounds plus robust MAD-based outlier
-  removal — and a trajectory-aware `filter_trajectory_speed` that drops parked
-  *dwells* while keeping slow-but-moving congestion (no upward speed bias).
-- **Temporal aggregation.** Average speed by hour or by an N-hour block, with
-  your choice of **mean** (with standard error and 95% CI) or **median**
-  (with IQR).
-- **Peak / off-peak detection, your way.** Rank time bins by congestion
-  (peak = slowest), pick contiguous peak/off-peak windows of user-selected
-  width (`n_peak=` / `n_offpeak=`, wrapping midnight), pass explicit hour
-  lists, or let the automatic median split decide — then assign three speeds
-  per segment: overall, peak block, and off-peak block.
-- **Routing.** Shortest path by time (per overall/peak/off-peak regime),
-  distance, or a user-supplied cost function, using Dijkstra on a NetworkX
-  multigraph (parallel roads and OSM one-way semantics — including
-  `oneway=-1` — handled correctly), with actionable errors when no route
-  exists.
-- **Mapping.** Export a speed-annotated network as GeoJSON for QGIS / Kepler /
-  Leaflet / Mapbox, or render a quick static PNG trafficability map
-  (`pip install roadtraffic[mapping]`) — for any of the three time regimes
-  (`period="peak"`).
-- **Network structure diagnostics.** Travel-time-weighted edge betweenness
-  centrality to find chokepoints (not just topologically central roads),
-  basic network stats (circuity, streets-per-node, intersection/dead-end
-  counts, optional area-based densities), and connectivity diagnostics
-  (largest strongly-connected component, one-way-trap vs. genuinely
-  disconnected detection) — `roadtraffic.analysis`.
-
-See [`statistics.md`](statistics.md) for the full statistical
-methodology behind every number this package reports.
-
----
-
-## Installation
+## Install
 
 ```bash
-# Core (GeoJSON networks, CSV/GeoJSON points)
-pip install roadtraffic
-
-# With Shapefile / GeoPackage network support (pulls pyogrio / GDAL;
-# needs Python 3.10+)
-pip install roadtraffic[shapefile]
-
-# With static trafficability map rendering (pulls matplotlib)
-pip install roadtraffic[mapping]
+pip install roadtraffic                 # core
+pip install roadtraffic[shapefile]      # + Shapefile / GeoPackage (needs 3.10+)
+pip install roadtraffic[mapping]        # + static PNG maps
 ```
 
-From source:
+## The shape of a study
 
-```bash
-git clone https://github.com/cesouth/roadtraffic.git
-cd roadtraffic
-pip install -e .[dev]
-```
-
----
-
-## Quickstart
+Most work follows the same path. Each step is a documented function you can
+stop at, inspect, and swap out.
 
 ```python
 import roadtraffic as rt
 
-# 1. Load a road network (GeoJSON here; .shp/.gpkg via Network.from_file)
 net = rt.Network.from_geojson("network.geojson")
+pts = rt.load_points("points.csv", id_col="vehicle_id", tz="America/New_York")
 
-# 2. Load GPS points (speed in mph, columns auto-detected)
-pts = rt.load_points("points.csv", speed_unit="mph")
+# Match fixes to roads, then reconstruct speed from on-road displacement.
+matched = rt.HMMMatcher(net, max_dist=50).match(pts)
+derived = rt.derive_speeds(net, matched, pts, min_baseline_m=150)
 
-# 3. Match points to edges (fast) — or HMMMatcher for accuracy
-matched = rt.NearestMatcher(net, max_dist=50).match(pts)
+# Cap the top end only -- a minimum-speed filter would delete the congestion.
+clean = rt.filter_by_speed(derived["edge_observations"], max_speed=80,
+                           unit="mph", mad_outliers=True, per_edge=True)
 
-# 4. Clean: drop parked/implausible speeds + robust outliers
-clean = rt.filter_by_speed(matched, min_speed=2, max_speed=80, unit="mph",
-                           mad_outliers=True, per_edge=True)
-
-# 5. Aggregate hourly, mean and median, reported in mph
-agg = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
-                          output_unit="mph")
-
-# 6. Find peak (slowest) and off-peak (fastest) hours
-peaks = rt.peak_analysis(agg, statistic="median", n_peak=3, n_offpeak=3)
-
-# 7. Route by time of day
-rt.assign_speeds(net, clean, statistic="median", target_hour=8, block_hours=1)
-router = rt.Router(net)
-result = router.route((-77.30, 38.68), (-77.27, 38.71), mode="time")
-print(result["travel_time_s"], "seconds over", result["distance_m"], "m")
+hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="median",
+                             output_unit="mph")
+peaks = rt.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
+rt.assign_segment_speeds(net, clean, n_peak=3, n_offpeak=3)
 ```
 
-More worked examples are in [`examples/`](https://github.com/cesouth/roadtraffic/tree/main/examples).
+From there: `congestion_report` for performance against posted limits,
+`edge_betweenness_centrality` for chokepoints, `Router` for travel times, and
+`to_geojson` for mapping. All are in the [API reference](api.md).
 
----
+## What makes it different
 
-## Documentation
+**Speed without a speed column.** Plenty of feeds carry position and time and
+nothing else. `derive_speeds` reconstructs speed from displacement along the
+matched road, with a per-fix error model and an explicit uncertainty on every
+measurement.
 
-- [Quickstart & concepts](quickstart.md)
-- [Statistical methodology](statistics.md)
-- [API reference](api.md)
-- Build the docs site: `pip install roadtraffic[docs] && mkdocs serve`
+**Mixed feeds are handled honestly.** If the data also contains people on
+foot, mode screening classifies whole *movers* rather than observations — so a
+vehicle crawling through a chokepoint keeps its slow rows while a pedestrian is
+removed. A minimum-speed filter cannot tell those two apart, and using one
+destroys the finding.
 
----
+**Bias is named, not hidden.** `require_quality` biases speeds upward, because
+slow traffic covers the least ground per fix and fails the screen most often.
+Mode screening biases upward when it is wrong. Both say so where they are
+offered.
+
+**The methods are defended.** [The methodology paper](methodology.md) is not a
+description; it is an argument with reproducible ground-truth experiments
+behind it.
 
 ## License
 
-MIT. See `LICENSE`.
+MIT.
