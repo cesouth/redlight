@@ -30,6 +30,11 @@ Usage
 
    Or let the screen pick the threshold itself with ``--threshold auto``.
 
+``--out-movers`` writes one row per mover with a ``mode`` column: ``vehicle``,
+``pedestrian``, or ``unknown``. ``unknown`` means there was too little data to
+judge the mover (see ``--min-intervals``), never that its speed was
+ambiguous -- a congested vehicle is classified ``vehicle``, not ``unknown``.
+
 Threshold choice
 ----------------
 Put it in the *valley* between the two humps the histogram shows, not at a round
@@ -115,7 +120,9 @@ def main(argv=None) -> int:
     p.add_argument("--out-points", default=None,
                    help="write the surviving movers' original rows here")
     p.add_argument("--out-movers", default=None,
-                   help="write the per-mover feature table + verdict here")
+                   help="write the per-mover feature table here, including "
+                        "the classification in a 'mode' column (vehicle / "
+                        "pedestrian / unknown)")
     args = p.parse_args(argv)
 
     threshold: float | str | None = args.threshold
