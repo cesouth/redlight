@@ -6,3 +6,19 @@ examples/sample_data/
 .venv/
 build/
 dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.superpowers/
+
+# Generated deliverables from scripts/customer_report.py. These are outputs of
+# a run against your own data, not source -- regenerate rather than commit:
+#   python scripts/customer_report.py --network ... --points ... --out report.pdf
+# Note this does NOT cover docs/figures/, which holds the tracked figures the
+# methodology paper embeds.
+report.html
+report.pdf
+report.pptx
+figs/
+review/
