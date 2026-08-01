@@ -22,3 +22,11 @@ report.pdf
 report.pptx
 figs/
 review/
+
+# Outputs the documentation's own examples write. tests/test_docs.py runs them
+# in a scratch directory so these should never appear here, but a snippet run
+# by hand from the repo root would otherwise leave them behind.
+/speeds.geojson
+/speeds.png
+/trafficability_peak.geojson
+/speed_map.png

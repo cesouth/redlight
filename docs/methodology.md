@@ -589,8 +589,10 @@ python scripts/paper_experiments.py     # ~2-3 minutes
 regenerates every figure (`docs/figures/fig1…fig7`) and number
 (`docs/figures/experiment_results.json`) in this document, from fixed seeds,
 using only the public package API plus the committed synthetic-data
-generators. The test suite (`pytest`, 223 tests) independently pins the
-correctness properties the experiments rely on.
+generators. The test suite independently pins the correctness properties the
+experiments rely on, and also executes every Python example in this
+documentation, so a method described here cannot drift from the code that
+implements it without the build failing.
 
 ## References
 
