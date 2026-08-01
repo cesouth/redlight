@@ -10,6 +10,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import roadtraffic as rt
 
@@ -157,6 +158,37 @@ def test_pipeline_runs():
     assert peak_speed < offpeak_speed
     # time-optimal route is no slower than the distance-optimal route's time
     assert r_time["travel_time_s"] <= r_dist["travel_time_s"] + 1e-6
+
+
+def test_mode_screening_recovers_vehicle_only_speeds(straight_net, make_points_csv):
+    """Walkers on the same road drag the network speed down; screening must
+    move the answer back toward the vehicles-only truth."""
+    from conftest import track_along_road, walk_along_road
+
+    veh_rows, ped_rows = [], []
+    for i in range(6):
+        veh_rows += track_along_road(8, speed_mps=12.0, traj=f"veh{i}",
+                                     t0=f"2026-06-01 0{i}:00:00")
+    for i in range(6):
+        ped_rows += walk_along_road(25, traj=f"ped{i}",
+                                    t0=f"2026-06-01 1{i}:00:00")
+
+    def intervals(rows, name):
+        path = make_points_csv(rows, name=name)
+        pts = rt.load_points(path, id_col="id")
+        matched = rt.HMMMatcher(straight_net, max_dist=60).match(pts)
+        return rt.derive_speeds(straight_net, matched, pts)["intervals"]
+
+    truth = intervals(veh_rows, "veh.csv")["speed_mps"].median()
+    mixed = intervals(veh_rows + ped_rows, "mixed.csv")
+    contaminated = mixed["speed_mps"].median()
+
+    movers = rt.classify_movers(mixed, threshold=3.0, unit="mps")
+    screened = rt.filter_by_mode(mixed, movers)["speed_mps"].median()
+
+    assert contaminated < truth * 0.9          # contamination is real
+    assert abs(screened - truth) < abs(contaminated - truth)
+    assert screened == pytest.approx(truth, rel=0.10)
 
 
 if __name__ == "__main__":

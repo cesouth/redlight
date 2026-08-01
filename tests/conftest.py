@@ -102,3 +102,28 @@ def drive_along_road(n=6, *, start_lon=0.0005, dlon=0.00015, lat=1e-5,
             row["id"] = traj
         rows.append(row)
     return rows
+
+
+def track_along_road(n=10, *, speed_mps, start_lon=0.0002, lat=1e-5,
+                     t0="2026-06-01 08:00:00", dt_s=10, traj=None):
+    """Rows for a mover travelling east along the equator road at a set speed.
+
+    Spacing is computed from the speed so the planted value is exact: each fix
+    sits ``speed_mps * dt_s`` metres further along, and ~111319.5 m is one
+    degree of longitude at the equator.
+    """
+    t0 = pd.Timestamp(t0)
+    dlon = speed_mps * dt_s / 111319.5
+    rows = []
+    for k in range(n):
+        row = {"lon": start_lon + dlon * k, "lat": lat,
+               "time": (t0 + pd.Timedelta(seconds=dt_s * k)).isoformat()}
+        if traj is not None:
+            row["id"] = traj
+        rows.append(row)
+    return rows
+
+
+def walk_along_road(n=25, *, speed_mps=1.4, dt_s=15, **kw):
+    """A mover on foot: ~1.4 m/s is an ordinary walking pace."""
+    return track_along_road(n, speed_mps=speed_mps, dt_s=dt_s, **kw)
