@@ -167,3 +167,55 @@ def test_auto_threshold_works_when_there_are_walkers():
 def test_bad_threshold_string_raises():
     with pytest.raises(ValueError, match="'auto'"):
         rt.classify_movers(obs_frame({"a": [1.0] * 4}), threshold="fast", unit="mps")
+
+
+def test_filter_keeps_every_observation_of_a_kept_mover():
+    """THE invariant. A vehicle that crawls through congestion keeps its slow
+    rows. That is the whole difference from filter_by_speed, which would delete
+    them and take the congestion finding with them."""
+    obs = obs_frame({"stuck": [1.5, 1.4, 1.5, 1.6, 14.0, 15.0],
+                     "walker": [1.3, 1.4, 1.5, 1.4]})
+    movers = rt.classify_movers(obs, threshold=3.0, unit="mps")
+    out = rt.filter_by_mode(obs, movers)
+    assert set(out["traj_id"]) == {"stuck"}
+    assert len(out[out["speed_mps"] < 2.0]) == 4
+
+
+def test_filter_excludes_unknown_by_default_but_can_include_it():
+    obs = obs_frame({"car": [20.0] * 4, "brief": [20.0, 21.0]})
+    movers = rt.classify_movers(obs, threshold=3.0, min_intervals=3, unit="mps")
+    assert set(rt.filter_by_mode(obs, movers)["traj_id"]) == {"car"}
+    both = rt.filter_by_mode(obs, movers, keep=("vehicle", "unknown"))
+    assert set(both["traj_id"]) == {"car", "brief"}
+
+
+def test_filter_warns_instead_of_exiting_when_everything_is_removed():
+    obs = obs_frame({"walker": [1.4] * 4})
+    movers = rt.classify_movers(obs, threshold=3.0, unit="mps")
+    with pytest.warns(UserWarning, match="removed every"):
+        out = rt.filter_by_mode(obs, movers)
+    assert len(out) == 0
+
+
+def test_filter_accepts_a_single_mode_string():
+    obs = obs_frame({"car": [20.0] * 4, "walker": [1.4] * 4})
+    movers = rt.classify_movers(obs, threshold=3.0, unit="mps")
+    assert set(rt.filter_by_mode(obs, movers, keep="pedestrian")["traj_id"]) \
+        == {"walker"}
+
+
+def test_filter_requires_a_classification_table():
+    obs = obs_frame({"a": [1.0] * 4})
+    with pytest.raises(ValueError, match="classify_movers"):
+        rt.filter_by_mode(obs, pd.DataFrame({"n_intervals": [4]}))
+
+
+def test_verdicts_match_between_intervals_and_edge_observations():
+    """A long-format frame must classify identically to the interval frame it
+    was expanded from -- the dedup path in mover_features."""
+    obs = obs_frame({"stuck": [1.5, 1.4, 14.0], "walker": [1.3, 1.4, 1.5, 1.4]})
+    slow = obs[obs["speed_mps"] < 2.0]
+    long_form = pd.concat([obs] + [slow] * 3, ignore_index=True)
+    a = rt.classify_movers(obs, threshold=3.0, min_intervals=3, unit="mps")
+    b = rt.classify_movers(long_form, threshold=3.0, min_intervals=3, unit="mps")
+    assert a["mode"].to_dict() == b["mode"].to_dict()

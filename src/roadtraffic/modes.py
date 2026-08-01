@@ -30,6 +30,8 @@ Known limitations, stated here rather than buried:
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -283,3 +285,46 @@ def classify_movers(obs, *, threshold, percentile: float = 85.0,
         insufficient, MODE_UNKNOWN,
         np.where(speed >= float(threshold), MODE_VEHICLE, MODE_PEDESTRIAN))
     return feat
+
+
+def filter_by_mode(obs, movers, *, keep=(MODE_VEHICLE,)) -> pd.DataFrame:
+    """Keep the observations of movers whose mode is in ``keep``.
+
+    Parameters
+    ----------
+    obs : DataFrame
+        Observations to filter; needs ``traj_id``. Typically ``derive_speeds``'
+        ``edge_observations``, since that is what the aggregators consume.
+    movers : DataFrame
+        The table returned by :func:`classify_movers`, indexed by ``traj_id``.
+    keep : str or iterable of str
+        Modes to retain. The default keeps vehicles only, so ``unknown`` is
+        excluded unless asked for.
+
+    Returns
+    -------
+    DataFrame
+        Filtered copy with a reset index. Every retained mover keeps **all** of
+        its observations, including its slowest -- filtering the slow ones out
+        is what this module exists to avoid.
+
+    Warns
+    -----
+    UserWarning
+        When no mover survives. A library returns the empty frame and lets the
+        caller decide; it does not exit the process.
+    """
+    _require_traj_columns(obs, "filter_by_mode", need_speed=False)
+    if "mode" not in getattr(movers, "columns", ()):
+        raise ValueError(
+            "filter_by_mode needs the DataFrame returned by classify_movers "
+            "(it must carry a 'mode' column).")
+    wanted = {keep} if isinstance(keep, str) else set(keep)
+    kept_ids = set(movers.index[movers["mode"].isin(wanted)])
+    out = obs[obs["traj_id"].isin(kept_ids)].reset_index(drop=True)
+    if not len(out):
+        warnings.warn(
+            f"filter_by_mode removed every observation: no mover matched "
+            f"keep={sorted(wanted)}. Lower the threshold, or widen keep=.",
+            UserWarning, stacklevel=2)
+    return out
