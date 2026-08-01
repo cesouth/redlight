@@ -426,6 +426,86 @@ window detection is exact), but absolute congested-flow speeds at low SNR
 need longer Δt or baseline merging. That is precisely the setting
 documented for `min_baseline_m`.
 
+### 4.5 Mode screening: separating pedestrians from vehicles
+
+A mixed GPS feed — one that carries people on foot as well as vehicles — poses
+a problem none of the preceding sections solve. A trafficability study reads
+congestion off *slow* observations, so the one thing it must not do is drop
+observations for being slow: that deletes the finding it exists to make. But a
+pedestrian's fixes match to the same roads as a vehicle's and drag every
+road's score down indiscriminately if left in.
+
+**Why per-mover, not per-observation.** A minimum-speed filter applied to
+individual observations cannot tell a pedestrian from a vehicle crawling
+through congestion — both produce slow fixes, and the filter deletes both,
+which is exactly backwards for a study whose subject is congestion. The
+distinction is visible only at the level of the whole trajectory: a pedestrian
+is slow for their *entire* track, while a congested vehicle is slow on one
+segment and free-flowing elsewhere in the same trip. `roadtraffic` therefore
+classifies whole trajectories — `mover_features` and `classify_movers` reduce
+each mover to one evidence row before any verdict is reached — and applies the
+verdict to every one of that mover's observations. A mover judged to be a
+vehicle keeps all of its data, crawling included; a mover judged a pedestrian
+is excluded entirely, rather than trimmed.
+
+**Why the 85th percentile.** The evidence statistic has to survive a trip that
+is mostly congested. A mean or a median of a mover's speeds is dragged down by
+exactly the slow stretch a trafficability study wants to keep, and would
+misclassify a vehicle that spent most of its trip in traffic as a pedestrian.
+A maximum goes wrong in the other direction: it is set by a single GPS jump, so
+one bad fix promotes a pedestrian to a vehicle. The 85th percentile sits
+between the two failure modes — high enough to catch a vehicle's free-flowing
+stretch even when most of the trip was congested, low enough to discard the
+top of the distribution where a lone positional artefact lives.
+
+**Choosing a threshold from the density valley.** Plotted on a log speed axis,
+a mixed feed's mover-speed distribution is bimodal when a walking population
+is present: a hump at walking pace and a hump at driving speeds, separated by
+a valley of movers rare at any speed in between. `suggest_mode_threshold`
+locates that valley by density estimation in log speed (a fixed bandwidth in
+raw speed is set by the spread of the whole sample and smooths away a valley
+only a couple of mph wide; log speed makes the bandwidth scale-free). Not
+every local minimum qualifies: a candidate must be *prominent* relative to the
+humps on either side, and the density peak below it must actually sit at
+walking pace — a vehicle-only feed has interior valleys of its own, between
+gridlock and free flow, and without that second guard the boundary between
+two vehicle regimes would be mistaken for a mode split. When no walking
+population exists, the function returns `None` rather than a threshold that
+looks plausible but describes nothing; callers are expected to treat that as
+the honest answer, not to substitute a default.
+
+**Measured effect on network-wide statistics.** Four screening strategies were
+compared on a feed contaminated with a walking population, against the
+uncontaminated vehicle-only ground truth:
+
+| strategy | Δ peak speed | per-edge MAE |
+|---|---|---|
+| no filter (contaminated) | −1.2 mph | 6.0 mph |
+| drop observations < 12 mph | +5.0 mph | 3.1 mph |
+| `require_quality` only | −2.1 mph | 3.9 mph |
+| mover p85 ≥ 6 mph | +0.2 mph | 0.6 mph |
+
+Leaving the feed unfiltered biases peak speed downward, as expected — the
+walking population inflates congestion everywhere it appears. The two
+observation-level screens overcorrect: dropping observations below a fixed
+speed removes slow vehicles along with pedestrians, and `require_quality`
+alone removes low-SNR intervals that skew toward the same slow readings for
+reasons unrelated to mode (§3.4). Screening movers by the 85th-percentile
+speed is the only strategy that closes both gaps at once, cutting per-edge MAE
+by roughly an order of magnitude relative to the alternatives.
+
+**The gridlock limitation, and its direction.** The method has one honest
+failure mode: a vehicle whose **entire** track is gridlocked never shows a
+fast stretch, so its 85th-percentile speed reads as walking pace and it is
+classified — and excluded — alongside the pedestrians. The bias this produces
+is **upward**, the same direction as `require_quality`'s selection bias
+(§3.4), because the vehicles wrongly dropped are precisely the slowest ones.
+There is no purely statistical fix: the mover genuinely looks, by the only
+evidence available, indistinguishable from a pedestrian. The mitigation is
+procedural rather than algorithmic — run the study both screened and
+unscreened, compare the two, and report the gap between them as uncertainty
+rather than presenting the screened result alone as ground truth.
+
 ---
 
 ## 5. Comparison with the established alternatives

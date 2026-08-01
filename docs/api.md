@@ -226,6 +226,73 @@ is preserved. A dwell is a run of points within `dwell_radius_m` for ≥
 
 ---
 
+## Mode screening
+
+Mode is a property of the mover, not the fix. A minimum-speed filter on
+observations cannot distinguish a pedestrian from a vehicle crawling through
+congestion, so it deletes both. These functions judge whole trajectories and
+apply the verdict to all of a mover's observations.
+
+### `mover_features(obs, *, percentile=85.0, unit="mph") -> DataFrame`
+
+Reduce speed observations to one evidence row per mover. `obs` is any frame
+carrying `traj_id` and `speed_mps` — `derive_speeds`' `intervals` or
+`edge_observations`, or a matched frame with a logged speed. When an
+`interval_id` column is present the frame is deduplicated on it first, since
+`edge_observations` repeats each interval once per edge traversed. `percentile`
+sets which percentile of a mover's speeds is reported (default 85 — high
+enough to see a vehicle's free-flowing stretch, low enough to discard a single
+GPS jump). `unit` scales the emitted speed columns and is also the unit
+`classify_movers` reads its `threshold` in, so one call can never compare a
+threshold against a differently scaled column.
+
+Returns a DataFrame indexed by `traj_id`, with `n_intervals`,
+`speed_p<pct>_<unit>`, `speed_median_<unit>`, `distance_m`, and `snap_dist_m`
+when the input carries it.
+
+### `suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None`
+
+Speed at the density valley separating walkers from drivers. `mover_speeds` is
+one speed per mover in `unit` — typically the `speed_p85_<unit>` column of
+`mover_features`. The density is estimated in log speed and a candidate valley
+must both be prominent (`min(left_peak, right_peak) / valley`) and have a
+density peak below it that sits at walking pace, so a vehicle-only feed's
+interior gridlock/free-flow valley is not mistaken for a mode boundary.
+
+Returns `None` when there is no walking-speed population to split off —
+callers must not substitute a default, since a silently chosen threshold that
+is wrong produces a study that looks correct.
+
+### `classify_movers(obs, *, threshold, percentile=85.0, min_intervals=3, min_distance_m=0.0, unit="mph") -> DataFrame`
+
+Label each mover `pedestrian`, `vehicle` or `unknown`. `threshold` is a speed
+(movers whose `percentile` speed is at or above it are vehicles) or `"auto"`,
+which delegates to `suggest_mode_threshold` and **raises** when it finds no
+walking population, rather than falling back to a default that would silently
+reshape the study. `percentile` and `unit` behave as in `mover_features`;
+`threshold` is read in `unit`. `min_intervals` and `min_distance_m` are
+evidence floors — a mover below either is `unknown`.
+
+There is deliberately no `require_quality` parameter: classification uses
+every interval, including `quality=False` ones, because the quality screen
+rejects intervals whose displacement is small relative to GPS noise — exactly
+what a walking mover produces. `unknown` never arises from speed ambiguity,
+only from insufficient evidence; a congested vehicle is a `vehicle`.
+
+Returns `mover_features`' columns plus `mode`.
+
+### `filter_by_mode(obs, movers, *, keep=("vehicle",)) -> DataFrame`
+
+Keep the observations of movers whose mode is in `keep`. `obs` needs
+`traj_id` — typically `derive_speeds`' `edge_observations`. `movers` is the
+table returned by `classify_movers`, indexed by `traj_id`. The default keeps
+vehicles only, so `unknown` is excluded unless asked for. Every retained mover
+keeps **all** of its observations, including its slowest — filtering the slow
+ones out is what this module exists to avoid. Warns (does not raise) when no
+mover survives.
+
+---
+
 ## Aggregation & peaks
 
 ### `aggregate_speeds(matched, *, block_hours=1, statistic="mean", output_unit="mph", by_edge=False, min_samples=1, dedup_intervals=True, days=None, weight_by_variance=False, require_quality=False) -> DataFrame`

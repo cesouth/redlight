@@ -18,6 +18,14 @@ derive_speeds         : reconstruct speed from on-road displacement after matchi
                         (more accurate than ``load_points(derive_speed=True)``).
 filter_by_speed       : drop observations outside a plausible speed band.
 filter_trajectory_speed : dwell-aware cleaning that keeps slow-but-moving traffic.
+mover_features        : per-mover evidence table (speed percentile, sample
+                        count, distance) from matched or derived speeds.
+suggest_mode_threshold : density-valley speed separating walkers from drivers,
+                        or None when no walking population exists.
+classify_movers       : label movers pedestrian / vehicle / unknown, judging
+                        the whole trajectory rather than each observation.
+filter_by_mode        : keep the observations of movers with a given mode --
+                        every retained mover keeps its slow rows.
 aggregate_speeds      : average speed by hour or by N-hour block, mean or median
                         (optional ``days=`` filter for weekday/weekend splits).
 peak_analysis         : identify peak / off-peak periods.
@@ -52,13 +60,22 @@ from .analysis import connectivity_report, edge_betweenness_centrality, network_
 from .cleaning import filter_by_speed, filter_trajectory_speed
 from .mapping import plot_speed_map, to_geojson
 from .matching import HMMMatcher, NearestMatcher
+from .modes import (
+    MODE_PEDESTRIAN,
+    MODE_UNKNOWN,
+    MODE_VEHICLE,
+    classify_movers,
+    filter_by_mode,
+    mover_features,
+    suggest_mode_threshold,
+)
 from .network import Network
 from .points import PointSet, load_points, save_points
 from .routing import Router
 from .speeds import derive_speeds
 from .units import SpeedUnit, from_mps, to_mps
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "SpeedUnit",
@@ -86,5 +103,12 @@ __all__ = [
     "edge_betweenness_centrality",
     "network_stats",
     "connectivity_report",
+    "mover_features",
+    "suggest_mode_threshold",
+    "classify_movers",
+    "filter_by_mode",
+    "MODE_PEDESTRIAN",
+    "MODE_VEHICLE",
+    "MODE_UNKNOWN",
     "__version__",
 ]
