@@ -33,3 +33,7 @@ review/
 /speeds.png
 /trafficability_peak.geojson
 /speed_map.png
+
+# GitLab CI config, kept locally but not published on the GitHub remote.
+# The active pipeline is .github/workflows/ci.yml.
+.gitlab-ci.yml

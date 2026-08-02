@@ -1,0 +1,28 @@
+# What the source distribution ships beyond the package itself.
+#
+# The driving requirement: `pytest` must pass in an unpacked sdist. Without
+# this file setuptools shipped tests/ but silently omitted tests/conftest.py,
+# so every module importing a shared fixture failed at collection -- 7 errors
+# out of the box for anyone building from source. Shipping *some* of a test
+# suite is worse than shipping none.
+
+include LICENSE
+include README.md
+include CHANGELOG.md
+
+# The whole test suite, conftest included.
+recursive-include tests *.py
+
+# tests/test_docs.py executes every Python block in the documentation, so the
+# docs are a test fixture as well as prose. Markdown only -- the methodology
+# figures are large, are not read by any test, and would bloat the sdist.
+recursive-include docs *.md
+
+# Everything below is development scaffolding, not part of a source build.
+exclude .gitlab-ci.yml
+prune .plans
+prune .github
+prune benchmarks
+prune examples
+prune docs/figures
+prune site

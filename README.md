@@ -1,5 +1,7 @@
 # roadtraffic
 
+**Version 0.5.0** · MIT licensed · Python 3.9+
+
 **Trafficability analysis for road networks, from your own GPS data.**
 
 Turn a road network and a pile of GPS fixes into a defensible study of how
@@ -141,6 +143,16 @@ too, when it is wrong. Both are documented where they are offered, not buried.
 - [Changelog](CHANGELOG.md)
 
 Build the docs site with `pip install roadtraffic[docs] && mkdocs serve`.
+
+## Development
+
+This package was developed with the assistance of AI tooling. Every change
+was reviewed by the author before being merged, and the methods it implements
+are defended empirically rather than asserted: the
+[methodology paper](docs/methodology.md) reproduces its figures and numbers
+from fixed seeds using only the public API, and the test suite executes every
+Python example in this documentation, so the prose cannot drift from the code
+it describes.
 
 ## License
 

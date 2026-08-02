@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A new push to the same branch cancels the previous run.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.9", "3.11", "3.13"]
+        include:
+          # The floor and the ceiling are the versions most likely to break;
+          # check them on macOS too, since pyproj/shapely ship different
+          # wheels there and this package is pure-Python only by intent.
+          - os: macos-latest
+            python-version: "3.9"
+          - os: macos-latest
+            python-version: "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # The shapefile extra (pyogrio) requires Python 3.10+, so the 3.9
+          # leg installs without it; the pyogrio-dependent tests self-skip
+          # via pytest.importorskip.
+          if [ "${{ matrix.python-version }}" = "3.9" ]; then
+            pip install -e ".[dev,mapping]"
+          else
+            pip install -e ".[dev,mapping,shapefile]"
+          fi
+
+      - name: Lint
+        run: ruff check src tests scripts examples
+
+      - name: Test
+        run: pytest -q
+
+  package:
+    name: build + verify the distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check metadata renders on PyPI
+        run: twine check dist/*
+
+      # The sdist must carry a test suite that actually passes. setuptools
+      # silently omitted tests/conftest.py before MANIFEST.in existed, which
+      # left anyone building from source with 7 collection errors and no
+      # obvious cause. This step is what stops that regressing.
+      - name: Test suite passes from inside the sdist
+        run: |
+          mkdir -p /tmp/sdist && tar -xzf dist/*.tar.gz -C /tmp/sdist
+          cd /tmp/sdist/roadtraffic-*
+          python -m pip install ".[dev,mapping]"
+          pytest -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+  docs:
+    name: docs build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build the site
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[docs]"
+          # --strict turns broken navigation and unresolved links into errors.
+          mkdocs build --strict
