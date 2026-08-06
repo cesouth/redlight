@@ -25,17 +25,20 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 
-# Core dependencies: all pure-Python or lightweight wheels. No GDAL.
+# Core dependencies: all lightweight wheels. No GDAL, no PROJ.
 dependencies = [
     "numpy>=1.21",
     "pandas>=1.3",
     "scipy>=1.7",
     "shapely>=2.0",
-    "pyproj>=3.2",
     "networkx>=2.6",
 ]
 
 [project.optional-dependencies]
+# Coordinate systems outside the natively supported set. roadtraffic projects
+# WGS84, the WGS84 UTM zones and Web Mercator in numpy; this extra adds PROJ
+# for everything else -- national grids, non-WGS84 datums, raw-WKT CRS.
+crs = ["pyproj>=3.2"]
 # Shapefile / GeoPackage reading. Pulls pyogrio (GDAL binding). GeoJSON and
 # Overpass work without this. pyogrio>=0.12 requires Python 3.10+; this extra
 # is unavailable on Python 3.9 even though the core package supports it.

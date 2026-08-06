@@ -9,7 +9,8 @@ traffic actually moves: speed by time of day, peak and off-peak windows,
 congestion against posted limits, chokepoints, and routing on measured speeds.
 
 Built on a small, well-understood dependency set — `numpy`, `pandas`, `scipy`,
-`shapely`, `pyproj`, `networkx`. **No GDAL required** for the core. GeoJSON
+`shapely`, `networkx`. **No GDAL and no PROJ** required for the core: WGS84,
+the UTM zones and Web Mercator are projected in numpy. GeoJSON
 works out of the box; Shapefile and GeoPackage are an opt-in extra.
 
 ---

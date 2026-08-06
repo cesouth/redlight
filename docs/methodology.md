@@ -42,8 +42,8 @@ three constraints that explain most design decisions:
    alternatives either pull a heavy geospatial stack (osmnx builds on
    GeoPandas/GDAL [14]) or are C++ network services that must be deployed
    and fed preprocessed graphs (OSRM [15], Valhalla). `roadtraffic` runs
-   `pip install` on six mainstream wheel-only dependencies (numpy, pandas,
-   scipy, shapely, pyproj, networkx) and fetches OSM networks with the
+   `pip install` on five mainstream wheel-only dependencies (numpy, pandas,
+   scipy, shapely, networkx) and fetches OSM networks with the
    standard library.
 2. **Statistical defensibility over black-box output.** Every reported
    number carries its sample size; means carry standard errors and

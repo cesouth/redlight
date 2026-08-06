@@ -18,7 +18,7 @@ FeatureCollection.
 | Parameter | Meaning |
 |-----------|---------|
 | `path` | Path to the `.geojson` / `.json` file. |
-| `metric_epsg` | EPSG code of the projected CRS for distance math. Default: auto UTM zone of the first vertex. |
+| `metric_epsg` | EPSG code of the projected CRS for distance math. Default: auto UTM zone of the first vertex. UTM zones need no extra dependency; other codes require the `crs` extra. |
 | `directed` | If `True`, build a directed graph; two-way roads get both directions. |
 | `oneway_attr` | Feature property naming one-way status, with OSM semantics: `yes`/`true`/`1` = one-way along the digitized direction; `-1`/`reverse` = one-way **against** it. |
 | `length_attr` | Property holding precomputed edge length in metres; if absent, computed from projected geometry. |

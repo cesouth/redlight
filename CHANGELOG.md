@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `pyproj` is no longer a core dependency. WGS84, the 120 WGS84 UTM zones and
+  Web Mercator are now projected in numpy, and geodesic distance uses
+  Vincenty's inverse formula. Verified against PROJ 9.5.1 to under 10 nm for
+  the UTM forward projection and a few micrometres for geodesic distance.
+  This removes 21 MB from an install and the `proj.db` class of environment
+  conflicts along with it.
+- Reading a file in any other CRS -- national grids, non-WGS84 datums, raw-WKT
+  CRS -- now requires the new `crs` extra: `pip install 'roadtraffic[crs]'`.
+  The same applies to a `metric_epsg=` override outside the UTM zones. Both
+  raise an `ImportError` naming the extra rather than failing obscurely.
+
 ## [0.5.0] - 2026-08-01
 
 ### Added

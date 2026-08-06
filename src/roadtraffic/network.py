@@ -16,7 +16,9 @@ including ``oneway=-1`` (one-way *against* the digitized direction).
 
 Coordinates are stored in WGS84 (EPSG:4326) and also projected to a local
 metric CRS (auto UTM, or user-specified) for distance-correct snapping and
-length computation. Snapping/length math must never be done in degrees.
+length computation. Snapping/length math must never be done in degrees. UTM
+and Web Mercator are projected in numpy (see ``_proj``); any other CRS needs
+the optional ``crs`` extra, which pulls in pyproj.
 """
 from __future__ import annotations
 

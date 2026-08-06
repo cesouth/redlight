@@ -21,7 +21,8 @@ geometry math is performed in a projected metric CRS**, never in degrees.
   southern). UTM is conformal and accurate to well under 0.1% scale distortion
   within a zone — appropriate for city- to regional-scale studies.
 - You may override this with `metric_epsg=` if your study area spans zones or
-  you have a preferred local projection.
+  you need a specific projected CRS. UTM zones are projected in numpy; any
+  other EPSG code requires the `crs` extra (`pip install 'roadtraffic[crs]'`).
 
 **Implication.** Snap distances, edge lengths, and route distances are true
 ground metres, not degree approximations. Studies spanning more than a few UTM

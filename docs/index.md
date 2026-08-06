@@ -6,8 +6,8 @@ Turn a road network and a pile of GPS fixes into a defensible study of how
 traffic actually moves: speed by time of day, peak and off-peak windows,
 congestion against posted limits, chokepoints, and routing on measured speeds.
 
-Built on `numpy`, `pandas`, `scipy`, `shapely`, `pyproj` and `networkx`.
-**No GDAL required** for the core.
+Built on `numpy`, `pandas`, `scipy`, `shapely` and `networkx`.
+**No GDAL and no PROJ required** for the core.
 
 ## Where to go
 
