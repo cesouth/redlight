@@ -128,8 +128,10 @@ class Network:
         ``geometry`` (projected LineString, metres), ``length_m`` (float),
         ``edge_id`` (int), plus source attributes. Two-way roads get edges in
         both directions (linked via :meth:`road_edge_ids`).
-    crs_metric : pyproj.CRS
-        Projected CRS used for all distance math.
+    crs_metric : _proj.UtmCrs or pyproj.CRS
+        Projected CRS used for all distance math: ``_proj.UtmCrs`` on the
+        default UTM path, a real ``pyproj.CRS`` only when a non-UTM
+        ``metric_epsg`` was supplied.
     """
 
     def __init__(self, graph, crs_metric, edge_index, edge_geoms_proj,
@@ -147,8 +149,10 @@ class Network:
         graph : networkx.MultiDiGraph
             The road graph itself, nodes = (lon, lat) tuples, edges keyed by
             ``edge_id``.
-        crs_metric : pyproj.CRS
-            The projected CRS all distance/length/snapping math is done in.
+        crs_metric : _proj.UtmCrs or pyproj.CRS
+            The projected CRS all distance/length/snapping math is done in:
+            ``_proj.UtmCrs`` on the default UTM path, a real ``pyproj.CRS``
+            only when a non-UTM ``metric_epsg`` was supplied.
         edge_index : dict
             ``edge_id -> (u, v)`` node tuple, mirroring the graph's own edge
             endpoints for O(1) lookup without a graph traversal.
@@ -159,8 +163,10 @@ class Network:
         edge_ids : numpy.ndarray
             Sorted array of every edge id, backing the :attr:`edge_ids`
             property.
-        transformer_fwd, transformer_inv : pyproj.Transformer
-            WGS84 -> metric and metric -> WGS84 coordinate transformers,
+        transformer_fwd, transformer_inv : _proj.UtmTransformer or pyproj.Transformer
+            WGS84 -> metric and metric -> WGS84 coordinate transformers
+            (``_proj.UtmTransformer`` on the default UTM path, real
+            ``pyproj.Transformer`` only for a non-UTM ``metric_epsg``),
             reused so every projection in the object uses the exact same CRS
             pair (see :meth:`project_points`, :meth:`edge_coords_lonlat`).
         edge_lengths : dict, optional
