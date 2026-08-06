@@ -15,7 +15,7 @@ Why no speed column
 Plenty of real feeds carry position and time but no usable speed: the receiver
 never logged it, or logged an instantaneous value too noisy to trust. That is
 the harder and more common case, so it is what the examples demonstrate.
-:func:`roadtraffic.derive_speeds` reconstructs speed from on-road displacement
+:func:`redlight.derive_speeds` reconstructs speed from on-road displacement
 after matching, which is more robust than a per-fix reading anyway.
 
 What is planted in the data

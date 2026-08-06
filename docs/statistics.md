@@ -1,6 +1,6 @@
 # Statistical methodology
 
-This document specifies exactly how `roadtraffic` produces every quantity it
+This document specifies exactly how `redlight` produces every quantity it
 reports, the assumptions behind each method, and when to prefer one option over
 another. The goal is that a user can defend any number this package outputs.
 
@@ -22,7 +22,7 @@ geometry math is performed in a projected metric CRS**, never in degrees.
   within a zone — appropriate for city- to regional-scale studies.
 - You may override this with `metric_epsg=` if your study area spans zones or
   you need a specific projected CRS. UTM zones are projected in numpy; any
-  other EPSG code requires the `crs` extra (`pip install 'roadtraffic[crs]'`).
+  other EPSG code requires the `crs` extra (`pip install 'redlight[crs]'`).
 
 **Implication.** Snap distances, edge lengths, and route distances are true
 ground metres, not degree approximations. Studies spanning more than a few UTM
@@ -279,7 +279,7 @@ result is only as fine-grained as the ping spacing:
 - Both effects shrink as ping frequency rises. Derived speed is best treated as a
   defensible estimate for trafficability patterns, not a calibrated speedometer.
 
-If you're matching anyway (§2), `roadtraffic.speeds.derive_speeds` (§10) fixes
+If you're matching anyway (§2), `redlight.speeds.derive_speeds` (§10) fixes
 both limitations by measuring displacement on the road graph after matching,
 and is the recommended choice for noisy or sparsely-sampled GPS.
 
@@ -345,7 +345,7 @@ on defaults can be flagged rather than trusted blindly.
 ## 10. On-road speed derivation from matched trajectories
 
 Section 7 derives speed from the *straight-line* (geodesic) chord between
-consecutive fixes, before any matching. `roadtraffic.speeds.derive_speeds`
+consecutive fixes, before any matching. `redlight.speeds.derive_speeds`
 instead derives speed **after** map matching, from **on-road displacement**
 between consecutive matched fixes:
 
@@ -484,7 +484,7 @@ implausible detour.
 
 ## 11. Network structure & connectivity diagnostics
 
-`roadtraffic.analysis` answers three questions about the road network itself
+`redlight.analysis` answers three questions about the road network itself
 (not about observed speeds): which roads are structurally critical, how the
 network's basic shape compares to a straight-line ideal, and whether it's
 actually all one routable piece.
@@ -501,7 +501,7 @@ only to the cheapest parallel edge, exactly the "cheapest parallel edge wins"
 semantics `Router` already uses for routing.
 
 **A missing weight attribute is not "no opinion" — it is silently `1.0`.**
-This is a networkx behavior, not a `roadtraffic` one, and it is easy to trip
+This is a networkx behavior, not a `redlight` one, and it is easy to trip
 without noticing: if you ask for `weight="travel_time_s"` and an edge has
 never had one written (no observations, and no `default_speed_mps=` fallback
 when you ran `assign_speeds`), networkx does not skip it or raise — it treats

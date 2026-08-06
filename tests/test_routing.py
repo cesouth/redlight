@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 from conftest import line_feature, write_geojson
 
 
@@ -12,23 +12,23 @@ def _hourly_obs(edge_id, hour, speed_mps, n=3):
 
 
 def test_distance_route_on_grid(grid_net):
-    r = rt.Router(grid_net)
+    r = rl.Router(grid_net)
     res = r.route((0, 0), (0.002, 0.002), mode="distance")
     assert res["n_edges"] == 4
     assert res["distance_m"] == pytest.approx(4 * 111.32, rel=0.01)
 
 
 def test_route_same_node(grid_net):
-    r = rt.Router(grid_net)
+    r = rl.Router(grid_net)
     res = r.route((0, 0), (0, 0))
     assert res["n_edges"] == 0 and res["distance_m"] == 0.0
 
 
 def test_time_route_uses_regime_speeds(straight_net):
     df = pd.DataFrame(_hourly_obs(0, 8, 4.0) + _hourly_obs(0, 22, 16.0))
-    rt.assign_segment_speeds(straight_net, df, peak_hours=[8],
+    rl.assign_segment_speeds(straight_net, df, peak_hours=[8],
                              offpeak_hours=[22])
-    r = rt.Router(straight_net)
+    r = rl.Router(straight_net)
     tt_peak = r.route((0, 0), (0.01, 0), mode="time", period="peak")["travel_time_s"]
     tt_off = r.route((0, 0), (0.01, 0), mode="time", period="offpeak")["travel_time_s"]
     assert tt_peak == pytest.approx(4 * tt_off, rel=1e-6)
@@ -36,7 +36,7 @@ def test_time_route_uses_regime_speeds(straight_net):
 
 def test_invalid_period_raises(straight_net):
     with pytest.raises(ValueError, match="period"):
-        rt.Router(straight_net).route((0, 0), (0.01, 0), mode="time",
+        rl.Router(straight_net).route((0, 0), (0.01, 0), mode="time",
                                       period="rush")
 
 
@@ -44,13 +44,13 @@ def test_default_speed_mps_must_be_positive(straight_net):
     """Regression: default_speed_mps=0 raised a raw ZeroDivisionError, and a
     negative value was silently accepted and produced negative travel times."""
     with pytest.raises(ValueError, match="default_speed_mps"):
-        rt.Router(straight_net, default_speed_mps=0.0)
+        rl.Router(straight_net, default_speed_mps=0.0)
     with pytest.raises(ValueError, match="default_speed_mps"):
-        rt.Router(straight_net, default_speed_mps=-5.0)
+        rl.Router(straight_net, default_speed_mps=-5.0)
 
 
 def test_default_speed_fallback_counted(straight_net):
-    r = rt.Router(straight_net, default_speed_mps=10.0)
+    r = rl.Router(straight_net, default_speed_mps=10.0)
     res = r.route((0, 0), (0.01, 0), mode="time")
     assert res["n_edges_default"] == res["n_edges"] == 1
     assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 10.0)
@@ -62,8 +62,8 @@ def test_parallel_edge_distance_pick(tmp_path):
         line_feature([[0, 0], [0.001, 0]], name="straight"),
         line_feature([[0, 0], [0.0005, 0.0006], [0.001, 0]], name="detour"),
     ])
-    net = rt.Network.from_geojson(path)
-    r = rt.Router(net)
+    net = rl.Network.from_geojson(path)
+    r = rl.Router(net)
     res = r.route((0, 0), (0.001, 0), mode="distance")
     assert res["n_edges"] == 1
     assert res["distance_m"] == pytest.approx(111.32, rel=0.01)
@@ -74,8 +74,8 @@ def test_oneway_blocks_illegal_direction(tmp_path):
     path = write_geojson(tmp_path / "ow.json", [
         line_feature([[0, 0], [0.001, 0]], oneway="yes"),
     ])
-    net = rt.Network.from_geojson(path)
-    r = rt.Router(net)
+    net = rl.Network.from_geojson(path)
+    r = rl.Router(net)
     assert r.route((0, 0), (0.001, 0), mode="distance")["n_edges"] == 1
     with pytest.raises(ValueError, match="one-way"):
         r.route((0.001, 0), (0, 0), mode="distance")
@@ -86,9 +86,9 @@ def test_disconnected_components_error(tmp_path):
         line_feature([[0, 0], [0.001, 0]]),
         line_feature([[0.05, 0], [0.051, 0]]),
     ])
-    net = rt.Network.from_geojson(path)
+    net = rl.Network.from_geojson(path)
     with pytest.raises(ValueError, match="disconnected"):
-        rt.Router(net).route((0, 0), (0.051, 0), mode="distance")
+        rl.Router(net).route((0, 0), (0.051, 0), mode="distance")
 
 
 def test_cost_mode_receives_parallel_edge_dict(grid_net):
@@ -98,7 +98,7 @@ def test_cost_mode_receives_parallel_edge_dict(grid_net):
         seen["is_dict_of_dicts"] = all(isinstance(a, dict) for a in edges.values())
         return min(a.get("length_m", 1.0) for a in edges.values())
 
-    res = rt.Router(grid_net).route((0, 0), (0.002, 0), mode="cost",
+    res = rl.Router(grid_net).route((0, 0), (0.002, 0), mode="cost",
                                     cost_func=cost)
     assert res["n_edges"] == 2
     assert seen["is_dict_of_dicts"]
@@ -112,7 +112,7 @@ def test_cost_mode_reports_the_edge_it_actually_costed(tmp_path):
         line_feature([[0, 0], [0.001, 0]], name="straight"),
         line_feature([[0, 0], [0.0005, 0.0006], [0.001, 0]], name="detour"),
     ])
-    net = rt.Network.from_geojson(path)
+    net = rl.Network.from_geojson(path)
     # Make travel-time and length disagree on which parallel edge is
     # "cheapest": this is what exposes picking-by-time instead of by cost.
     for _u, _v, data in net.graph.edges(data=True):
@@ -121,7 +121,7 @@ def test_cost_mode_reports_the_edge_it_actually_costed(tmp_path):
     def cost_by_length(u, v, edges):
         return min(a["length_m"] for a in edges.values())
 
-    res = rt.Router(net).route((0, 0), (0.001, 0), mode="cost",
+    res = rl.Router(net).route((0, 0), (0.001, 0), mode="cost",
                                cost_func=cost_by_length)
     assert net.edge_data(res["edge_ids"][0]).get("name") == "straight"
     assert res["distance_m"] == pytest.approx(111.32, rel=0.01)
@@ -129,11 +129,11 @@ def test_cost_mode_reports_the_edge_it_actually_costed(tmp_path):
 
 def test_cost_mode_requires_callable(grid_net):
     with pytest.raises(ValueError, match="cost_func"):
-        rt.Router(grid_net).route((0, 0), (0.002, 0), mode="cost")
+        rl.Router(grid_net).route((0, 0), (0.002, 0), mode="cost")
 
 
 def test_route_geometry(grid_net):
-    r = rt.Router(grid_net)
+    r = rl.Router(grid_net)
     res = r.route((0, 0), (0.002, 0), mode="distance")
     coords = r.route_geometry_lonlat(res)
     assert coords[0] == pytest.approx((0.0, 0.0), abs=1e-9)
@@ -148,19 +148,19 @@ def _road(tmp_path, **props):
     path = write_geojson(tmp_path / "road.json", [
         line_feature([[0, 0], [0.01, 0]], highway="primary", **props),
     ])
-    return rt.Network.from_geojson(path)
+    return rl.Network.from_geojson(path)
 
 
 def test_unobserved_edge_routes_at_posted_limit(tmp_path):
     net = _road(tmp_path, maxspeed="35 mph")
-    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    res = rl.Router(net).route((0, 0), (0.01, 0), mode="time")
     expected = res["distance_m"] / (35 * 1609.344 / 3600)
     assert res["travel_time_s"] == pytest.approx(expected, rel=1e-9)
 
 
 def test_unobserved_edge_without_limit_uses_global_default(tmp_path):
     net = _road(tmp_path)
-    r = rt.Router(net, default_speed_mps=11.176)
+    r = rl.Router(net, default_speed_mps=11.176)
     res = r.route((0, 0), (0.01, 0), mode="time")
     assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 11.176,
                                                  rel=1e-9)
@@ -169,8 +169,8 @@ def test_unobserved_edge_without_limit_uses_global_default(tmp_path):
 def test_measured_speed_beats_posted_limit(tmp_path):
     """Observed congestion must win: the limit is only a fallback."""
     net = _road(tmp_path, maxspeed="60 mph")
-    rt.assign_speeds(net, pd.DataFrame(_hourly_obs(0, 8, 5.0)))
-    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    rl.assign_speeds(net, pd.DataFrame(_hourly_obs(0, 8, 5.0)))
+    res = rl.Router(net).route((0, 0), (0.01, 0), mode="time")
     assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 5.0,
                                                  rel=1e-6)
     assert res["n_edges_default"] == 0
@@ -180,7 +180,7 @@ def test_posted_limit_edge_still_counts_as_estimated(tmp_path):
     """maxspeed refines the fallback speed; it is not measured data, so the
     honesty counter must keep reporting the edge as non-observed."""
     net = _road(tmp_path, maxspeed="35 mph")
-    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    res = rl.Router(net).route((0, 0), (0.01, 0), mode="time")
     assert res["n_edges_default"] == res["n_edges"] == 1
 
 
@@ -196,7 +196,7 @@ def test_unusable_maxspeed_mps_falls_back_to_default(tmp_path, bad):
     net = _road(tmp_path)
     for eid in net.edge_ids:
         net.edge_data(int(eid))["maxspeed_mps"] = bad
-    res = rt.Router(net, default_speed_mps=11.176).route(
+    res = rl.Router(net, default_speed_mps=11.176).route(
         (0, 0), (0.01, 0), mode="time")
     assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 11.176,
                                                  rel=1e-9)
@@ -208,14 +208,14 @@ def test_numpy_float_maxspeed_mps_is_usable(tmp_path):
     net = _road(tmp_path)
     for eid in net.edge_ids:
         net.edge_data(int(eid))["maxspeed_mps"] = np.float32(20.0)
-    res = rt.Router(net).route((0, 0), (0.01, 0), mode="time")
+    res = rl.Router(net).route((0, 0), (0.01, 0), mode="time")
     assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 20.0,
                                                  rel=1e-5)
 
 
 def test_posted_limit_fallback_can_be_disabled(tmp_path):
     net = _road(tmp_path, maxspeed="35 mph")
-    r = rt.Router(net, default_speed_mps=11.176, use_maxspeed=False)
+    r = rl.Router(net, default_speed_mps=11.176, use_maxspeed=False)
     res = r.route((0, 0), (0.01, 0), mode="time")
     assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 11.176,
                                                  rel=1e-9)

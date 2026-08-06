@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 
 
 def obs(hour, speed_mps, *, edge_id=0, n=1, minute=15, interval_id=None):
@@ -27,7 +27,7 @@ def day_profile(*, slow_hours=(7, 8), fast_hours=(22, 23), n_per_hour=4,
 
 def test_aggregate_hourly_mean_exact():
     df = pd.DataFrame(obs(8, 10.0) + obs(8, 14.0) + obs(9, 6.0))
-    out = rt.aggregate_speeds(df, statistic="both", output_unit="mps")
+    out = rl.aggregate_speeds(df, statistic="both", output_unit="mps")
     r8 = out[out["block_start_hour"] == 8].iloc[0]
     assert r8["mean_speed"] == pytest.approx(12.0)
     assert r8["median_speed"] == pytest.approx(12.0)
@@ -37,7 +37,7 @@ def test_aggregate_hourly_mean_exact():
 
 def test_single_observation_bin_has_nan_uncertainty():
     """Regression: n=1 bins used to report a zero-width 95% CI."""
-    out = rt.aggregate_speeds(pd.DataFrame(obs(9, 6.0)), output_unit="mps")
+    out = rl.aggregate_speeds(pd.DataFrame(obs(9, 6.0)), output_unit="mps")
     r = out.iloc[0]
     assert np.isnan(r["std_speed"]) and np.isnan(r["sem_speed"])
     assert np.isnan(r["ci95_low"]) and np.isnan(r["ci95_high"])
@@ -47,7 +47,7 @@ def test_single_observation_bin_has_nan_uncertainty():
 def test_unmatched_rows_excluded():
     """Regression: edge_id == -1 rows used to flow into network stats."""
     df = pd.DataFrame(obs(8, 21.0) + obs(8, 1.0, edge_id=-1))
-    out = rt.aggregate_speeds(df, output_unit="mps")
+    out = rl.aggregate_speeds(df, output_unit="mps")
     assert out.iloc[0]["n"] == 1
     assert out.iloc[0]["mean_speed"] == pytest.approx(21.0)
 
@@ -58,26 +58,26 @@ def test_interval_dedup_network_wide():
     for eid in range(8):  # one interval attributed to 8 edges
         rows += obs(8, 10.0, edge_id=eid, interval_id=0)
     df = pd.DataFrame(rows)
-    net_wide = rt.aggregate_speeds(df, output_unit="mps")
+    net_wide = rl.aggregate_speeds(df, output_unit="mps")
     assert net_wide.iloc[0]["n"] == 1
-    per_edge = rt.aggregate_speeds(df, output_unit="mps", by_edge=True)
+    per_edge = rl.aggregate_speeds(df, output_unit="mps", by_edge=True)
     assert len(per_edge) == 8  # per-edge keeps the deliberate duplication
 
 
 def test_min_samples_suppresses_bins():
     df = pd.DataFrame(obs(8, 10.0, n=3) + obs(9, 6.0))
-    out = rt.aggregate_speeds(df, min_samples=2, output_unit="mps")
+    out = rl.aggregate_speeds(df, min_samples=2, output_unit="mps")
     assert out["block_start_hour"].tolist() == [8]
 
 
 def test_block_hours_warns_when_not_dividing_24():
     with pytest.warns(UserWarning, match="does not divide 24"):
-        rt.aggregate_speeds(day_profile(), block_hours=5, output_unit="mps")
+        rl.aggregate_speeds(day_profile(), block_hours=5, output_unit="mps")
 
 
 def test_peak_analysis_ranks_slowest_first():
-    agg = rt.aggregate_speeds(day_profile(), output_unit="mps")
-    res = rt.peak_analysis(agg, n_peak=2, n_offpeak=2)
+    agg = rl.aggregate_speeds(day_profile(), output_unit="mps")
+    res = rl.peak_analysis(agg, n_peak=2, n_offpeak=2)
     peak_hours = {r["block_start_hour"] for r in res["peak"]}
     off_hours = {r["block_start_hour"] for r in res["off_peak"]}
     assert peak_hours == {7, 8}
@@ -85,25 +85,25 @@ def test_peak_analysis_ranks_slowest_first():
 
 
 def test_peak_analysis_rejects_per_edge_aggregation():
-    agg = rt.aggregate_speeds(day_profile(), by_edge=True, output_unit="mps")
+    agg = rl.aggregate_speeds(day_profile(), by_edge=True, output_unit="mps")
     with pytest.raises(ValueError, match="by_edge"):
-        rt.peak_analysis(agg)
+        rl.peak_analysis(agg)
 
 
 def test_peak_analysis_rejects_empty():
     with pytest.raises(ValueError, match="empty"):
-        rt.peak_analysis(pd.DataFrame())
+        rl.peak_analysis(pd.DataFrame())
 
 
 def test_peak_analysis_warns_on_overlap():
     df = pd.DataFrame(obs(8, 10.0, n=2) + obs(9, 6.0, n=2))
-    agg = rt.aggregate_speeds(df, output_unit="mps")
+    agg = rl.aggregate_speeds(df, output_unit="mps")
     with pytest.warns(UserWarning, match="overlap"):
-        rt.peak_analysis(agg, n_peak=2, n_offpeak=2)
+        rl.peak_analysis(agg, n_peak=2, n_offpeak=2)
 
 
 def test_classify_hours_median_split():
-    res = rt.classify_hours(day_profile())
+    res = rl.classify_hours(day_profile())
     assert res["source"] == "auto"
     assert 7 in res["peak_hours"] and 8 in res["peak_hours"]
     assert 22 in res["offpeak_hours"] and 23 in res["offpeak_hours"]
@@ -113,16 +113,16 @@ def test_classify_hours_median_split():
 def test_classify_hours_override_validation():
     df = day_profile()
     with pytest.raises(ValueError, match="overlap"):
-        rt.classify_hours(df, peak_hours=[7, 8], offpeak_hours=[8, 22])
+        rl.classify_hours(df, peak_hours=[7, 8], offpeak_hours=[8, 22])
     with pytest.raises(ValueError, match="invalid hours"):
-        rt.classify_hours(df, peak_hours=[7, 24])
-    res = rt.classify_hours(df, peak_hours=[7, 8])
+        rl.classify_hours(df, peak_hours=[7, 24])
+    res = rl.classify_hours(df, peak_hours=[7, 8])
     assert res["source"] == "override"
     assert res["offpeak_hours"] == [h for h in range(24) if h not in (7, 8)]
 
 
 def test_classify_hours_window_mode():
-    res = rt.classify_hours(day_profile(), n_peak=2, n_offpeak=2)
+    res = rl.classify_hours(day_profile(), n_peak=2, n_offpeak=2)
     assert res["source"] == "window"
     assert res["peak_hours"] == [7, 8]
     assert res["offpeak_hours"] == [22, 23]
@@ -132,18 +132,18 @@ def test_classify_hours_window_mode():
 
 def test_classify_hours_window_wraps_midnight():
     df = day_profile(fast_hours=(23, 0), slow_hours=(7, 8))
-    res = rt.classify_hours(df, n_peak=2, n_offpeak=2)
+    res = rl.classify_hours(df, n_peak=2, n_offpeak=2)
     assert res["offpeak_hours"] == [0, 23]  # the 23:00-01:00 window
 
 
 def test_classify_hours_window_validation():
     df = day_profile()
     with pytest.raises(ValueError, match="both n_peak and n_offpeak"):
-        rt.classify_hours(df, n_peak=3)
+        rl.classify_hours(df, n_peak=3)
     with pytest.raises(ValueError, match="exceeds 24"):
-        rt.classify_hours(df, n_peak=20, n_offpeak=10)
+        rl.classify_hours(df, n_peak=20, n_offpeak=10)
     with pytest.raises(ValueError, match="between 1 and 23"):
-        rt.classify_hours(df, n_peak=0, n_offpeak=2)
+        rl.classify_hours(df, n_peak=0, n_offpeak=2)
 
 
 def test_classify_hours_degenerate_ties_warns():
@@ -151,14 +151,14 @@ def test_classify_hours_degenerate_ties_warns():
     for h in (8, 9, 10):
         rows += obs(h, 10.0, n=2)
     with pytest.warns(UserWarning, match="off-peak set is empty"):
-        res = rt.classify_hours(pd.DataFrame(rows))
+        res = rl.classify_hours(pd.DataFrame(rows))
     assert res["offpeak_hours"] == []
 
 
 def test_assign_speeds_observed_count_excludes_default(straight_net):
     """Regression: edges written with the default used to count as observed."""
     df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))  # edge 1 has no observations
-    info = rt.assign_speeds(straight_net, df, default_speed_mps=5.0)
+    info = rl.assign_speeds(straight_net, df, default_speed_mps=5.0)
     assert info["n_edges_observed"] == 1
     assert info["n_edges_total"] == 2
     # default still written so time routing works
@@ -170,7 +170,7 @@ def test_assign_speeds_zero_speed_is_observed_gridlock(straight_net):
     a genuinely stopped edge silently fell back to the default speed instead
     of reporting the real gridlock."""
     df = pd.DataFrame(obs(8, 0.0, edge_id=0, n=3))
-    info = rt.assign_speeds(straight_net, df, default_speed_mps=5.0)
+    info = rl.assign_speeds(straight_net, df, default_speed_mps=5.0)
     assert info["n_edges_observed"] == 1
     assert straight_net.edge_data(0)["obs_speed_mps"] == pytest.approx(0.0)
     assert "travel_time_s" not in straight_net.edge_data(0)  # undefined at 0 m/s
@@ -179,7 +179,7 @@ def test_assign_speeds_zero_speed_is_observed_gridlock(straight_net):
 
 def test_assign_segment_speeds_regimes(straight_net):
     df = day_profile()
-    info = rt.assign_segment_speeds(straight_net, df, n_peak=2, n_offpeak=2)
+    info = rl.assign_segment_speeds(straight_net, df, n_peak=2, n_offpeak=2)
     assert info["source"] == "window"
     assert info["peak_hours"] == [7, 8]
     assert info["offpeak_hours"] == [22, 23]
@@ -219,9 +219,9 @@ def day_profile_on(date, *, slow_hours=(7, 8), fast_hours=(22, 23), n_per_hour=4
 
 def test_days_filter_selects_weekday_vs_weekend():
     df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0) + obs_on(SATURDAY, 8, 20.0))
-    wd = rt.aggregate_speeds(df, days="weekday", output_unit="mps")
-    we = rt.aggregate_speeds(df, days="weekend", output_unit="mps")
-    both = rt.aggregate_speeds(df, output_unit="mps")  # days=None default
+    wd = rl.aggregate_speeds(df, days="weekday", output_unit="mps")
+    we = rl.aggregate_speeds(df, days="weekend", output_unit="mps")
+    both = rl.aggregate_speeds(df, output_unit="mps")  # days=None default
     assert wd.iloc[0]["mean_speed"] == pytest.approx(5.0) and wd.iloc[0]["n"] == 1
     assert we.iloc[0]["mean_speed"] == pytest.approx(20.0) and we.iloc[0]["n"] == 1
     assert both.iloc[0]["n"] == 2  # unfiltered pools the two days
@@ -230,26 +230,26 @@ def test_days_filter_selects_weekday_vs_weekend():
 def test_days_presets_names_numbers_agree():
     df = pd.DataFrame(obs_on(SATURDAY, 8, 20.0) + obs_on(SUNDAY, 8, 22.0)
                       + obs_on(WEEKDAY, 8, 5.0))
-    by_preset = rt.aggregate_speeds(df, days="weekend", output_unit="mps").iloc[0]
-    by_names = rt.aggregate_speeds(df, days=["sat", "Sunday"], output_unit="mps").iloc[0]
-    by_nums = rt.aggregate_speeds(df, days=[5, 6], output_unit="mps").iloc[0]
+    by_preset = rl.aggregate_speeds(df, days="weekend", output_unit="mps").iloc[0]
+    by_names = rl.aggregate_speeds(df, days=["sat", "Sunday"], output_unit="mps").iloc[0]
+    by_nums = rl.aggregate_speeds(df, days=[5, 6], output_unit="mps").iloc[0]
     assert by_preset["n"] == by_names["n"] == by_nums["n"] == 2
     assert by_preset["mean_speed"] == pytest.approx(by_nums["mean_speed"])
 
 
 def test_days_all_is_noop():
     df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0) + obs_on(SATURDAY, 8, 20.0))
-    a = rt.aggregate_speeds(df, days="all", output_unit="mps").iloc[0]
-    b = rt.aggregate_speeds(df, output_unit="mps").iloc[0]
+    a = rl.aggregate_speeds(df, days="all", output_unit="mps").iloc[0]
+    b = rl.aggregate_speeds(df, output_unit="mps").iloc[0]
     assert a["n"] == b["n"] == 2
 
 
 def test_days_invalid_raises():
     df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0))
     with pytest.raises(ValueError, match="Unrecognised day"):
-        rt.aggregate_speeds(df, days="funday")
+        rl.aggregate_speeds(df, days="funday")
     with pytest.raises(ValueError, match="out of range"):
-        rt.aggregate_speeds(df, days=[7])
+        rl.aggregate_speeds(df, days=[7])
 
 
 def test_days_accepts_numpy_scalar():
@@ -259,7 +259,7 @@ def test_days_accepts_numpy_scalar():
     Reachable straight from pandas: ``df['time'].dt.dayofweek.unique()[0]``."""
     import numpy as np
     df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0) + obs_on(SATURDAY, 8, 9.0))
-    out = rt.aggregate_speeds(df, days=np.int64(0), output_unit="mps")
+    out = rl.aggregate_speeds(df, days=np.int64(0), output_unit="mps")
     assert len(out) == 1
     assert out["mean_speed"].iloc[0] == pytest.approx(5.0)
 
@@ -267,7 +267,7 @@ def test_days_accepts_numpy_scalar():
 def test_day_type_report_weekday_vs_weekend():
     weekday = day_profile_on(WEEKDAY)                       # slow 7-8, fast 22-23
     weekend = day_profile_on(SATURDAY, slow=14.0, base=18.0, fast=22.0)
-    rep = rt.day_type_report(pd.DataFrame(weekday + weekend),
+    rep = rl.day_type_report(pd.DataFrame(weekday + weekend),
                              statistic="median", output_unit="mps")
     g = rep["groups"]
     assert g["weekday"]["n"] == 96 and g["weekend"]["n"] == 96
@@ -292,7 +292,7 @@ def test_day_type_report_empty_group_is_graceful():
     """A dataset with no weekend fixes reports n=0/NaN and warns, not raises."""
     weekday = day_profile_on(WEEKDAY)
     with pytest.warns(UserWarning, match="no observations"):
-        rep = rt.day_type_report(pd.DataFrame(weekday), output_unit="mps")
+        rep = rl.day_type_report(pd.DataFrame(weekday), output_unit="mps")
     assert rep["groups"]["weekend"]["n"] == 0
     assert np.isnan(rep["groups"]["weekend"]["overall_speed"])
     assert rep["groups"]["weekend"]["peak"] is None
@@ -302,7 +302,7 @@ def test_day_type_report_empty_group_is_graceful():
 def test_day_type_report_custom_groups():
     df = pd.DataFrame(obs_on(WEEKDAY, 8, 5.0, n=2)        # Monday
                       + obs_on("2026-06-05", 8, 9.0, n=2))  # Friday
-    rep = rt.day_type_report(df, groups={"Mon": "mon", "Fri": [4]},
+    rep = rl.day_type_report(df, groups={"Mon": "mon", "Fri": [4]},
                              output_unit="mps")
     assert rep["groups"]["Mon"]["overall_speed"] == pytest.approx(5.0)
     assert rep["groups"]["Fri"]["overall_speed"] == pytest.approx(9.0)
@@ -313,7 +313,7 @@ def test_assign_segment_speeds_days_filter(straight_net):
     """days= restricts which weekdays feed per-edge speeds."""
     df = pd.DataFrame(obs_on(WEEKDAY, 8, 4.0, edge_id=0, n=3)
                       + obs_on(SATURDAY, 8, 16.0, edge_id=0, n=3))
-    info = rt.assign_segment_speeds(straight_net, df, peak_hours=[8],
+    info = rl.assign_segment_speeds(straight_net, df, peak_hours=[8],
                                     offpeak_hours=[20], days="weekday",
                                     default_speed_mps=10.0)
     assert info["days"] == [0, 1, 2, 3, 4]
@@ -325,7 +325,7 @@ def test_assign_segment_speeds_zero_speed_is_observed_gridlock(straight_net):
     nothing at all (spd=0.0 is falsy), leaving the edge with no speed data
     instead of the real gridlock reading."""
     df = pd.DataFrame(obs(8, 0.0, edge_id=0, n=2) + obs(22, 16.0, edge_id=0, n=2))
-    info = rt.assign_segment_speeds(straight_net, df, peak_hours=[8],
+    info = rl.assign_segment_speeds(straight_net, df, peak_hours=[8],
                                     offpeak_hours=[22])
     d = straight_net.edge_data(0)
     assert d["obs_speed_mps_peak"] == pytest.approx(0.0)
@@ -342,14 +342,14 @@ def test_colliding_interval_ids_raise():
     run_b = pd.DataFrame(obs(10, 20.0, interval_id=0) + obs(11, 21.0, interval_id=1))
     both = pd.concat([run_a, run_b], ignore_index=True)
     with pytest.raises(ValueError, match="interval_id"):
-        rt.aggregate_speeds(both, output_unit="mps")
+        rl.aggregate_speeds(both, output_unit="mps")
 
 
 def test_colliding_interval_ids_ignored_when_dedup_off():
     run_a = pd.DataFrame(obs(8, 10.0, interval_id=0))
     run_b = pd.DataFrame(obs(10, 20.0, interval_id=0))
     both = pd.concat([run_a, run_b], ignore_index=True)
-    out = rt.aggregate_speeds(both, output_unit="mps", dedup_intervals=False)
+    out = rl.aggregate_speeds(both, output_unit="mps", dedup_intervals=False)
     assert out["n"].sum() == 2
 
 
@@ -364,8 +364,8 @@ def test_inverse_variance_weighting_favours_precise_observations():
     """A speed measured to var=1 should outweigh one measured to var=4."""
     df = pd.DataFrame(_var_obs(8, 10.0, 1.0, interval_id=0)
                       + _var_obs(8, 20.0, 4.0, interval_id=1))
-    plain = rt.aggregate_speeds(df, output_unit="mps", statistic="mean")
-    wtd = rt.aggregate_speeds(df, output_unit="mps", statistic="mean",
+    plain = rl.aggregate_speeds(df, output_unit="mps", statistic="mean")
+    wtd = rl.aggregate_speeds(df, output_unit="mps", statistic="mean",
                               weight_by_variance=True)
     assert plain["mean_speed"].iloc[0] == pytest.approx(15.0)
     # (10/1 + 20/4) / (1/1 + 1/4) = 15 / 1.25
@@ -378,13 +378,13 @@ def test_inverse_variance_weighting_favours_precise_observations():
 def test_weighting_requires_speed_var_column():
     df = pd.DataFrame(obs(8, 10.0, interval_id=0))
     with pytest.raises(ValueError, match="speed_var"):
-        rt.aggregate_speeds(df, weight_by_variance=True)
+        rl.aggregate_speeds(df, weight_by_variance=True)
 
 
 def test_weighting_requires_a_mean():
     df = pd.DataFrame(_var_obs(8, 10.0, 1.0, interval_id=0))
     with pytest.raises(ValueError, match="weight_by_variance"):
-        rt.aggregate_speeds(df, statistic="median", weight_by_variance=True)
+        rl.aggregate_speeds(df, statistic="median", weight_by_variance=True)
 
 
 def test_unusable_variances_are_dropped_with_a_warning():
@@ -393,7 +393,7 @@ def test_unusable_variances_are_dropped_with_a_warning():
                       + _var_obs(8, 99.0, 0.0, interval_id=1)
                       + _var_obs(8, 99.0, float("nan"), interval_id=2))
     with pytest.warns(UserWarning, match="speed_var"):
-        out = rt.aggregate_speeds(df, output_unit="mps", statistic="mean",
+        out = rl.aggregate_speeds(df, output_unit="mps", statistic="mean",
                                   weight_by_variance=True)
     assert out["n"].iloc[0] == 1
     assert out["mean_speed"].iloc[0] == pytest.approx(10.0)
@@ -411,8 +411,8 @@ def test_require_quality_drops_flagged_observations():
     the package could act on that flag."""
     df = pd.DataFrame(_q(8, 10.0, True, interval_id=0)
                       + _q(8, 99.0, False, interval_id=1))
-    every = rt.aggregate_speeds(df, output_unit="mps")
-    good = rt.aggregate_speeds(df, output_unit="mps", require_quality=True)
+    every = rl.aggregate_speeds(df, output_unit="mps")
+    good = rl.aggregate_speeds(df, output_unit="mps", require_quality=True)
     assert every["n"].iloc[0] == 2
     assert good["n"].iloc[0] == 1
     assert good["mean_speed"].iloc[0] == pytest.approx(10.0)
@@ -421,20 +421,20 @@ def test_require_quality_drops_flagged_observations():
 def test_require_quality_without_the_column_raises():
     df = pd.DataFrame(obs(8, 10.0, interval_id=0))
     with pytest.raises(ValueError, match="quality"):
-        rt.aggregate_speeds(df, require_quality=True)
+        rl.aggregate_speeds(df, require_quality=True)
 
 
 def test_require_quality_reaches_assign_speeds(straight_net):
     df = pd.DataFrame(_q(8, 10.0, True, interval_id=0)
                       + _q(8, 99.0, False, interval_id=1))
-    rt.assign_speeds(straight_net, df, require_quality=True)
+    rl.assign_speeds(straight_net, df, require_quality=True)
     assert straight_net.edge_data(0)["obs_speed_mps"] == pytest.approx(10.0)
 
 
 def test_require_quality_reaches_day_type_report():
     df = pd.DataFrame(_q(8, 10.0, True, interval_id=0)
                       + _q(8, 99.0, False, interval_id=1))
-    rep = rt.day_type_report(df, groups={"wk": "weekday"}, output_unit="mps",
+    rep = rl.day_type_report(df, groups={"wk": "weekday"}, output_unit="mps",
                              require_quality=True)
     assert rep["groups"]["wk"]["n"] == 1
     assert rep["groups"]["wk"]["overall_speed"] == pytest.approx(10.0)
@@ -443,7 +443,7 @@ def test_require_quality_reaches_day_type_report():
 def test_day_type_report_can_weight_by_variance():
     rows = (_var_obs(8, 10.0, 1.0, interval_id=0)
             + _var_obs(8, 20.0, 4.0, interval_id=1))
-    rep = rt.day_type_report(pd.DataFrame(rows), groups={"wk": "weekday"},
+    rep = rl.day_type_report(pd.DataFrame(rows), groups={"wk": "weekday"},
                              statistic="mean", output_unit="mps",
                              weight_by_variance=True)
     assert rep["groups"]["wk"]["overall_speed"] == pytest.approx(12.0)
@@ -452,7 +452,7 @@ def test_day_type_report_can_weight_by_variance():
 # ------------------------------------------------ congestion vs posted limit
 def _limit_net(tmp_path, maxspeed="72 km/h"):   # 72 km/h == exactly 20 m/s
     from conftest import line_feature, write_geojson
-    return rt.Network.from_geojson(write_geojson(tmp_path / "lim.json", [
+    return rl.Network.from_geojson(write_geojson(tmp_path / "lim.json", [
         line_feature([[0, 0], [0.01, 0]], highway="primary", maxspeed=maxspeed),
     ]))
 
@@ -460,7 +460,7 @@ def _limit_net(tmp_path, maxspeed="72 km/h"):   # 72 km/h == exactly 20 m/s
 def test_congestion_report_ratio_against_posted_limit(tmp_path):
     net = _limit_net(tmp_path)
     df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))     # half the limit
-    rep = rt.congestion_report(net, df, output_unit="mps")
+    rep = rl.congestion_report(net, df, output_unit="mps")
     row = rep["edges"].set_index("edge_id").loc[0]
     assert row["observed_speed"] == pytest.approx(10.0)
     assert row["speed_limit"] == pytest.approx(20.0)
@@ -469,11 +469,11 @@ def test_congestion_report_ratio_against_posted_limit(tmp_path):
 
 def test_congestion_report_unrated_edge_has_nan_ratio(tmp_path):
     from conftest import line_feature, write_geojson
-    net = rt.Network.from_geojson(write_geojson(tmp_path / "n.json", [
+    net = rl.Network.from_geojson(write_geojson(tmp_path / "n.json", [
         line_feature([[0, 0], [0.01, 0]], highway="primary"),   # no maxspeed
     ]))
     df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))
-    rep = rt.congestion_report(net, df, output_unit="mps")
+    rep = rl.congestion_report(net, df, output_unit="mps")
     row = rep["edges"].set_index("edge_id").loc[0]
     assert np.isnan(row["speed_limit"]) and np.isnan(row["ratio"])
     assert rep["summary"]["n_edges_rated"] == 0
@@ -483,14 +483,14 @@ def test_congestion_report_reports_speeding_honestly(tmp_path):
     """Observed above the limit is real information, not something to clip."""
     net = _limit_net(tmp_path)
     df = pd.DataFrame(obs(8, 25.0, edge_id=0, n=3))
-    rep = rt.congestion_report(net, df, output_unit="mps")
+    rep = rl.congestion_report(net, df, output_unit="mps")
     assert rep["edges"].set_index("edge_id").loc[0]["ratio"] == pytest.approx(1.25)
 
 
 def test_congestion_report_by_hour(tmp_path):
     net = _limit_net(tmp_path)
     df = pd.DataFrame(obs(8, 5.0, edge_id=0, n=3) + obs(14, 20.0, edge_id=0, n=3))
-    rep = rt.congestion_report(net, df, output_unit="mps", block_hours=1)
+    rep = rl.congestion_report(net, df, output_unit="mps", block_hours=1)
     e = rep["edges"].set_index("block_start_hour")
     assert e.loc[8, "ratio"] == pytest.approx(0.25)
     assert e.loc[14, "ratio"] == pytest.approx(1.0)
@@ -499,6 +499,6 @@ def test_congestion_report_by_hour(tmp_path):
 def test_congestion_report_summary(tmp_path):
     net = _limit_net(tmp_path)
     df = pd.DataFrame(obs(8, 10.0, edge_id=0, n=3))
-    s = rt.congestion_report(net, df, output_unit="mps")["summary"]
+    s = rl.congestion_report(net, df, output_unit="mps")["summary"]
     assert s["n_edges_rated"] == 1
     assert s["median_ratio"] == pytest.approx(0.5)

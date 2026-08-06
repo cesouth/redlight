@@ -12,7 +12,7 @@ instantaneous reading and is the only option when there is no reading at all.
 """
 import os
 
-import roadtraffic as rt
+import redlight as rl
 
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "sample_data")
@@ -20,7 +20,7 @@ DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 
 def main() -> None:
     # ---------------------------------------------------------------- network
-    net = rt.Network.from_geojson(os.path.join(DATA, "network.geojson"))
+    net = rl.Network.from_geojson(os.path.join(DATA, "network.geojson"))
     print(f"Network: {net.number_of_nodes()} nodes, {net.number_of_edges()} "
           f"directed edges, metric CRS EPSG:{net.crs_metric.to_epsg()}")
 
@@ -28,7 +28,7 @@ def main() -> None:
     # tz= converts the timestamps to local clock time. Getting this wrong
     # shifts every hour-of-day statistic by the UTC offset, which quietly
     # relabels the rush hours.
-    pts = rt.load_points(
+    pts = rl.load_points(
         os.path.join(DATA, "points.csv"),
         id_col="device_id", time_col="timestamp",
         lon_col="longitude", lat_col="latitude",
@@ -45,7 +45,7 @@ def main() -> None:
     # closer to the wrong road still lands on the road the mover was actually
     # travelling. NearestMatcher snaps each fix independently -- faster, but it
     # has no way to know that.
-    matched = rt.HMMMatcher(net, max_dist=50).match(pts)
+    matched = rl.HMMMatcher(net, max_dist=50).match(pts)
     n_ok = int((matched["edge_id"] != -1).sum())
     print(f"Matched {n_ok}/{len(matched)} fixes "
           f"({100 * n_ok / len(matched):.1f}%)")
@@ -56,7 +56,7 @@ def main() -> None:
     # min_baseline_m merges consecutive hops until they cover that much road,
     # which lifts short displacements clear of GPS noise -- worth setting
     # whenever fixes are dense relative to the noise.
-    derived = rt.derive_speeds(
+    derived = rl.derive_speeds(
         net, matched, pts,
         pos_accuracy_col="accuracy_m",
         min_baseline_m=150.0,
@@ -70,7 +70,7 @@ def main() -> None:
     print("  network-wide statistics. 'edge_observations' repeats an interval")
     print("  once per edge it crossed -- use it for per-edge statistics.")
 
-    mph = rt.from_mps(intervals["speed_mps"], "mph")
+    mph = rl.from_mps(intervals["speed_mps"], "mph")
     print(f"\nSpeed: median {mph.median():.1f} mph, "
           f"{mph.quantile(0.05):.1f}-{mph.quantile(0.95):.1f} mph (5-95%)")
 
@@ -79,7 +79,7 @@ def main() -> None:
     print(f"Quality: {good:,}/{len(intervals):,} intervals passed the screen "
           f"({100 * good / len(intervals):.0f}%)")
     print(f"  median 1-sigma speed uncertainty: "
-          f"{rt.from_mps(intervals['speed_sigma_mps'], 'mph').median():.2f} mph")
+          f"{rl.from_mps(intervals['speed_sigma_mps'], 'mph').median():.2f} mph")
     print("\nNote: quality=False rows are RETURNED, not dropped. Excluding them")
     print("      biases speeds upward, because slow traffic covers the least")
     print("      ground per fix and fails the screen most often.")

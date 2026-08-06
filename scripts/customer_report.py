@@ -44,7 +44,7 @@ Usage
         --customer "Example County DOT" \\
         --out report.pdf           # or report.pptx, or --format png --out figs/
 
-Requires the ``mapping`` extra for figures: ``pip install roadtraffic[mapping]``
+Requires the ``mapping`` extra for figures: ``pip install redlight[mapping]``
 (matplotlib). Every stage degrades gracefully -- a study area with no posted
 speed limits, or GPS that never sampled a weekend, drops the affected section
 and says so in "Data notes" rather than failing or inventing a number.
@@ -60,7 +60,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-import roadtraffic as rt
+import redlight as rl
 
 # --------------------------------------------------------------------------- #
 # Palette. Light-mode values from the project's validated data-viz palette.
@@ -106,13 +106,13 @@ DIV_LOW, DIV_MID, DIV_HIGH = "#d03b3b", "#c3c2b7", "#2a78d6"
 # Slots 1-3 of the validated categorical theme; these three clear the
 # all-pairs CVD and normal-vision floors on this deck's surface.
 CAT_1, CAT_2, CAT_3 = "#2a78d6", "#eb6834", "#1baf7a"
-MODE_COLORS = {rt.MODE_VEHICLE: CAT_1, rt.MODE_PEDESTRIAN: CAT_2,
-               rt.MODE_UNKNOWN: CAT_3}
-MODE_ORDER = (rt.MODE_VEHICLE, rt.MODE_PEDESTRIAN, rt.MODE_UNKNOWN)
+MODE_COLORS = {rl.MODE_VEHICLE: CAT_1, rl.MODE_PEDESTRIAN: CAT_2,
+               rl.MODE_UNKNOWN: CAT_3}
+MODE_ORDER = (rl.MODE_VEHICLE, rl.MODE_PEDESTRIAN, rl.MODE_UNKNOWN)
 # How each mode reads in prose on a slide, so the tiles can describe whichever
 # keep set the pipeline actually used instead of assuming vehicles-only.
-MODE_PHRASE = {rt.MODE_VEHICLE: "vehicles", rt.MODE_PEDESTRIAN: "pedestrians",
-               rt.MODE_UNKNOWN: "unclassified"}
+MODE_PHRASE = {rl.MODE_VEHICLE: "vehicles", rl.MODE_PEDESTRIAN: "pedestrians",
+               rl.MODE_UNKNOWN: "unclassified"}
 # The per-mover percentile the screen classifies on. One value, so the column
 # name built from it and the classification that reads it cannot disagree.
 MODE_PERCENTILE = 85.0
@@ -128,7 +128,7 @@ def _mpl():
     except ImportError as exc:  # pragma: no cover - depends on user's env
         raise SystemExit(
             "This report needs matplotlib for its figures.\n"
-            "    pip install 'roadtraffic[mapping]'"
+            "    pip install 'redlight[mapping]'"
         ) from exc
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -333,7 +333,7 @@ def build_tiles(args, R):
         # Read the keep set the pipeline actually filtered on. Hardcoding
         # vehicles here made the tiles contradict the data note on the same
         # slide under --keep-unknown, counting retained movers as "excluded".
-        keep = R.get("mode_keep") or (rt.MODE_VEHICLE,)
+        keep = R.get("mode_keep") or (rl.MODE_VEHICLE,)
         kept = int(mv["mode"].isin(keep).sum())
         in_phrase = " or ".join(MODE_PHRASE[m] for m in MODE_ORDER if m in keep)
         out_phrase = " or ".join(MODE_PHRASE[m] for m in MODE_ORDER
@@ -392,12 +392,12 @@ def build_tiles(args, R):
 def run_pipeline(args, notes: list) -> dict:
     """Load, match, derive, clean and aggregate. Returns everything the deck needs."""
     print(f"[1/8] network  <- {args.network}", file=sys.stderr)
-    net = rt.Network.from_geojson(args.network)
+    net = rl.Network.from_geojson(args.network)
     print(f"      {net.number_of_nodes():,} nodes / {net.number_of_edges():,} edges",
           file=sys.stderr)
 
     print(f"[2/8] points   <- {args.points}", file=sys.stderr)
-    pts = rt.load_points(args.points, tz=args.tz, id_col=args.id_col,
+    pts = rl.load_points(args.points, tz=args.tz, id_col=args.id_col,
                          time_col=args.time_col, lon_col=args.lon_col,
                          lat_col=args.lat_col)
     pdf = pts.df
@@ -435,7 +435,7 @@ def run_pipeline(args, notes: list) -> dict:
         acc = None
 
     print("[3/8] matching (HMM/Viterbi)", file=sys.stderr)
-    matched = rt.HMMMatcher(net, max_dist=args.max_dist).match(pts)
+    matched = rl.HMMMatcher(net, max_dist=args.max_dist).match(pts)
     n_unmatched = int((matched["edge_id"] == -1).sum())
     if n_unmatched:
         pct = 100.0 * n_unmatched / max(len(matched), 1)
@@ -444,7 +444,7 @@ def run_pipeline(args, notes: list) -> dict:
                      "excluded from every statistic below.")
 
     print("[4/8] deriving speeds from on-road displacement", file=sys.stderr)
-    derived = rt.derive_speeds(
+    derived = rl.derive_speeds(
         net, matched, pts,
         pos_accuracy_col=acc,
         default_pos_sigma_m=args.default_sigma,
@@ -493,9 +493,9 @@ def run_pipeline(args, notes: list) -> dict:
         # under the classifier's default and turn into a KeyError.
         pct_col = f"speed_p{MODE_PERCENTILE:g}_{args.unit}"
         if args.mode_threshold == "auto":
-            feat = rt.mover_features(intervals, percentile=MODE_PERCENTILE,
+            feat = rl.mover_features(intervals, percentile=MODE_PERCENTILE,
                                      unit=args.unit)
-            thr = rt.suggest_mode_threshold(feat[pct_col], unit=args.unit)
+            thr = rl.suggest_mode_threshold(feat[pct_col], unit=args.unit)
             if thr is None:
                 raise SystemExit(
                     "--mode-threshold auto found no walking-speed population to "
@@ -507,14 +507,14 @@ def run_pipeline(args, notes: list) -> dict:
             thr = float(args.mode_threshold)
         mode_threshold = float(thr)
 
-        movers = rt.classify_movers(intervals, threshold=thr,
+        movers = rl.classify_movers(intervals, threshold=thr,
                                     percentile=MODE_PERCENTILE, unit=args.unit)
-        keep = ((rt.MODE_VEHICLE, rt.MODE_UNKNOWN) if args.keep_unknown
-                else (rt.MODE_VEHICLE,))
+        keep = ((rl.MODE_VEHICLE, rl.MODE_UNKNOWN) if args.keep_unknown
+                else (rl.MODE_VEHICLE,))
         mode_keep = keep
         n_before, mov_before = len(obs), int(intervals["traj_id"].nunique())
-        obs = rt.filter_by_mode(obs, movers, keep=keep)
-        intervals = rt.filter_by_mode(intervals, movers, keep=keep)
+        obs = rl.filter_by_mode(obs, movers, keep=keep)
+        intervals = rl.filter_by_mode(intervals, movers, keep=keep)
         kept = int(movers["mode"].isin(keep).sum())
         excluded_phrase = " or ".join(MODE_PHRASE[m] for m in MODE_ORDER
                                       if m not in keep)
@@ -538,7 +538,7 @@ def run_pipeline(args, notes: list) -> dict:
     # parked vehicle produces displacement below the GPS noise floor, which the
     # quality screen flags -- so --require-quality is the equivalent control.
     before = len(obs)
-    clean = rt.filter_by_speed(obs, max_speed=args.max_speed, unit=args.unit,
+    clean = rl.filter_by_speed(obs, max_speed=args.max_speed, unit=args.unit,
                                mad_outliers=True, per_edge=True)
     dropped = before - len(clean)
     if dropped:
@@ -551,26 +551,26 @@ def run_pipeline(args, notes: list) -> dict:
 
     rq = args.require_quality
     print("[7/8] assigning speeds + aggregating", file=sys.stderr)
-    seg = rt.assign_segment_speeds(net, clean, statistic=args.statistic,
+    seg = rl.assign_segment_speeds(net, clean, statistic=args.statistic,
                                    n_peak=args.n_peak, n_offpeak=args.n_offpeak,
                                    require_quality=rq)
-    hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
+    hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="both",
                                  output_unit=args.unit, require_quality=rq,
                                  min_samples=args.min_samples)
-    peaks = (rt.peak_analysis(hourly, statistic=args.statistic,
+    peaks = (rl.peak_analysis(hourly, statistic=args.statistic,
                               n_peak=args.n_peak, n_offpeak=args.n_offpeak)
              if len(hourly) else None)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        daytype = rt.day_type_report(clean, statistic=args.statistic,
+        daytype = rl.day_type_report(clean, statistic=args.statistic,
                                      output_unit=args.unit, require_quality=rq)
         for w in caught:
             if "no observations" in str(w.message):
                 notes.append("One day-type had no observations, so the "
                              "weekday/weekend comparison is partial.")
 
-    congestion = rt.congestion_report(net, clean, statistic=args.statistic,
+    congestion = rl.congestion_report(net, clean, statistic=args.statistic,
                                       output_unit=args.unit, require_quality=rq)
     if congestion["summary"]["n_edges_rated"] == 0:
         congestion = None
@@ -579,10 +579,10 @@ def run_pipeline(args, notes: list) -> dict:
                      "the network with maxspeed to enable it.")
 
     print("[8/8] network structure", file=sys.stderr)
-    stats = rt.network_stats(net, area_km2=args.area_km2)
-    conn = rt.connectivity_report(net)
+    stats = rl.network_stats(net, area_km2=args.area_km2)
+    conn = rl.connectivity_report(net)
     try:
-        bc = rt.edge_betweenness_centrality(net, weight="travel_time_s")
+        bc = rl.edge_betweenness_centrality(net, weight="travel_time_s")
     except ValueError as exc:
         bc = None
         notes.append(f"Chokepoint analysis skipped: {exc}".split(" Fix by")[0])
@@ -635,7 +635,7 @@ def fig_speed_map(plt, net, period, unit, vlim=None):
         if v is None:
             v = net.edge_data(int(eid)).get("obs_speed_mps")
         if v is not None and np.isfinite(v):
-            vals[int(eid)] = float(rt.from_mps(v, unit))
+            vals[int(eid)] = float(rl.from_mps(v, unit))
     if not vals:
         return None, None
     lo, hi = (vlim if vlim else (min(vals.values()), max(vals.values())))

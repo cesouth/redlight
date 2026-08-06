@@ -24,7 +24,7 @@ CORE_WORKLOAD = textwrap.dedent("""
     sys.meta_path.insert(0, Blocker())
 
     import json, os, tempfile
-    import roadtraffic as rt
+    import redlight as rl
 
     tmp = tempfile.mkdtemp()
     net_path = os.path.join(tmp, "net.json")
@@ -36,7 +36,7 @@ CORE_WORKLOAD = textwrap.dedent("""
                          "coordinates": [[0.0, 0.0], [0.01, 0.0]]},
         }]}, fh)
 
-    net = rt.Network.from_geojson(net_path)
+    net = rl.Network.from_geojson(net_path)
     assert net.crs_metric.to_epsg() == 32631, net.crs_metric.to_epsg()
     px, py = net.project_points([0.005], [0.0])
     assert abs(float(px[0])) > 0
@@ -47,12 +47,12 @@ CORE_WORKLOAD = textwrap.dedent("""
         for i in range(6):
             fh.write(f"a,{i * 0.0015:.6f},0.00002,2026-06-01T08:00:{i * 10:02d}\\n")
 
-    pts = rt.load_points(pts_path, id_col="id")
-    matched = rt.NearestMatcher(net, max_dist=60).match(pts)
-    speeds = rt.derive_speeds(net, matched, pts)
+    pts = rl.load_points(pts_path, id_col="id")
+    matched = rl.NearestMatcher(net, max_dist=60).match(pts)
+    speeds = rl.derive_speeds(net, matched, pts)
     assert len(speeds["intervals"]) > 0, speeds["intervals"]
 
-    stats = rt.network_stats(net)
+    stats = rl.network_stats(net)
     assert stats["n_edges"] == 2, stats["n_edges"]
 
     assert "pyproj" not in sys.modules, "pyproj was imported by the core path"
@@ -64,7 +64,7 @@ def test_core_workload_runs_with_pyproj_blocked():
     """Load, match, derive speeds, and compute stats with pyproj unimportable.
 
     Runs in a subprocess because the import blocker has to be installed before
-    roadtraffic is first imported, and pytest has already imported it here.
+    redlight is first imported, and pytest has already imported it here.
     """
     result = subprocess.run(
         [sys.executable, "-c", CORE_WORKLOAD],

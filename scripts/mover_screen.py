@@ -53,8 +53,8 @@ import sys
 import numpy as np
 import pandas as pd
 
-import roadtraffic as rt
-from roadtraffic.units import SpeedUnit, from_mps
+import redlight as rl
+from redlight.units import SpeedUnit, from_mps
 
 
 def histogram(x: np.ndarray, unit_label: str, focus_hi: float,
@@ -135,8 +135,8 @@ def main(argv=None) -> int:
                 f"{args.threshold!r}.") from exc
 
     unit = SpeedUnit.parse(args.unit)
-    net = rt.Network.from_geojson(args.network)
-    pts = rt.load_points(args.points, tz=args.tz, id_col=args.id_col,
+    net = rl.Network.from_geojson(args.network)
+    pts = rl.load_points(args.points, tz=args.tz, id_col=args.id_col,
                          time_col=args.time_col, lon_col=args.lon_col,
                          lat_col=args.lat_col)
     if not pts.has_traj:
@@ -145,21 +145,21 @@ def main(argv=None) -> int:
             "Pass --id-col.")
 
     print("[1/3] matching (HMM/Viterbi)", file=sys.stderr)
-    matched = rt.HMMMatcher(net, max_dist=args.max_dist).match(pts)
+    matched = rl.HMMMatcher(net, max_dist=args.max_dist).match(pts)
 
     print("[2/3] deriving speeds from on-road displacement", file=sys.stderr)
     acc = args.accuracy_col if args.accuracy_col in pts.df.columns else None
     if args.accuracy_col and acc is None:
         print(f"      accuracy column {args.accuracy_col!r} not found; "
               f"using the default sigma", file=sys.stderr)
-    derived = rt.derive_speeds(net, matched, pts, pos_accuracy_col=acc,
+    derived = rl.derive_speeds(net, matched, pts, pos_accuracy_col=acc,
                                min_baseline_m=args.min_baseline)
     iv = derived["intervals"]
     if not len(iv):
         raise SystemExit("No speed intervals could be derived; check --id-col.")
 
     print("[3/3] reducing to per-mover features", file=sys.stderr)
-    feat = rt.mover_features(iv, percentile=args.percentile, unit=unit)
+    feat = rl.mover_features(iv, percentile=args.percentile, unit=unit)
     pct_col = f"speed_p{args.percentile:g}_{unit.value}"
 
     # 6 m/s (~13 mph) is comfortably above any walking or jogging pace and
@@ -167,7 +167,7 @@ def main(argv=None) -> int:
     walk_hi = float(from_mps(6.0, unit))
     histogram(feat[pct_col].to_numpy(float), f"p{args.percentile:g}",
               focus_hi=2.5 * walk_hi)
-    sugg = rt.suggest_mode_threshold(feat[pct_col], unit=unit)
+    sugg = rl.suggest_mode_threshold(feat[pct_col], unit=unit)
     print()
     if sugg is None:
         print("  No walking-speed population found. Either the feed is all "
@@ -188,11 +188,11 @@ def main(argv=None) -> int:
             print(f"  wrote {args.out_movers}", file=sys.stderr)
         return 0
 
-    movers = rt.classify_movers(iv, threshold=threshold,
+    movers = rl.classify_movers(iv, threshold=threshold,
                                 percentile=args.percentile,
                                 min_intervals=args.min_intervals, unit=unit)
-    keep = ((rt.MODE_VEHICLE, rt.MODE_UNKNOWN) if args.keep_unclassified
-            else (rt.MODE_VEHICLE,))
+    keep = ((rl.MODE_VEHICLE, rl.MODE_UNKNOWN) if args.keep_unclassified
+            else (rl.MODE_VEHICLE,))
     kept_ids = set(movers.index[movers["mode"].isin(keep)])
 
     thresh_label = "auto" if threshold == "auto" else f"{threshold:g}"

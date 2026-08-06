@@ -1,4 +1,4 @@
-"""Tests for on-road speed derivation (roadtraffic.speeds.derive_speeds).
+"""Tests for on-road speed derivation (redlight.speeds.derive_speeds).
 
 Two layers, matching the two scripts these were adapted from:
 
@@ -17,8 +17,8 @@ import pandas as pd
 import pytest
 from shapely.geometry import LineString
 
-import roadtraffic as rt
-from roadtraffic.points import PointSet
+import redlight as rl
+from redlight.points import PointSet
 
 
 # --------------------------------------------------------------------------- #
@@ -40,7 +40,7 @@ def _l_shaped_network(tmp):
     }
     with open(path, "w") as fh:
         json.dump(gj, fh)
-    return rt.Network.from_geojson(path)
+    return rl.Network.from_geojson(path)
 
 
 def _find_edge(net, u, v):
@@ -88,7 +88,7 @@ def _run_case(net, eid1, f1, ax1, eid2, f2, ax2, true_v, true_dist):
         "traj_id": ["T", "T"],
     })
 
-    res = rt.derive_speeds(net, matched, ps, default_pos_sigma_m=5.0)
+    res = rl.derive_speeds(net, matched, ps, default_pos_sigma_m=5.0)
     iv = res["intervals"].iloc[0]
     return iv, res["edge_observations"]
 
@@ -148,7 +148,7 @@ def test_speeds_pipeline_end_to_end():
     net_path = os.path.join(tmp, "road2.geojson")
     with open(net_path, "w") as fh:
         json.dump(gj, fh)
-    net = rt.Network.from_geojson(net_path)
+    net = rl.Network.from_geojson(net_path)
 
     # simulate a trip along E then N at ~10 m/s, 1 Hz, ~5 m GPS noise, NO speed col
     fwd, inv = net._transformer_fwd, net._transformer_inv
@@ -170,14 +170,14 @@ def test_speeds_pipeline_end_to_end():
     pd.DataFrame(rows).to_csv(csv_path, index=False)
 
     # load WITHOUT a speed column -- position+time only must be valid input
-    ps = rt.load_points(csv_path, id_col="track_id")
+    ps = rl.load_points(csv_path, id_col="track_id")
     assert "speed_mps" not in ps.df.columns
 
-    matched = rt.HMMMatcher(net, sigma_z=6.0, beta=30.0, max_dist=80.0).match(ps)
+    matched = rl.HMMMatcher(net, sigma_z=6.0, beta=30.0, max_dist=80.0).match(ps)
     assert "speed_mps" not in matched.columns
     assert (matched["edge_id"] != -1).mean() > 0.8  # most fixes should match
 
-    res = rt.derive_speeds(net, matched, ps, default_pos_sigma_m=5.0, min_baseline_m=75.0)
+    res = rl.derive_speeds(net, matched, ps, default_pos_sigma_m=5.0, min_baseline_m=75.0)
     iv, eo = res["intervals"], res["edge_observations"]
     good = iv[iv["quality"]]
     assert len(good) > 0
@@ -185,15 +185,15 @@ def test_speeds_pipeline_end_to_end():
     assert 7.0 < good["speed_mps"].median() < 13.0
 
     # feed straight into the existing cleaning/aggregation/routing pipeline
-    clean = rt.filter_by_speed(eo, min_speed=1, max_speed=80, unit="mph",
+    clean = rl.filter_by_speed(eo, min_speed=1, max_speed=80, unit="mph",
                                 drop_unmatched=True, mad_outliers=True, per_edge=True)
     assert len(clean) > 0
-    agg = rt.aggregate_speeds(clean, statistic="both", output_unit="mph", by_edge=True)
+    agg = rl.aggregate_speeds(clean, statistic="both", output_unit="mph", by_edge=True)
     assert len(agg) > 0
 
-    info = rt.assign_speeds(net, clean, statistic="median")
+    info = rl.assign_speeds(net, clean, statistic="median")
     assert info["n_edges_observed"] > 0
-    router = rt.Router(net)
+    router = rl.Router(net)
     route = router.route(tuple(coords_e[0]), tuple(coords_n[-1]), mode="time")
     assert route["travel_time_s"] > 0
     implied_speed = route["distance_m"] / route["travel_time_s"]
@@ -221,20 +221,20 @@ def _assigned_grid_network(tmp):
                                            "coordinates": [[lon, lat], [lon, lat + 0.005]]}})
     with open(net_path, "w") as fh:
         json.dump({"type": "FeatureCollection", "features": feats}, fh)
-    net = rt.Network.from_geojson(net_path)
+    net = rl.Network.from_geojson(net_path)
     rows = []
     for _u, _v, d in net.graph.edges(data=True):
         rows.append({"edge_id": d["edge_id"], "speed_mps": 10.0,
                      "time": "2024-06-01T08:00:00"})
     matched = pd.DataFrame(rows)
-    rt.assign_speeds(net, matched, statistic="median")
+    rl.assign_speeds(net, matched, statistic="median")
     return net
 
 
 def test_to_geojson_export():
     tmp = tempfile.mkdtemp()
     net = _assigned_grid_network(tmp)
-    fc = rt.to_geojson(net, speed_unit="mph")
+    fc = rl.to_geojson(net, speed_unit="mph")
     assert fc["type"] == "FeatureCollection"
     assert len(fc["features"]) > 0
     assert all(f["properties"]["speed"] is not None for f in fc["features"])
@@ -245,7 +245,7 @@ def test_plot_speed_map():
     tmp = tempfile.mkdtemp()
     net = _assigned_grid_network(tmp)
     out = os.path.join(tmp, "speeds.png")
-    fig = rt.plot_speed_map(net, out, speed_unit="mph")
+    fig = rl.plot_speed_map(net, out, speed_unit="mph")
     assert os.path.exists(out)
     import matplotlib.pyplot as plt
     plt.close(fig)

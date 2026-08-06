@@ -1,4 +1,4 @@
-# roadtraffic
+# redlight
 
 **Version 0.5.0** · MIT licensed · Python 3.9+
 
@@ -18,16 +18,16 @@ works out of the box; Shapefile and GeoPackage are an opt-in extra.
 ## Install
 
 ```bash
-pip install roadtraffic                 # core
-pip install roadtraffic[shapefile]      # + Shapefile / GeoPackage (needs 3.10+)
-pip install roadtraffic[mapping]        # + static PNG maps
+pip install redlight                 # core
+pip install redlight[shapefile]      # + Shapefile / GeoPackage (needs 3.10+)
+pip install redlight[mapping]        # + static PNG maps
 ```
 
 From source:
 
 ```bash
-git clone https://github.com/cesouth/roadtraffic.git
-cd roadtraffic
+git clone https://github.com/cesouth/redlight.git
+cd redlight
 pip install -e ".[dev]"
 pytest
 ```
@@ -35,42 +35,42 @@ pytest
 ## A worked example
 
 Your GPS has position and time but no usable speed — the common case.
-`roadtraffic` reconstructs speed from how far each vehicle moved *along the
+`redlight` reconstructs speed from how far each vehicle moved *along the
 road*, which is more trustworthy than a receiver's instantaneous reading.
 
 ```python
-import roadtraffic as rt
+import redlight as rl
 
 # 1. Road network. GeoJSON here; .shp/.gpkg via Network.from_file,
 #    or straight from OpenStreetMap with Network.from_overpass(bbox).
-net = rt.Network.from_geojson("network.geojson")
+net = rl.Network.from_geojson("network.geojson")
 
 # 2. GPS fixes. Columns are auto-detected; tz= puts the timestamps on the
 #    local clock so "rush hour" means the local rush hour.
-pts = rt.load_points("points.csv", id_col="vehicle_id", tz="America/New_York")
+pts = rl.load_points("points.csv", id_col="vehicle_id", tz="America/New_York")
 
 # 3. Match each fix to a road. HMMMatcher decodes the whole trajectory, so a
 #    fix that is nearer the wrong road still lands on the road travelled.
-matched = rt.HMMMatcher(net, max_dist=50).match(pts)
+matched = rl.HMMMatcher(net, max_dist=50).match(pts)
 
 # 4. Reconstruct speed from on-road displacement.
-derived = rt.derive_speeds(net, matched, pts, min_baseline_m=150)
+derived = rl.derive_speeds(net, matched, pts, min_baseline_m=150)
 obs = derived["edge_observations"]
 
 # 5. Clean. Cap the top end for GPS-jump artefacts; leave the bottom alone.
-clean = rt.filter_by_speed(obs, max_speed=80, unit="mph",
+clean = rl.filter_by_speed(obs, max_speed=80, unit="mph",
                            mad_outliers=True, per_edge=True)
 
 # 6. Speed by hour, then the peak and off-peak windows, found from the data.
-hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="median",
+hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="median",
                              output_unit="mph")
-peaks = rt.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
+peaks = rl.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
 
 # 7. Write per-regime speeds onto the graph, then map and route on them.
-rt.assign_segment_speeds(net, clean, n_peak=3, n_offpeak=3)
-rt.to_geojson(net, "trafficability_peak.geojson", period="peak")
+rl.assign_segment_speeds(net, clean, n_peak=3, n_offpeak=3)
+rl.to_geojson(net, "trafficability_peak.geojson", period="peak")
 
-router = rt.Router(net)
+router = rl.Router(net)
 route = router.route((-77.30, 38.80), (-77.27, 38.81), mode="time", period="peak")
 print(f"{route['travel_time_s']:.0f} s over {route['distance_m']:.0f} m")
 ```
@@ -95,7 +95,7 @@ independently and is fast. `HMMMatcher` decodes the trajectory with Viterbi
 (Newson & Krumm, 2009) and is right more often. Neither needs extra
 dependencies.
 
-**Mixed feeds.** If your data also contains people on foot, `roadtraffic.modes`
+**Mixed feeds.** If your data also contains people on foot, `redlight.modes`
 classifies whole *movers* rather than observations, so a vehicle crawling
 through a chokepoint keeps its slow rows while a pedestrian is removed
 entirely. A minimum-speed filter cannot tell those two apart.
@@ -143,7 +143,7 @@ too, when it is wrong. Both are documented where they are offered, not buried.
 - [Examples](examples/)
 - [Changelog](CHANGELOG.md)
 
-Build the docs site with `pip install roadtraffic[docs] && mkdocs serve`.
+Build the docs site with `pip install redlight[docs] && mkdocs serve`.
 
 ## Development
 

@@ -1,4 +1,4 @@
-# roadtraffic
+# redlight
 
 **Trafficability analysis for road networks, from your own GPS data.**
 
@@ -17,14 +17,14 @@ Built on `numpy`, `pandas`, `scipy`, `shapely` and `networkx`.
 | Understand what a number means | [Statistical methodology](statistics.md) |
 | See why the methods were chosen, with evidence | [Methodology paper](methodology.md) |
 | Look up a function | [API reference](api.md) |
-| Copy a runnable script | [`examples/`](https://github.com/cesouth/roadtraffic/tree/main/examples) |
+| Copy a runnable script | [`examples/`](https://github.com/cesouth/redlight/tree/main/examples) |
 
 ## Install
 
 ```bash
-pip install roadtraffic                 # core
-pip install roadtraffic[shapefile]      # + Shapefile / GeoPackage (needs 3.10+)
-pip install roadtraffic[mapping]        # + static PNG maps
+pip install redlight                 # core
+pip install redlight[shapefile]      # + Shapefile / GeoPackage (needs 3.10+)
+pip install redlight[mapping]        # + static PNG maps
 ```
 
 ## The shape of a study
@@ -33,23 +33,23 @@ Most work follows the same path. Each step is a documented function you can
 stop at, inspect, and swap out.
 
 ```python
-import roadtraffic as rt
+import redlight as rl
 
-net = rt.Network.from_geojson("network.geojson")
-pts = rt.load_points("points.csv", id_col="vehicle_id", tz="America/New_York")
+net = rl.Network.from_geojson("network.geojson")
+pts = rl.load_points("points.csv", id_col="vehicle_id", tz="America/New_York")
 
 # Match fixes to roads, then reconstruct speed from on-road displacement.
-matched = rt.HMMMatcher(net, max_dist=50).match(pts)
-derived = rt.derive_speeds(net, matched, pts, min_baseline_m=150)
+matched = rl.HMMMatcher(net, max_dist=50).match(pts)
+derived = rl.derive_speeds(net, matched, pts, min_baseline_m=150)
 
 # Cap the top end only -- a minimum-speed filter would delete the congestion.
-clean = rt.filter_by_speed(derived["edge_observations"], max_speed=80,
+clean = rl.filter_by_speed(derived["edge_observations"], max_speed=80,
                            unit="mph", mad_outliers=True, per_edge=True)
 
-hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="median",
+hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="median",
                              output_unit="mph")
-peaks = rt.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
-rt.assign_segment_speeds(net, clean, n_peak=3, n_offpeak=3)
+peaks = rl.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
+rl.assign_segment_speeds(net, clean, n_peak=3, n_offpeak=3)
 ```
 
 From there: `congestion_report` for performance against posted limits,

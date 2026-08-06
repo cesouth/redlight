@@ -1,6 +1,6 @@
 # Estimating road-network trafficability from GPS trajectories: methodology and empirical defense
 
-*This document defends the methods implemented in `roadtraffic` v0.2+. Every
+*This document defends the methods implemented in `redlight` v0.2+. Every
 number and figure in it is produced by one committed, seeded script —
 `scripts/paper_experiments.py` — against synthetic data with known ground
 truth, so all results can be regenerated and audited. Section 8 gives the
@@ -8,7 +8,7 @@ exact reproduction command.*
 
 ## Abstract
 
-`roadtraffic` turns raw GPS observations — latitude, longitude, a mover
+`redlight` turns raw GPS observations — latitude, longitude, a mover
 identifier, and a timestamp — into per-segment road speeds with defensible
 uncertainty: an overall network average, a peak (most congested) block, and
 an off-peak block, on an OpenStreetMap road network. The package makes three
@@ -41,7 +41,7 @@ three constraints that explain most design decisions:
 1. **Bring your own data, bring no infrastructure.** Established
    alternatives either pull a heavy geospatial stack (osmnx builds on
    GeoPandas/GDAL [14]) or are C++ network services that must be deployed
-   and fed preprocessed graphs (OSRM [15], Valhalla). `roadtraffic` runs
+   and fed preprocessed graphs (OSRM [15], Valhalla). `redlight` runs
    `pip install` on five mainstream wheel-only dependencies (numpy, pandas,
    scipy, shapely, networkx) and fetches OSM networks with the
    standard library.
@@ -441,7 +441,7 @@ through congestion — both produce slow fixes, and the filter deletes both,
 which is exactly backwards for a study whose subject is congestion. The
 distinction is visible only at the level of the whole trajectory: a pedestrian
 is slow for their *entire* track, while a congested vehicle is slow on one
-segment and free-flowing elsewhere in the same trip. `roadtraffic` therefore
+segment and free-flowing elsewhere in the same trip. `redlight` therefore
 classifies whole trajectories — `mover_features` and `classify_movers` reduce
 each mover to one evidence row before any verdict is reached — and applies the
 verdict to every one of that mover's observations. A mover judged to be a
@@ -510,7 +510,7 @@ rather than presenting the screened result alone as ground truth.
 
 ## 5. Comparison with the established alternatives
 
-| | roadtraffic | osmnx [14] | OSRM `match` [15] | Valhalla (Meili) |
+| | redlight | osmnx [14] | OSRM `match` [15] | Valhalla (Meili) |
 |---|---|---|---|---|
 | Install | pip, wheels only | pip + GDAL stack | C++ service + graph build | C++ service + tiles |
 | Map matching | HMM (Newson-Krumm) | none built-in | HMM | HMM |

@@ -13,17 +13,17 @@ congestion risk):
 * :func:`network_stats` -- circuity, streets-per-node, and intersection/
   dead-end counts always; intersection/edge density additionally when an
   ``area_km2`` is supplied by the caller (unlike ``osmnx``, a
-  :class:`~roadtraffic.network.Network` has no stored query-boundary polygon
+  :class:`~redlight.network.Network` has no stored query-boundary polygon
   to compute one from automatically).
 * :func:`connectivity_report` -- largest strongly-connected-component size
   and the actual node/edge partition (not just a headline number), plus a
   weakly- vs. strongly-connected distinction that separates a one-way trap
   from a genuinely disconnected extract.
 
-All three take a :class:`~roadtraffic.network.Network` as their first
+All three take a :class:`~redlight.network.Network` as their first
 argument and read ``network.graph`` directly -- this package's convention of
-free functions over graph methods (see :mod:`roadtraffic.aggregate`,
-:mod:`roadtraffic.routing`). No new methods are added to ``Network`` itself.
+free functions over graph methods (see :mod:`redlight.aggregate`,
+:mod:`redlight.routing`). No new methods are added to ``Network`` itself.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ import numpy as np
 from ._geo import geodesic_distance
 from .network import _RESERVED_EDGE_ATTRS
 
-# Attribute names roadtraffic's own pipeline writes for speed/time data (see
+# Attribute names redlight's own pipeline writes for speed/time data (see
 # aggregate.py). Colliding a write_attr= with one of these would silently
 # corrupt real pipeline data, so it's guarded against in
 # edge_betweenness_centrality below.
@@ -139,7 +139,7 @@ def edge_betweenness_centrality(
 
     Parameters
     ----------
-    network : roadtraffic.network.Network
+    network : redlight.network.Network
     weight : str or None
         Edge attribute to weight shortest paths by. Required -- there is no
         default, deliberately: defaulting to ``"travel_time_s"`` would break
@@ -147,8 +147,8 @@ def edge_betweenness_centrality(
         defaulting to ``"length_m"`` would silently answer a different
         question than "chokepoints by real travel time" with no error at
         all. Pass ``"travel_time_s"`` for the trafficability-chokepoint
-        reading (see :func:`~roadtraffic.aggregate.assign_speeds` /
-        :func:`~roadtraffic.aggregate.assign_segment_speeds`, which write
+        reading (see :func:`~redlight.aggregate.assign_speeds` /
+        :func:`~redlight.aggregate.assign_segment_speeds`, which write
         it), ``"length_m"`` for the purely geometric reading (always present,
         no pipeline needed), ``None`` for unweighted/topological betweenness,
         or any other numeric edge attribute you've computed yourself.
@@ -171,8 +171,8 @@ def edge_betweenness_centrality(
         If given, also write each edge's score onto ``network.graph`` under
         this attribute name (default: off -- nothing is written unless you
         ask). This lets the result flow straight into
-        :func:`~roadtraffic.mapping.to_geojson`'s ``keep_tags=`` or
-        :func:`~roadtraffic.mapping.plot_speed_map` for a chokepoint map,
+        :func:`~redlight.mapping.to_geojson`'s ``keep_tags=`` or
+        :func:`~redlight.mapping.plot_speed_map` for a chokepoint map,
         without a separate join step. Must not collide with a reserved or
         pipeline-owned attribute name (``edge_id``, ``length_m``,
         ``geometry``, or any of the ``obs_speed_mps``/``travel_time_s``
@@ -200,7 +200,7 @@ def edge_betweenness_centrality(
     betweenness handles this correctly out of the box -- verified directly
     against a hand-built graph with two parallel edges of different weights,
     betweenness is attributed only to the cheaper one, exactly the same
-    "cheapest parallel edge wins" semantics :class:`~roadtraffic.routing.Router`
+    "cheapest parallel edge wins" semantics :class:`~redlight.routing.Router`
     already uses for routing. No separate simple-graph collapse is needed.
     """
     if k is not None and k < 1:
@@ -237,7 +237,7 @@ def network_stats(network, *, area_km2: float | None = None) -> dict:
 
     Parameters
     ----------
-    network : roadtraffic.network.Network
+    network : redlight.network.Network
     area_km2 : float, optional
         Study-area size in square kilometres, supplied by the caller.
         ``Network`` has no stored query-boundary polygon (unlike ``osmnx``,
@@ -256,7 +256,7 @@ def network_stats(network, *, area_km2: float | None = None) -> dict:
             twice, once per direction).
         ``n_physical_roads`` : int
             Distinct physical roads, deduplicated via
-            :meth:`~roadtraffic.network.Network.road_edge_ids` so a two-way
+            :meth:`~redlight.network.Network.road_edge_ids` so a two-way
             road counts once.
         ``n_intersections``, ``n_dead_ends`` : int
             Nodes with physical-road-degree >= 3 / == 1 respectively.
@@ -366,7 +366,7 @@ def connectivity_report(network) -> dict:
     Pure topology -- no speed data or ``weight`` involved. Useful to run
     before routing on an unfamiliar or clipped network, since it distinguishes
     two very different failure modes a caller would otherwise only discover
-    one failed :meth:`~roadtraffic.routing.Router.route` call at a time: a
+    one failed :meth:`~redlight.routing.Router.route` call at a time: a
     *one-way trap* (every node is reachable if you ignore direction, but some
     are unreachable respecting it -- e.g. a neighbourhood only exited via one
     oneway street) versus a *genuinely disconnected* extract (e.g. a clipped
@@ -374,7 +374,7 @@ def connectivity_report(network) -> dict:
 
     Parameters
     ----------
-    network : roadtraffic.network.Network
+    network : redlight.network.Network
 
     Returns
     -------
@@ -409,7 +409,7 @@ def connectivity_report(network) -> dict:
             reaching others; ``is_weakly_connected=False`` means there is no
             way to get between some parts of the network at all, one-way
             restrictions or not. This mirrors the same diagnosis
-            :meth:`~roadtraffic.routing.Router.route` already makes
+            :meth:`~redlight.routing.Router.route` already makes
             internally when a route fails
             (``nx.has_path(graph.to_undirected(...), ...)``), exposed here so
             it can be checked proactively instead of one failed query at a
@@ -421,7 +421,7 @@ def connectivity_report(network) -> dict:
     ``largest_component_edge_ids``:
     ``[(*network.edge_endpoints(eid), eid) for eid in
     result["largest_component_edge_ids"]]``. Reconstructing a full, cleaned
-    :class:`~roadtraffic.network.Network` from that (rebuilding the spatial
+    :class:`~redlight.network.Network` from that (rebuilding the spatial
     index, segment table, and other internal structures
     :meth:`Network._build` maintains) is out of scope here -- this function
     only diagnoses, it doesn't repair.

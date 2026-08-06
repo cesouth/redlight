@@ -13,7 +13,7 @@ before the fence::
 
     <!-- skip-test -->
     ```python
-    net = rt.Network.from_overpass(bbox)   # needs the internet
+    net = rl.Network.from_overpass(bbox)   # needs the internet
     ```
 
 Add ``<!-- skip-test: reason -->`` to record why.
@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 
 REPO = Path(__file__).resolve().parent.parent
 DOC_FILES = [REPO / "README.md"] + sorted((REPO / "docs").glob("*.md"))
@@ -102,29 +102,29 @@ def _build_namespace(workdir: Path):
             })
     pd.DataFrame(rows).to_csv(workdir / "points.csv", index=False)
 
-    net = rt.Network.from_geojson("network.geojson")
-    points = rt.load_points("points.csv", id_col="device_id",
+    net = rl.Network.from_geojson("network.geojson")
+    points = rl.load_points("points.csv", id_col="device_id",
                             time_col="timestamp", lon_col="longitude",
                             lat_col="latitude", speed_col="speed",
                             speed_unit="mph")
-    matched = rt.HMMMatcher(net, max_dist=60).match(points)
-    derived = rt.derive_speeds(net, matched, points,
+    matched = rl.HMMMatcher(net, max_dist=60).match(points)
+    derived = rl.derive_speeds(net, matched, points,
                                pos_accuracy_col="accuracy_m")
     obs = derived["edge_observations"]
-    clean = rt.filter_by_speed(obs, max_speed=80, unit="mph")
-    hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
+    clean = rl.filter_by_speed(obs, max_speed=80, unit="mph")
+    hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="both",
                                  output_unit="mph")
     # default_speed_mps fills edges the sample never traversed, so snippets
     # that route or compute betweenness have a travel_time_s on every edge.
-    seg = rt.assign_segment_speeds(net, clean, statistic="median",
+    seg = rl.assign_segment_speeds(net, clean, statistic="median",
                                    default_speed_mps=11.176)
-    movers = rt.classify_movers(derived["intervals"], threshold=6.0, unit="mph")
-    router = rt.Router(net)
+    movers = rl.classify_movers(derived["intervals"], threshold=6.0, unit="mph")
+    router = rl.Router(net)
     nodes = sorted(net.graph.nodes)
     origin, destination = nodes[0], nodes[-1]
 
     return {
-        "rt": rt, "np": np, "pd": pd,
+        "rl": rl, "np": np, "pd": pd,
         "net": net, "network": net,
         "points": points, "pts": points,
         "matched": matched,

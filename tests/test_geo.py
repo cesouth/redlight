@@ -11,7 +11,7 @@ import math
 import numpy as np
 import pytest
 
-from roadtraffic._geo import geodesic_distance
+from redlight._geo import geodesic_distance
 
 # (lon1, lat1, lon2, lat2, metres). Generated from PROJ 9.5.1's geodesic
 # (Karney), which is the reference implementation these values must match.

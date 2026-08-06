@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _common import prepare, rule  # noqa: E402
 
-import roadtraffic as rt  # noqa: E402
+import redlight as rl  # noqa: E402
 
 
 def main() -> None:
@@ -31,7 +31,7 @@ def main() -> None:
 
     # ------------------------------------------------------------- diagnose
     rule("1. Look at the distribution before choosing anything")
-    feat = rt.mover_features(intervals, unit="mph")
+    feat = rl.mover_features(intervals, unit="mph")
     pct = "speed_p85_mph"
     print(f"{len(feat)} movers, each summarised by its 85th-percentile speed.")
     print("The 85th percentile is high enough to catch a vehicle's")
@@ -46,7 +46,7 @@ def main() -> None:
 
     # ------------------------------------------------------------ threshold
     rule("2. Let the data suggest a cut, then sanity-check it")
-    suggested = rt.suggest_mode_threshold(feat[pct], unit="mph")
+    suggested = rl.suggest_mode_threshold(feat[pct], unit="mph")
     if suggested is None:
         print("No walking-speed population found -- nothing to screen.")
         print("That is the honest answer for an all-vehicle feed, and the")
@@ -58,10 +58,10 @@ def main() -> None:
 
     # -------------------------------------------------------------- classify
     rule("3. Classify movers, then filter observations by the verdict")
-    movers = rt.classify_movers(intervals, threshold=suggested, unit="mph")
+    movers = rl.classify_movers(intervals, threshold=suggested, unit="mph")
     print(movers["mode"].value_counts().to_string())
 
-    kept = rt.filter_by_mode(obs, movers)                  # vehicles only
+    kept = rl.filter_by_mode(obs, movers)                  # vehicles only
     print(f"\nobservations {len(obs):,} -> {len(kept):,}")
 
     # ----------------------------------------------------------- did it work
@@ -77,8 +77,8 @@ def main() -> None:
 
     # ------------------------------------------------------------ the effect
     rule("5. What it did to the answer")
-    all_mph = rt.from_mps(obs.drop_duplicates("interval_id")["speed_mps"], "mph")
-    veh_mph = rt.from_mps(kept.drop_duplicates("interval_id")["speed_mps"], "mph")
+    all_mph = rl.from_mps(obs.drop_duplicates("interval_id")["speed_mps"], "mph")
+    veh_mph = rl.from_mps(kept.drop_duplicates("interval_id")["speed_mps"], "mph")
     print(f"median speed, unscreened: {all_mph.median():5.1f} mph")
     print(f"median speed, screened  : {veh_mph.median():5.1f} mph "
           f"({veh_mph.median() - all_mph.median():+.1f})")

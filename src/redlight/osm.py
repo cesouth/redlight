@@ -2,11 +2,11 @@
 
 Stdlib only (urllib): no new dependencies. Intended for small/medium study
 areas -- for anything larger, download an extract and load it with
-:meth:`roadtraffic.network.Network.from_geojson` / ``from_file`` instead
+:meth:`redlight.network.Network.from_geojson` / ``from_file`` instead
 (Overpass is a shared public service with usage limits).
 
 The entry point most users want is
-:meth:`roadtraffic.network.Network.from_overpass`.
+:meth:`redlight.network.Network.from_overpass`.
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def parse_maxspeed(value) -> float | None:
 
     The posted **legal limit** -- not an observed speed. It is useful as a
     per-edge fallback for roads your GPS data never covered (see
-    :class:`roadtraffic.routing.Router`), but it must never be mistaken for
+    :class:`redlight.routing.Router`), but it must never be mistaken for
     measured traffic: congestion is precisely the gap between the two.
 
     Parameters
@@ -141,7 +141,7 @@ def ways_to_records(overpass_json: dict) -> list:
     -------
     list of (shapely.LineString, dict)
         One entry per way, geometry in WGS84 lon/lat -- the input format
-        :meth:`roadtraffic.network.Network._build` expects. Way tags become
+        :meth:`redlight.network.Network._build` expects. Way tags become
         the dict's properties, plus an ``osm_id`` key holding the way's OSM
         id. Ways with fewer than two geometry points (degenerate/malformed)
         are skipped. This function does no network I/O itself, so it is
@@ -194,7 +194,7 @@ def fetch_network_records(bbox, *, highway_regex: str | None = None,
     payload = urllib.parse.urlencode({"data": query}).encode("utf-8")
     req = urllib.request.Request(
         endpoint, data=payload,
-        headers={"User-Agent": "roadtraffic (+https://github.com/cesouth/roadtraffic)"},
+        headers={"User-Agent": "redlight (+https://github.com/cesouth/redlight)"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))

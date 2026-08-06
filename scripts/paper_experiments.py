@@ -33,7 +33,7 @@ import pandas as pd
 from matplotlib.collections import LineCollection
 from shapely.geometry import Point
 
-import roadtraffic as rt
+import redlight as rl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIG_DIR = os.path.join(HERE, "..", "docs", "figures")
@@ -46,7 +46,7 @@ RESULTS: dict = {}
 
 
 # ------------------------------------------------------------------ scaffolding
-def build_grid_network() -> rt.Network:
+def build_grid_network() -> rl.Network:
     feats = []
     for i in range(GRID_N):
         for j in range(GRID_N):
@@ -66,10 +66,10 @@ def build_grid_network() -> rt.Network:
     path = os.path.join(tempfile.mkdtemp(prefix="rt_paper_"), "grid.json")
     with open(path, "w") as fh:
         json.dump({"type": "FeatureCollection", "features": feats}, fh)
-    return rt.Network.from_geojson(path)
+    return rl.Network.from_geojson(path)
 
 
-def random_walk_edges(net: rt.Network, rng: np.random.Generator,
+def random_walk_edges(net: rl.Network, rng: np.random.Generator,
                       n_edges: int, p_straight: float = 0.6) -> list[int]:
     """A ground-truth path: a random walk that prefers going straight.
 
@@ -101,7 +101,7 @@ def random_walk_edges(net: rt.Network, rng: np.random.Generator,
     return eids
 
 
-def sample_trajectory(net: rt.Network, eids: list[int], *, v_mps: float,
+def sample_trajectory(net: rl.Network, eids: list[int], *, v_mps: float,
                       dt_s: float, sigma_m: float, rng: np.random.Generator,
                       t0: pd.Timestamp):
     """Emit noisy GPS fixes along a true path at constant speed.
@@ -159,7 +159,7 @@ def make_pointset(net, rng, *, n_traj, n_edges, sigma_m, dt_s,
         truths.append(true_edge)
         pid += n
     df = pd.concat(frames, ignore_index=True)
-    return rt.PointSet(df, has_traj=True), np.concatenate(truths)
+    return rl.PointSet(df, has_traj=True), np.concatenate(truths)
 
 
 def road_level_accuracy(net, matched: pd.DataFrame, truth: np.ndarray):
@@ -190,8 +190,8 @@ def experiment_a(net):
         max_dist = max(60.0, 3.0 * sig)
         # k counts SEGMENTS in the KDTree shortlist; at a 150 m search radius
         # k=16 is needed to keep all plausible roads in the candidate set
-        near = rt.NearestMatcher(net, max_dist=max_dist, k=16).match(pts)
-        hmm = rt.HMMMatcher(net, sigma_z=sig, max_dist=max_dist, k=16).match(pts)
+        near = rl.NearestMatcher(net, max_dist=max_dist, k=16).match(pts)
+        hmm = rl.HMMMatcher(net, sigma_z=sig, max_dist=max_dist, k=16).match(pts)
         na, nu = road_level_accuracy(net, near, truth)
         ha, hu = road_level_accuracy(net, hmm, truth)
         res["nearest_acc"].append(na)
@@ -225,17 +225,17 @@ def experiment_b(net, matched_store):
     print("Experiment B: speed recovery vs the analytic error model")
     rows = []
     for sig, (pts, hmm, near) in matched_store.items():
-        out = rt.derive_speeds(net, hmm, pts, default_pos_sigma_m=sig)
+        out = rl.derive_speeds(net, hmm, pts, default_pos_sigma_m=sig)
         iv = out["intervals"]
         # downstream effect of matcher choice: same points, nearest matches
-        ivn = rt.derive_speeds(net, near, pts,
+        ivn = rl.derive_speeds(net, near, pts,
                                default_pos_sigma_m=sig)["intervals"]
         rel_n = (ivn["speed_mps"] - V_TRUE) / V_TRUE
         q = iv[iv["quality"]]
         rel_all = (iv["speed_mps"] - V_TRUE) / V_TRUE
         rel_q = (q["speed_mps"] - V_TRUE) / V_TRUE
         # merged-baseline variant for the same data
-        out_m = rt.derive_speeds(net, hmm, pts, default_pos_sigma_m=sig,
+        out_m = rl.derive_speeds(net, hmm, pts, default_pos_sigma_m=sig,
                                  min_baseline_m=3 * np.sqrt(2) * sig)
         ivm = out_m["intervals"]
         qm = ivm[ivm["quality"]]
@@ -267,8 +267,8 @@ def experiment_b(net, matched_store):
         rng = np.random.default_rng(SEED + 1)
         pts, _tr = make_pointset(net, rng, n_traj=40, n_edges=25,
                                  sigma_m=30.0, dt_s=dt)
-        hmm = rt.HMMMatcher(net, sigma_z=30.0, max_dist=90.0, k=16).match(pts)
-        iv = rt.derive_speeds(net, hmm, pts,
+        hmm = rl.HMMMatcher(net, sigma_z=30.0, max_dist=90.0, k=16).match(pts)
+        iv = rl.derive_speeds(net, hmm, pts,
                               default_pos_sigma_m=30.0)["intervals"]
         rel = (iv["speed_mps"] - V_TRUE) / V_TRUE
         dt_rows.append({"dt_s": dt,
@@ -332,13 +332,13 @@ def experiment_c(net):
     rng = np.random.default_rng(SEED + 2)
     pts, _tr = make_pointset(net, rng, n_traj=240, n_edges=20, sigma_m=15.0,
                              dt_s=10.0, hour_speeds=hour_speeds)
-    hmm = rt.HMMMatcher(net, sigma_z=15.0, max_dist=60.0).match(pts)
-    eo = rt.derive_speeds(net, hmm, pts, default_pos_sigma_m=15.0)["edge_observations"]
+    hmm = rl.HMMMatcher(net, sigma_z=15.0, max_dist=60.0).match(pts)
+    eo = rl.derive_speeds(net, hmm, pts, default_pos_sigma_m=15.0)["edge_observations"]
     eo = eo[eo["quality"]]
-    cls = rt.classify_hours(eo, n_peak=3, n_offpeak=3)
-    info = rt.assign_segment_speeds(net, eo, n_peak=3, n_offpeak=3,
+    cls = rl.classify_hours(eo, n_peak=3, n_offpeak=3)
+    info = rl.assign_segment_speeds(net, eo, n_peak=3, n_offpeak=3,
                                     statistic="median")
-    agg = rt.aggregate_speeds(eo, statistic="median", output_unit="mps")
+    agg = rl.aggregate_speeds(eo, statistic="median", output_unit="mps")
     RESULTS["experiment_c"] = {
         "true_peak_hours": [7, 8, 9, 16, 17, 18],
         "detected_peak_hours": cls["peak_hours"],
@@ -425,8 +425,8 @@ def figure_matching_problem(net):
         rng = np.random.default_rng(seed)
         p, tr = make_pointset(net, rng, n_traj=1, n_edges=10, sigma_m=15.0,
                               dt_s=5.0)
-        nr = rt.NearestMatcher(net, max_dist=60.0, k=16).match(p)
-        hm = rt.HMMMatcher(net, sigma_z=15.0, max_dist=60.0, k=16).match(p)
+        nr = rl.NearestMatcher(net, max_dist=60.0, k=16).match(p)
+        hm = rl.HMMMatcher(net, sigma_z=15.0, max_dist=60.0, k=16).match(p)
         na, _ = road_level_accuracy(net, nr, tr)
         ha, _ = road_level_accuracy(net, hm, tr)
         score = ha - na

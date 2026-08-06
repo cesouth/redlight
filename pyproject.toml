@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "roadtraffic"
+name = "redlight"
 dynamic = ["version"]
 description = "Lightweight, bring-your-own-data trafficability analysis for road networks."
 readme = "README.md"
@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Coordinate systems outside the natively supported set. roadtraffic projects
+# Coordinate systems outside the natively supported set. redlight projects
 # WGS84, the WGS84 UTM zones and Web Mercator in numpy; this extra adds PROJ
 # for everything else -- national grids, non-WGS84 datums, raw-WKT CRS.
 crs = ["pyproj>=3.2"]
@@ -43,8 +43,8 @@ crs = ["pyproj>=3.2"]
 # Overpass work without this. pyogrio>=0.12 requires Python 3.10+; this extra
 # is unavailable on Python 3.9 even though the core package supports it.
 shapefile = ["pyogrio>=0.10"]
-# Static trafficability map rendering (roadtraffic.mapping.plot_speed_map).
-# roadtraffic.mapping.to_geojson needs no extra dependency.
+# Static trafficability map rendering (redlight.mapping.plot_speed_map).
+# redlight.mapping.to_geojson needs no extra dependency.
 mapping = ["matplotlib>=3.5"]
 # Development / testing.
 dev = ["pytest>=7.0", "ruff>=0.4"]
@@ -52,9 +52,9 @@ dev = ["pytest>=7.0", "ruff>=0.4"]
 docs = ["mkdocs>=1.5", "mkdocs-material>=9.0"]
 
 [project.urls]
-Source = "https://github.com/cesouth/roadtraffic"
-Issues = "https://github.com/cesouth/roadtraffic/issues"
-Changelog = "https://github.com/cesouth/roadtraffic/blob/main/CHANGELOG.md"
+Source = "https://github.com/cesouth/redlight"
+Issues = "https://github.com/cesouth/redlight/issues"
+Changelog = "https://github.com/cesouth/redlight/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -62,9 +62,9 @@ where = ["src"]
 [tool.setuptools.package-dir]
 "" = "src"
 
-# Single source of truth for the version: roadtraffic.__version__
+# Single source of truth for the version: redlight.__version__
 [tool.setuptools.dynamic]
-version = { attr = "roadtraffic.__version__" }
+version = { attr = "redlight.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

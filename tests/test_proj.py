@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from roadtraffic import _proj
+from redlight import _proj
 
 # (lon, lat, epsg, easting, northing). Generated from PROJ 9.5.1.
 UTM_REFERENCE = [

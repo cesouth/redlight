@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 
 
 # --------------------------------------------------------------------------- #
@@ -69,7 +69,7 @@ def test_derive_speed_computes_expected_value():
                            + pd.Timedelta(seconds=20 * k)).isoformat()}
             for k in range(6)]
     pd.DataFrame(rows).to_csv(p, index=False)
-    pts = rt.load_points(p, derive_speed=True, id_col="uid")
+    pts = rl.load_points(p, derive_speed=True, id_col="uid")
     assert len(pts) == 6
     speeds = pts.df["speed_mps"].to_numpy()
     assert np.allclose(speeds, speeds[0])           # constant speed
@@ -78,12 +78,12 @@ def test_derive_speed_computes_expected_value():
 
 def test_missing_speed_without_derive_loads_position_only():
     # No speed column and derive_speed=False is valid: position+time-only data
-    # for a matcher + roadtraffic.speeds.derive_speeds pipeline.
+    # for a matcher + redlight.speeds.derive_speeds pipeline.
     tmp = tempfile.mkdtemp()
     p = os.path.join(tmp, "pts.csv")
     pd.DataFrame([{"uid": "A", "lon": -77.3, "lat": 38.68,
                    "timestamp": "2024-06-01T08:00:00"}]).to_csv(p, index=False)
-    pts = rt.load_points(p)
+    pts = rl.load_points(p)
     assert "speed_mps" not in pts.df.columns
     assert len(pts) == 1
 
@@ -93,7 +93,7 @@ def test_missing_lonlat_still_raises():
     p = os.path.join(tmp, "pts.csv")
     pd.DataFrame([{"uid": "A", "timestamp": "2024-06-01T08:00:00"}]).to_csv(p, index=False)
     with pytest.raises(ValueError, match="longitude/latitude"):
-        rt.load_points(p)
+        rl.load_points(p)
 
 
 def test_derive_speed_without_id_raises():
@@ -103,7 +103,7 @@ def test_derive_speed_without_id_raises():
                   {"lon": -77.2, "lat": 38.68, "timestamp": "2024-06-01T08:00:20"}]
                  ).to_csv(p, index=False)
     with pytest.raises(ValueError, match="unique-id"):
-        rt.load_points(p, derive_speed=True)
+        rl.load_points(p, derive_speed=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -113,17 +113,17 @@ def test_save_points_roundtrip_csv_and_geojson():
     tmp = tempfile.mkdtemp()
     src = os.path.join(tmp, "src.csv")
     _write_points_no_speed(src)
-    pts = rt.load_points(src, derive_speed=True, id_col="uid")
+    pts = rl.load_points(src, derive_speed=True, id_col="uid")
 
     csv_out = os.path.join(tmp, "out.csv")
-    rt.save_points(pts, csv_out, speed_unit="mph")
+    rl.save_points(pts, csv_out, speed_unit="mph")
     back = pd.read_csv(csv_out)
     assert {"point_id", "traj_id", "lon", "lat", "time",
             "speed_mps", "speed_mph"}.issubset(back.columns)
     assert len(back) == len(pts)
 
     gj_out = os.path.join(tmp, "out.geojson")
-    rt.save_points(pts, gj_out)
+    rl.save_points(pts, gj_out)
     gj = json.load(open(gj_out))
     assert gj["type"] == "FeatureCollection"
     assert gj["features"][0]["geometry"]["type"] == "Point"
@@ -151,7 +151,7 @@ def test_filter_trajectory_speed_drops_dwell_keeps_slow_moving():
                      "time": (dwell_t + pd.Timedelta(seconds=30 * k)).isoformat(),
                      "speed_mps": 0.0})
     matched = pd.DataFrame(rows)
-    out = rt.filter_trajectory_speed(matched, dwell_radius_m=25, dwell_min_s=120)
+    out = rl.filter_trajectory_speed(matched, dwell_radius_m=25, dwell_min_s=120)
     # the 8 stationary dwell points are removed; every slow-but-moving point kept
     assert len(out) == 10
     assert (out["speed_mps"] == 1.0).all()
@@ -162,14 +162,14 @@ def test_filter_trajectory_speed_drops_missing_speed():
              "time": (pd.Timestamp("2024-06-01 08:00:00")
                       + pd.Timedelta(seconds=5 * k)).isoformat(),
              "speed_mps": (np.nan if k == 2 else 5.0)} for k in range(6)]
-    out = rt.filter_trajectory_speed(pd.DataFrame(rows))
+    out = rl.filter_trajectory_speed(pd.DataFrame(rows))
     assert out["speed_mps"].notna().all()
     assert len(out) == 5
 
 
 def test_filter_trajectory_speed_requires_columns():
     with pytest.raises(ValueError, match="traj_id|columns"):
-        rt.filter_trajectory_speed(pd.DataFrame({"speed_mps": [1.0]}))
+        rl.filter_trajectory_speed(pd.DataFrame({"speed_mps": [1.0]}))
 
 
 # --------------------------------------------------------------------------- #
@@ -179,15 +179,15 @@ def test_classify_hours_override_and_auto():
     tmp = tempfile.mkdtemp()
     src = os.path.join(tmp, "src.csv")
     _write_points_no_speed(src)
-    pts = rt.load_points(src, derive_speed=True, id_col="uid")
-    matched = rt.NearestMatcher(_load_grid(tmp), max_dist=80).match(pts)
-    clean = rt.filter_by_speed(matched, min_speed=1, max_speed=80, unit="mph")
+    pts = rl.load_points(src, derive_speed=True, id_col="uid")
+    matched = rl.NearestMatcher(_load_grid(tmp), max_dist=80).match(pts)
+    clean = rl.filter_by_speed(matched, min_speed=1, max_speed=80, unit="mph")
 
-    over = rt.classify_hours(clean, peak_hours=[7, 8, 9], offpeak_hours=[0, 1, 2])
+    over = rl.classify_hours(clean, peak_hours=[7, 8, 9], offpeak_hours=[0, 1, 2])
     assert over["source"] == "override"
     assert over["peak_hours"] == [7, 8, 9]
 
-    auto = rt.classify_hours(clean, statistic="median")
+    auto = rl.classify_hours(clean, statistic="median")
     assert auto["source"] == "auto"
     # rush hours (slow) should land in the peak block
     assert 8 in auto["peak_hours"] and 17 in auto["peak_hours"]
@@ -198,19 +198,19 @@ def test_segment_speeds_and_period_routing():
     src = os.path.join(tmp, "src.csv")
     _write_points_no_speed(src)
     net = _load_grid(tmp)
-    pts = rt.load_points(src, derive_speed=True, id_col="uid")
-    matched = rt.NearestMatcher(net, max_dist=80).match(pts)
-    clean = rt.filter_by_speed(matched, min_speed=1, max_speed=80, unit="mph")
+    pts = rl.load_points(src, derive_speed=True, id_col="uid")
+    matched = rl.NearestMatcher(net, max_dist=80).match(pts)
+    clean = rl.filter_by_speed(matched, min_speed=1, max_speed=80, unit="mph")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        info = rt.assign_segment_speeds(net, clean, statistic="median")
+        info = rl.assign_segment_speeds(net, clean, statistic="median")
     assert info["coverage"]["overall"] > 0
     for _u, _v, d in net.graph.edges(data=True):
         if d.get("obs_speed_mps_peak") and d.get("obs_speed_mps_offpeak"):
             break
 
-    router = rt.Router(net, default_speed_mps=11.0)
+    router = rl.Router(net, default_speed_mps=11.0)
     o = (-77.30, 38.68)
     d = (-77.30 + 0.015, 38.68)
     r_peak = router.route(o, d, mode="time", period="peak")
@@ -229,7 +229,7 @@ def test_routing_no_path_raises_actionable():
     # add an isolated 2-node component
     net.graph.add_edge((-80.0, 40.0), (-80.001, 40.0),
                        edge_id=10 ** 9, length_m=90.0, geometry=None)
-    router = rt.Router(net)
+    router = rl.Router(net)
     with pytest.raises(ValueError, match="No .* route exists"):
         router.route((-80.0, 40.0), (-77.30, 38.68), mode="distance")
 
@@ -237,7 +237,7 @@ def test_routing_no_path_raises_actionable():
 def test_routing_bad_period_raises():
     tmp = tempfile.mkdtemp()
     net = _load_grid(tmp)
-    router = rt.Router(net)
+    router = rl.Router(net)
     with pytest.raises(ValueError, match="period"):
         router.route((-77.30, 38.68), (-77.285, 38.68), mode="time", period="rush")
 
@@ -246,4 +246,4 @@ def test_routing_bad_period_raises():
 def _load_grid(tmp):
     net_path = os.path.join(tmp, "grid.geojson")
     _grid_geojson(net_path)
-    return rt.Network.from_geojson(net_path)
+    return rl.Network.from_geojson(net_path)

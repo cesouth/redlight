@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sys
 
-import roadtraffic as rt
+import redlight as rl
 
 EXAMPLES_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(EXAMPLES_DIR, "sample_data")
@@ -33,12 +33,12 @@ def require_sample_data() -> None:
 
 def load_network():
     require_sample_data()
-    return rt.Network.from_geojson(os.path.join(DATA, "network.geojson"))
+    return rl.Network.from_geojson(os.path.join(DATA, "network.geojson"))
 
 
 def load_gps():
     require_sample_data()
-    return rt.load_points(
+    return rl.load_points(
         os.path.join(DATA, "points.csv"),
         id_col="device_id", time_col="timestamp",
         lon_col="longitude", lat_col="latitude",
@@ -49,14 +49,14 @@ def load_gps():
 def prepare(*, min_baseline_m: float = 150.0, quiet: bool = False):
     """Load, match and derive speeds. Returns ``(net, points, derived)``.
 
-    ``derived`` is the dict from :func:`roadtraffic.derive_speeds`, with keys
+    ``derived`` is the dict from :func:`redlight.derive_speeds`, with keys
     ``"intervals"`` (one row per independent measurement) and
     ``"edge_observations"`` (one row per interval-and-edge-crossed).
     """
     net = load_network()
     pts = load_gps()
-    matched = rt.HMMMatcher(net, max_dist=50).match(pts)
-    derived = rt.derive_speeds(net, matched, pts,
+    matched = rl.HMMMatcher(net, max_dist=50).match(pts)
+    derived = rl.derive_speeds(net, matched, pts,
                                pos_accuracy_col="accuracy_m",
                                min_baseline_m=min_baseline_m)
     if not quiet:

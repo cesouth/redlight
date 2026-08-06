@@ -18,7 +18,7 @@ import time
 
 import numpy as np
 
-import roadtraffic as rt
+import redlight as rl
 
 GRID_SPACING_DEG = 0.001  # ~111 m
 
@@ -86,21 +86,21 @@ def main():
     tmp = tempfile.mkdtemp(prefix="rt_bench_")
     print(f"grid {args.grid}x{args.grid}, {args.points:,} points, "
           f"{args.trajectories} trajectories")
-    net = rt.Network.from_geojson(build_grid(os.path.join(tmp, "net.json"),
+    net = rl.Network.from_geojson(build_grid(os.path.join(tmp, "net.json"),
                                              args.grid))
     print(f"network: {net.number_of_edges():,} directed edges")
-    pts = rt.load_points(simulate_points(os.path.join(tmp, "pts.csv"),
+    pts = rl.load_points(simulate_points(os.path.join(tmp, "pts.csv"),
                                          args.points, args.trajectories,
                                          args.grid))
     n = len(pts)
 
-    bench("NearestMatcher", lambda: rt.NearestMatcher(net, max_dist=60).match(pts), n)
+    bench("NearestMatcher", lambda: rl.NearestMatcher(net, max_dist=60).match(pts), n)
     if not args.skip_hmm:
         bench("HMMMatcher (serial)",
-              lambda: rt.HMMMatcher(net, max_dist=60, n_jobs=1).match(pts), n)
+              lambda: rl.HMMMatcher(net, max_dist=60, n_jobs=1).match(pts), n)
         if args.n_jobs > 1:
             bench(f"HMMMatcher (n_jobs={args.n_jobs})",
-                  lambda: rt.HMMMatcher(net, max_dist=60,
+                  lambda: rl.HMMMatcher(net, max_dist=60,
                                         n_jobs=args.n_jobs).match(pts), n)
 
 

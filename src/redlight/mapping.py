@@ -1,7 +1,7 @@
 """Turn a speed-annotated road network into a trafficability map.
 
-After running the pipeline up through :func:`roadtraffic.aggregate.assign_speeds`
-or :func:`roadtraffic.aggregate.assign_segment_speeds`, edges of
+After running the pipeline up through :func:`redlight.aggregate.assign_speeds`
+or :func:`redlight.aggregate.assign_segment_speeds`, edges of
 ``network.graph`` carry per-edge observed speeds. This module exposes those
 speeds as map output:
 
@@ -15,7 +15,7 @@ Both accept ``period={"overall", "peak", "offpeak"}`` to export one of the three
 regimes written by ``assign_segment_speeds`` (default: overall, which also works
 with plain ``assign_speeds``).
 
-Units go through :mod:`roadtraffic.units`, so every alias accepted elsewhere in
+Units go through :mod:`redlight.units`, so every alias accepted elsewhere in
 the API (``"km/h"``, ``"m/s"``, ...) works here too and unknown units raise.
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _collect_edges(network, directional: bool, attr: str):
     When ``directional`` is False, the two directed edges of a two-way road are
     merged into one feature (speed = mean of whichever directions carry the
     requested regime). Roads are paired via
-    :meth:`~roadtraffic.network.Network.road_edge_ids`, so distinct parallel
+    :meth:`~redlight.network.Network.road_edge_ids`, so distinct parallel
     roads between the same nodes are NOT conflated.
     """
     if directional:
@@ -103,7 +103,7 @@ def to_geojson(
         recomputed from that merged speed (so the two properties always agree).
     period : {"overall", "peak", "offpeak"}
         Which regime's speeds to export (see
-        :func:`~roadtraffic.aggregate.assign_segment_speeds`).
+        :func:`~redlight.aggregate.assign_segment_speeds`).
     speed_unit : str or SpeedUnit
         Unit for the ``speed`` property. Any alias `units.SpeedUnit.parse`
         accepts (``"mph"``, ``"km/h"``, ``"m/s"``, ...).
@@ -187,15 +187,15 @@ def plot_speed_map(
 
     Observed edges are coloured on ``cmap`` (green = fast/free-flowing, red =
     slow by default); unobserved edges are drawn in ``no_data_color``. Requires
-    matplotlib (``pip install roadtraffic[mapping]``), imported lazily so the
+    matplotlib (``pip install redlight[mapping]``), imported lazily so the
     core package has no hard dependency on it.
 
     Parameters
     ----------
-    network : roadtraffic.network.Network
+    network : redlight.network.Network
         A network that has been annotated with per-edge speeds via
-        :func:`~roadtraffic.aggregate.assign_speeds` or
-        :func:`~roadtraffic.aggregate.assign_segment_speeds`.
+        :func:`~redlight.aggregate.assign_speeds` or
+        :func:`~redlight.aggregate.assign_segment_speeds`.
     path : str, optional
         If given, save the figure here (format inferred from the extension,
         e.g. ``.png``); the matplotlib backend is switched to the
@@ -203,10 +203,10 @@ def plot_speed_map(
         If omitted, the figure is only returned -- useful in a notebook.
     period : {"overall", "peak", "offpeak"}
         Which regime's speeds to colour by (see
-        :func:`~roadtraffic.aggregate.assign_segment_speeds`).
+        :func:`~redlight.aggregate.assign_segment_speeds`).
     speed_unit : str or SpeedUnit
         Unit for the colour scale and colourbar label. Any alias
-        :meth:`~roadtraffic.units.SpeedUnit.parse` accepts.
+        :meth:`~redlight.units.SpeedUnit.parse` accepts.
     cmap : str
         Matplotlib colormap name for the speed scale. Default ``"RdYlGn"``
         (red = slow, yellow = medium, green = fast) -- pick a colormap where

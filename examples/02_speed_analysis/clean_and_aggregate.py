@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _common import prepare, rule  # noqa: E402
 
-import roadtraffic as rt  # noqa: E402
+import redlight as rl  # noqa: E402
 
 
 def main() -> None:
@@ -27,14 +27,14 @@ def main() -> None:
     before = len(obs)
     # max_speed only. mad_outliers with per_edge=True removes robust outliers
     # within each edge, so a fast arterial is not judged against a slow street.
-    clean = rt.filter_by_speed(obs, max_speed=80, unit="mph",
+    clean = rl.filter_by_speed(obs, max_speed=80, unit="mph",
                                mad_outliers=True, per_edge=True)
     print(f"{before:,} -> {len(clean):,} observations "
           f"({before - len(clean):,} removed as >80 mph or per-edge outliers)")
 
-    floored = rt.filter_by_speed(obs, min_speed=10, max_speed=80, unit="mph")
-    kept = rt.from_mps(clean["speed_mps"], "mph").median()
-    lost = rt.from_mps(floored["speed_mps"], "mph").median()
+    floored = rl.filter_by_speed(obs, min_speed=10, max_speed=80, unit="mph")
+    kept = rl.from_mps(clean["speed_mps"], "mph").median()
+    lost = rl.from_mps(floored["speed_mps"], "mph").median()
     print("\nWhat a 10 mph floor would have done instead:")
     print(f"  observations {len(obs):,} -> {len(floored):,}")
     print(f"  median speed {kept:.1f} mph -> {lost:.1f} mph "
@@ -44,7 +44,7 @@ def main() -> None:
 
     # --------------------------------------------------------- aggregation
     rule("Speed by hour of day")
-    hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
+    hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="both",
                                  output_unit="mph", min_samples=3)
     print(hourly[["block_label", "n", "mean_speed", "sem_speed",
                   "median_speed"]].round(2).to_string(index=False))
@@ -54,7 +54,7 @@ def main() -> None:
     # ------------------------------------------------------------- blocks
     rule("Coarser blocks trade resolution for tighter intervals")
     for bh in (1, 4, 8):
-        agg = rt.aggregate_speeds(clean, block_hours=bh, statistic="mean",
+        agg = rl.aggregate_speeds(clean, block_hours=bh, statistic="mean",
                                   output_unit="mph")
         width = (agg["ci95_high"] - agg["ci95_low"]).mean()
         print(f"  {bh:>2}-hour blocks: {len(agg):>2} periods, "

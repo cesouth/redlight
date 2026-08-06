@@ -11,7 +11,7 @@ let trajectory-aware cleaning measure displacement without the original
 PointSet). ``speed_mps`` is carried through too, but only if the input
 ``PointSet`` has one -- points loaded position+time-only (no speed column,
 ``derive_speed=False``) match the same way and feed straight into
-:func:`roadtraffic.speeds.derive_speeds`.
+:func:`redlight.speeds.derive_speeds`.
 
 A fix with no candidate edge within ``max_dist`` is always reported as
 ``edge_id == -1`` -- by both matchers. The HMM still carries its state past
@@ -83,7 +83,7 @@ class _CSRDistCache:
     """Bounded single-source shortest-path distances, cached per source node.
 
     Runs scipy's C Dijkstra on the network's CSR adjacency (see
-    :meth:`roadtraffic.network.Network.csgraph`) instead of pure-Python
+    :meth:`redlight.network.Network.csgraph`) instead of pure-Python
     networkx searches. A result computed with a larger cutoff is reused for
     smaller ones, and the *requested* cutoff is always re-applied to the
     answer, so results never depend on query order. LRU-bounded: each cached
@@ -306,7 +306,7 @@ class HMMMatcher:
                         if node_dist is None:
                             continue  # unreachable within cutoff
                         # Full on-road distance, matching the three-piece sum
-                        # roadtraffic.speeds._hop_distance uses for the same
+                        # redlight.speeds._hop_distance uses for the same
                         # quantity: remaining length of the previous edge past
                         # its snap, the node-to-node middle, then the current
                         # edge's length up to its own snap.

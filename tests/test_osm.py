@@ -1,8 +1,8 @@
 """Offline tests of the Overpass loader (no network access)."""
 import pytest
 
-import roadtraffic as rt
-from roadtraffic import osm
+import redlight as rl
+from redlight import osm
 
 CANNED = {
     "version": 0.6,
@@ -31,7 +31,7 @@ def test_ways_to_records():
 
 def test_records_build_network():
     records = osm.ways_to_records(CANNED)
-    net = rt.Network._build(records, None, True, "oneway", None)
+    net = rl.Network._build(records, None, True, "oneway", None)
     # way 101 is oneway (1 edge), way 102 two-way (2 edges)
     assert net.number_of_edges() == 3
     d = net.edge_data(int(net.edge_ids[0]))
@@ -78,7 +78,7 @@ def test_parse_maxspeed_accepts_every_unit_alias_units_knows(alias):
     """One owner of the unit-alias list. Anything ``units.SpeedUnit`` resolves
     must parse here too -- a narrower private table silently drops a valid
     limit, and a dropped limit sends the Router back to its global default."""
-    from roadtraffic.units import SpeedUnit, to_mps
+    from redlight.units import SpeedUnit, to_mps
     expected = to_mps(50.0, SpeedUnit.parse(alias))
     assert osm.parse_maxspeed(f"50 {alias}") == pytest.approx(expected)
 

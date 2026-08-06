@@ -1,7 +1,7 @@
 import networkx as nx
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 from conftest import line_feature, write_geojson, write_ogr
 
 
@@ -17,7 +17,7 @@ def test_parallel_roads_coexist(tmp_path):
         line_feature([[0, 0], [0.001, 0]], name="straight"),
         line_feature([[0, 0], [0.0005, 0.0004], [0.001, 0]], name="detour"),
     ])
-    net = rt.Network.from_geojson(path)
+    net = rl.Network.from_geojson(path)
     assert net.number_of_edges() == 4  # 2 roads x 2 directions
     u, v = (0.0, 0.0), (0.001, 0.0)
     assert len(net.edges_between(u, v)) == 4
@@ -38,7 +38,7 @@ def test_oneway_forward(tmp_path):
     path = write_geojson(tmp_path / "ow.json", [
         line_feature([[0, 0], [0.001, 0]], oneway="yes"),
     ])
-    net = rt.Network.from_geojson(path)
+    net = rl.Network.from_geojson(path)
     assert net.graph.has_edge((0.0, 0.0), (0.001, 0.0))
     assert not net.graph.has_edge((0.001, 0.0), (0.0, 0.0))
 
@@ -49,7 +49,7 @@ def test_oneway_minus_one_is_reverse(tmp_path):
     path = write_geojson(tmp_path / "owr.json", [
         line_feature([[0, 0], [0.001, 0]], oneway="-1"),
     ])
-    net = rt.Network.from_geojson(path)
+    net = rl.Network.from_geojson(path)
     assert not net.graph.has_edge((0.0, 0.0), (0.001, 0.0))
     assert net.graph.has_edge((0.001, 0.0), (0.0, 0.0))
 
@@ -60,7 +60,7 @@ def test_closed_loop_warns(tmp_path):
         line_feature([[0.002, 0], [0.0025, 0.0005], [0.002, 0]], name="loop"),
     ])
     with pytest.warns(UserWarning, match="closed-loop"):
-        net = rt.Network.from_geojson(path)
+        net = rl.Network.from_geojson(path)
     assert net.number_of_edges() == 2  # only the open road
 
 
@@ -70,7 +70,7 @@ def test_reserved_property_keys_preserved(tmp_path):
         line_feature([[0, 0], [0.001, 0]], length_m=999.0, edge_id=7),
     ])
     with pytest.warns(UserWarning, match="_src"):
-        net = rt.Network.from_geojson(path)
+        net = rl.Network.from_geojson(path)
     d = net.edge_data(int(net.edge_ids[0]))
     assert d["length_m_src"] == 999.0
     assert d["edge_id_src"] == 7
@@ -83,7 +83,7 @@ def test_all_degenerate_raises_clear_error(tmp_path):
     ])
     with pytest.raises(ValueError, match="no usable edges"), \
             pytest.warns(UserWarning, match="closed-loop"):
-        rt.Network.from_geojson(path)
+        rl.Network.from_geojson(path)
 
 
 def test_road_edge_ids_pairs_two_way(straight_net):
@@ -96,7 +96,7 @@ def test_road_edge_ids_oneway_is_single(tmp_path):
     path = write_geojson(tmp_path / "ow2.json", [
         line_feature([[0, 0], [0.001, 0]], oneway="yes"),
     ])
-    net = rt.Network.from_geojson(path)
+    net = rl.Network.from_geojson(path)
     eid = int(net.edge_ids[0])
     assert net.road_edge_ids(eid) == [eid]
 
@@ -119,7 +119,7 @@ def test_length_attr_override(tmp_path):
     path = write_geojson(tmp_path / "la.json", [
         line_feature([[0, 0], [0.001, 0]], seg_len=500.0),
     ])
-    net = rt.Network.from_geojson(path, length_attr="seg_len")
+    net = rl.Network.from_geojson(path, length_attr="seg_len")
     assert net.edge_length(int(net.edge_ids[0])) == 500.0
 
 
@@ -130,11 +130,11 @@ def test_from_file_gpkg_basic(tmp_path):
     path = write_ogr(tmp_path / "basic.gpkg", [
         ([[0, 0], [0.01, 0]], {"highway": "residential"}),
     ])
-    net = rt.Network.from_file(path)
+    net = rl.Network.from_file(path)
     gj_path = write_geojson(tmp_path / "basic.geojson", [
         line_feature([[0, 0], [0.01, 0]], highway="residential"),
     ])
-    net_gj = rt.Network.from_geojson(gj_path)
+    net_gj = rl.Network.from_geojson(gj_path)
     assert net.number_of_edges() == net_gj.number_of_edges() == 2
     assert set(net.graph.nodes()) == set(net_gj.graph.nodes())
 
@@ -145,7 +145,7 @@ def test_from_file_shp_basic(tmp_path):
     path = write_ogr(tmp_path / "basic.shp", [
         ([[0, 0], [0.01, 0]], {"highway": "residential"}),
     ])
-    net = rt.Network.from_file(path)
+    net = rl.Network.from_file(path)
     assert net.number_of_edges() == 2  # two-way by default
     assert net.number_of_nodes() == 2
 
@@ -159,7 +159,7 @@ def test_from_file_reprojects_utm_without_pyproj(tmp_path):
         ([[500000.000000, 5538630.702867],
           [500716.670753, 5538630.750777]], {"highway": "residential"}),
     ], crs="EPSG:32633")
-    net = rt.Network.from_file(path)
+    net = rl.Network.from_file(path)
     lons = sorted(n[0] for n in net.graph.nodes())
     assert lons[0] == pytest.approx(15.0, abs=1e-6)
     assert lons[1] == pytest.approx(15.01, abs=1e-6)
@@ -172,7 +172,7 @@ def test_from_file_reprojects_web_mercator(tmp_path):
         ([[1669792.3618991035, 6446275.841017159],
           [1670905.5568070365, 6446275.841017159]], {"highway": "residential"}),
     ], crs="EPSG:3857")
-    net = rt.Network.from_file(path)
+    net = rl.Network.from_file(path)
     lons = sorted(n[0] for n in net.graph.nodes())
     assert lons[0] == pytest.approx(15.0, abs=1e-6)
 
@@ -180,7 +180,7 @@ def test_from_file_reprojects_web_mercator(tmp_path):
 def test_from_file_wgs84_needs_no_transform(tmp_path):
     """The common case must not touch the projection code at all."""
     pytest.importorskip("pyogrio")
-    from roadtraffic import network as net_mod
+    from redlight import network as net_mod
     assert net_mod._source_to_wgs84("EPSG:4326") is None
     assert net_mod._source_to_wgs84(None) is None
 
@@ -204,7 +204,7 @@ def test_from_file_crs84_needs_no_transform(tmp_path, monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", no_pyproj)
-    net = rt.Network.from_file(path)
+    net = rl.Network.from_file(path)
     lons = sorted(n[0] for n in net.graph.nodes())
     assert lons[0] == pytest.approx(15.0, abs=1e-9)
     assert lons[1] == pytest.approx(15.01, abs=1e-9)
@@ -213,7 +213,7 @@ def test_from_file_crs84_needs_no_transform(tmp_path, monkeypatch):
 def test_from_file_wgs84_3d_needs_no_transform():
     """EPSG:4979 is WGS84 with an ellipsoidal height. force_2d has already
     dropped the Z, so horizontally it is EPSG:4326 and needs no transform."""
-    from roadtraffic import network as net_mod
+    from redlight import network as net_mod
     assert net_mod._source_to_wgs84("EPSG:4979") is None
 
 
@@ -223,7 +223,7 @@ def test_source_to_wgs84_rejects_projcrs_with_nested_crs84_base():
     projection's own (here, UTM-style metres) -- if _source_to_wgs84 returned
     None for this, those eastings/northings would be written straight into
     the network's lon/lat node keys with no transform and no warning."""
-    from roadtraffic import network as net_mod
+    from redlight import network as net_mod
 
     # Same nested-CRS84-in-BASEGEOGCRS structure as the finding's reproduction,
     # with a DATUM node added to BASEGEOGCRS: WKT2 (ISO 19162) requires a
@@ -264,8 +264,8 @@ def test_from_file_exotic_crs_errors_clearly_without_pyproj(tmp_path, monkeypatc
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", no_pyproj)
-    with pytest.raises(ImportError, match=r"roadtraffic\[crs\]"):
-        rt.Network.from_file(path)
+    with pytest.raises(ImportError, match=r"redlight\[crs\]"):
+        rl.Network.from_file(path)
 
 
 def test_metric_crs_error_does_not_recommend_the_crs_that_just_failed(monkeypatch):
@@ -274,7 +274,7 @@ def test_metric_crs_error_does_not_recommend_the_crs_that_just_failed(monkeypatc
     So metric_epsg=3857 must not be told to try 3857."""
     import builtins
 
-    from roadtraffic import network as net_mod
+    from redlight import network as net_mod
 
     real_import = builtins.__import__
 
@@ -287,7 +287,7 @@ def test_metric_crs_error_does_not_recommend_the_crs_that_just_failed(monkeypatc
     with pytest.raises(ImportError) as exc:
         net_mod._metric_crs_and_transformers(3857)
     msg = str(exc.value)
-    assert "roadtraffic[crs]" in msg
+    assert "redlight[crs]" in msg
     # The failing CRS is named once, as the thing that failed -- but never in
     # the list of alternatives.
     suggested = msg.split("natively supported CRS:", 1)[1]
@@ -298,7 +298,7 @@ def test_metric_crs_error_does_not_recommend_the_crs_that_just_failed(monkeypatc
 
 def test_unreadable_crs_message_marks_its_truncation():
     """The excerpt of a long WKT must read as deliberately cut, not corrupt."""
-    from roadtraffic import network as net_mod
+    from redlight import network as net_mod
 
     wkt = ('PROJCS["Some National Grid",GEOGCS["Some Datum",'
            'SPHEROID["WGS 84",6378137,298.257223563]],'
@@ -317,7 +317,7 @@ def test_from_file_layer_param(tmp_path):
     path = tmp_path / "multi.gpkg"
     write_ogr(path, [([[0, 0], [0.01, 0]], {"name": "a"})], layer="layer_a")
     write_ogr(path, [([[1, 1], [1.01, 1]], {"name": "b"})], layer="layer_b")
-    net_b = rt.Network.from_file(str(path), layer="layer_b")
+    net_b = rl.Network.from_file(str(path), layer="layer_b")
     names = {d.get("name") for _u, _v, d in net_b.graph.edges(data=True)}
     assert names == {"b"}
 
@@ -328,7 +328,7 @@ def test_from_file_missing_pyogrio_message(tmp_path, monkeypatch):
     import sys
     monkeypatch.setitem(sys.modules, "pyogrio", None)
     with pytest.raises(ImportError, match="shapefile"):
-        rt.Network.from_file(str(tmp_path / "whatever.gpkg"))
+        rl.Network.from_file(str(tmp_path / "whatever.gpkg"))
 
 
 # --------------------------------------------------------------- maxspeed
@@ -336,7 +336,7 @@ def _net_with(tmp_path, **props):
     path = write_geojson(tmp_path / "ms.json", [
         line_feature([[0, 0], [0.01, 0]], highway="residential", **props),
     ])
-    return rt.Network.from_geojson(path)
+    return rl.Network.from_geojson(path)
 
 
 def test_maxspeed_tag_becomes_numeric_edge_attr(tmp_path):
@@ -361,7 +361,7 @@ def test_unparseable_maxspeed_sets_no_numeric_attr(tmp_path):
 
 def test_metric_crs_is_native_utm_without_pyproj(straight_net):
     """The default path must not construct a pyproj object at all."""
-    from roadtraffic import _proj
+    from redlight import _proj
     assert isinstance(straight_net.crs_metric, _proj.UtmCrs)
     assert straight_net.crs_metric.to_epsg() == 32631
 
@@ -372,7 +372,7 @@ def test_non_utm_metric_epsg_errors_clearly_without_pyproj(tmp_path, monkeypatch
     not -- never with a bare ModuleNotFoundError."""
     import builtins
 
-    from roadtraffic import network as net_mod
+    from redlight import network as net_mod
 
     path = write_geojson(tmp_path / "n.json", [
         line_feature([[15.0, 50.0], [15.01, 50.0]], highway="residential"),
@@ -385,5 +385,5 @@ def test_non_utm_metric_epsg_errors_clearly_without_pyproj(tmp_path, monkeypatch
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", no_pyproj)
-    with pytest.raises(ImportError, match=r"roadtraffic\[crs\]"):
+    with pytest.raises(ImportError, match=r"redlight\[crs\]"):
         net_mod.Network.from_geojson(path, metric_epsg=27700)

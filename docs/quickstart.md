@@ -2,7 +2,7 @@
 
 ## The pipeline
 
-`roadtraffic` follows a fixed flow. Every stage hands a clean object to the
+`redlight` follows a fixed flow. Every stage hands a clean object to the
 next:
 
 ```
@@ -27,7 +27,7 @@ Any of:
 
 - **GeoJSON** of `LineString` / `MultiLineString` features (works with the core
   install).
-- **Shapefile** or **GeoPackage** (`pip install roadtraffic[shapefile]`,
+- **Shapefile** or **GeoPackage** (`pip install redlight[shapefile]`,
   needs Python 3.10+).
 
 Optional feature properties that the package understands: a one-way flag
@@ -35,9 +35,9 @@ Optional feature properties that the package understands: a one-way flag
 attributes you want preserved on edges (e.g. OSM `highway`, `maxspeed`).
 
 ```python
-import roadtraffic as rt
-net = rt.Network.from_geojson("network.geojson")          # GeoJSON
-# net = rt.Network.from_file("network.gpkg")              # needs [shapefile]
+import redlight as rl
+net = rl.Network.from_geojson("network.geojson")          # GeoJSON
+# net = rl.Network.from_file("network.gpkg")              # needs [shapefile]
 ```
 
 ### GPS points
@@ -47,7 +47,7 @@ timestamp, a speed, and optionally a trajectory/unit id. Column names are
 auto-detected from common spellings; override any of them explicitly.
 
 ```python
-pts = rt.load_points(
+pts = rl.load_points(
     "points.csv",
     speed_unit="kph",        # mph | kph | mps
     id_col="vehicle_id",     # needed if you want HMM matching
@@ -62,16 +62,16 @@ If timestamps are numeric epochs, pass `timestamp_unit="s"` (or `ms`/`us`/`ns`).
    GPS — see step 2 and [statistics §10](statistics.md#10-on-road-speed-derivation-from-matched-trajectories)).
    Just omit `speed_col` — `load_points` doesn't require it:
    ```python
-   pts = rt.load_points("points.csv", id_col="vehicle_id")  # no speed_col needed
+   pts = rl.load_points("points.csv", id_col="vehicle_id")  # no speed_col needed
    ```
 2. **`derive_speed=True`** computes a per-point speed directly from successive
    straight-line GPS positions (requires `id_col`), without needing a network
    or a matching step first. Simpler, but biased low on curves and by noise
    over short gaps — see [statistics §7](statistics.md). Persist the result
-   with `rt.save_points(pts, "with_speed.csv")`.
+   with `rl.save_points(pts, "with_speed.csv")`.
    ```python
-   pts = rt.load_points("points.csv", derive_speed=True, id_col="vehicle_id")
-   rt.save_points(pts, "points_with_speed.csv", speed_unit="mph")
+   pts = rl.load_points("points.csv", derive_speed=True, id_col="vehicle_id")
+   rl.save_points(pts, "points_with_speed.csv", speed_unit="mph")
    ```
 
 ---
@@ -86,9 +86,9 @@ If timestamps are numeric epochs, pass `timestamp_unit="s"` (or `ms`/`us`/`ns`).
 | Best for | dense data, simple networks, quick looks | ordered trajectories, dense urban grids |
 
 ```python
-matched = rt.NearestMatcher(net, max_dist=50).match(pts)
+matched = rl.NearestMatcher(net, max_dist=50).match(pts)
 # or
-matched = rt.HMMMatcher(net, sigma_z=6, beta=30).match(pts)
+matched = rl.HMMMatcher(net, sigma_z=6, beta=30).match(pts)
 ```
 
 Both return the same columns, so everything after this point is identical.
@@ -106,7 +106,7 @@ on-road displacement between consecutive matched fixes
 ([statistics §10](statistics.md#10-on-road-speed-derivation-from-matched-trajectories)):
 
 ```python
-res = rt.derive_speeds(
+res = rl.derive_speeds(
     net, matched, pts,
     pos_accuracy_col="accuracy",   # per-fix metres, if you have it
     default_pos_sigma_m=20.0,      # fallback if you don't
@@ -131,7 +131,7 @@ use it in place of `matched` from here on when you derived speed this way.
 ## 3. Cleaning
 
 ```python
-clean = rt.filter_by_speed(
+clean = rl.filter_by_speed(
     matched,
     min_speed=2, max_speed=80, unit="mph",  # hard physical bounds
     mad_outliers=True, per_edge=True,        # robust outlier removal per edge
@@ -147,7 +147,7 @@ parked *dwells* but keeps slow-but-moving congestion, so you don't bias segment
 speeds upward by deleting the traffic you're studying ([statistics §8](statistics.md)):
 
 ```python
-clean = rt.filter_trajectory_speed(matched, dwell_radius_m=25, dwell_min_s=120)
+clean = rl.filter_trajectory_speed(matched, dwell_radius_m=25, dwell_min_s=120)
 ```
 
 ---
@@ -156,11 +156,11 @@ clean = rt.filter_trajectory_speed(matched, dwell_radius_m=25, dwell_min_s=120)
 
 ```python
 # Hourly, both mean and median, reported in mph
-hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
+hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="both",
                              output_unit="mph")
 
 # 6-hour blocks (00–06, 06–12, 12–18, 18–24), mean only
-blocks = rt.aggregate_speeds(clean, block_hours=6, statistic="mean")
+blocks = rl.aggregate_speeds(clean, block_hours=6, statistic="mean")
 ```
 
 The mean path reports `sem_speed` and a 95% CI; the median path reports the IQR.
@@ -171,16 +171,16 @@ The mean path reports `sem_speed` and a 95% CI; the median path reports the IQR.
 ## 5. Peaks and routing
 
 ```python
-peaks = rt.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
+peaks = rl.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
 for r in peaks["peak"]:        # slowest = busiest
     print(r["block_label"], r["median_speed"])
 
 # Three per-segment speeds (overall / peak / off-peak), blocks auto-detected,
 # then route on a chosen regime. Pooling into two blocks keeps far more data per
 # segment than 24 hourly slices — which is what makes time routing stable.
-info = rt.assign_segment_speeds(net, clean, statistic="median")
+info = rl.assign_segment_speeds(net, clean, statistic="median")
 print("peak hours:", info["peak_hours"], "coverage:", info["coverage"])
-router = rt.Router(net)
+router = rl.Router(net)
 res = router.route((-77.30, 38.68), (-77.27, 38.71), mode="time", period="peak")
 print(res["travel_time_s"], "s; edges on default speed:", res["n_edges_default"])
 
@@ -212,33 +212,33 @@ onto the graph, export it as a map:
 
 ```python
 # GeoJSON for QGIS / Kepler / Leaflet / Mapbox -- no extra dependency
-rt.to_geojson(net, "speeds.geojson", speed_unit="mph")
+rl.to_geojson(net, "speeds.geojson", speed_unit="mph")
 
-# Quick static PNG, coloured by speed (needs: pip install roadtraffic[mapping])
-rt.plot_speed_map(net, "speeds.png", speed_unit="mph")
+# Quick static PNG, coloured by speed (needs: pip install redlight[mapping])
+rl.plot_speed_map(net, "speeds.png", speed_unit="mph")
 ```
 
 ---
 
 ## 7. Network analysis
 
-`roadtraffic.analysis` answers structural questions about the network
+`redlight.analysis` answers structural questions about the network
 itself — independent of the speed pipeline above, except where noted:
 
 ```python
 # Which roads are chokepoints? Needs assign_speeds/assign_segment_speeds to
 # have run first (every edge needs a travel_time_s); write it onto the graph
 # so it shows up in to_geojson()'s keep_tags / plot_speed_map for free.
-bc = rt.edge_betweenness_centrality(net, weight="travel_time_s",
+bc = rl.edge_betweenness_centrality(net, weight="travel_time_s",
                                     write_attr="betweenness")
 
 # Basic descriptive stats -- no speed pipeline needed.
-stats = rt.network_stats(net)
+stats = rl.network_stats(net)
 print(stats["circuity_avg"], stats["n_intersections"], stats["streets_per_node_avg"])
 
 # Is the network one routable piece? Also no speed pipeline needed -- run
 # this before routing on an unfamiliar or clipped network.
-report = rt.connectivity_report(net)
+report = rl.connectivity_report(net)
 if not report["is_strongly_connected"]:
     print("stranded edges:", report["stranded_edge_ids"])
 ```
@@ -253,6 +253,6 @@ it wrong is worse than an error here).
 ## Next steps
 
 - Worked, runnable scripts:
-  [`examples/`](https://github.com/cesouth/roadtraffic/tree/main/examples).
+  [`examples/`](https://github.com/cesouth/redlight/tree/main/examples).
 - Why each number is what it is: [statistics](statistics.md).
 - Full signatures: [API reference](api.md).

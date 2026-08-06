@@ -16,12 +16,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _common import prepare, rule  # noqa: E402
 
-import roadtraffic as rt  # noqa: E402
+import redlight as rl  # noqa: E402
 
 
 def main() -> None:
     net, pts, derived = prepare()
-    clean = rt.filter_by_speed(derived["edge_observations"], max_speed=80,
+    clean = rl.filter_by_speed(derived["edge_observations"], max_speed=80,
                                unit="mph", mad_outliers=True, per_edge=True)
 
     # ----------------------------------------------------------- structure
@@ -29,7 +29,7 @@ def main() -> None:
     # The sample grid spans about 2.67 km N-S by 3.12 km E-W. Densities are
     # only as good as the area you supply, so measure your study area rather
     # than eyeballing it -- the library cannot check this number for you.
-    stats = rt.network_stats(net, area_km2=8.3)
+    stats = rl.network_stats(net, area_km2=8.3)
     print(f"  nodes                  {stats['n_nodes']:,}")
     print(f"  directed edges         {stats['n_edges']:,}")
     print(f"  physical roads         {stats['n_physical_roads']:,}")
@@ -47,7 +47,7 @@ def main() -> None:
 
     # -------------------------------------------------------- connectivity
     rule("Connectivity")
-    conn = rt.connectivity_report(net)
+    conn = rl.connectivity_report(net)
     print(f"  strongly connected     {conn['is_strongly_connected']}")
     print(f"  weakly connected       {conn['is_weakly_connected']}")
     print(f"  strong components      {conn['n_strongly_connected_components']}")
@@ -62,9 +62,9 @@ def main() -> None:
 
     # -------------------------------------------------------- chokepoints
     rule("Chokepoints, weighted by measured travel time")
-    rt.assign_segment_speeds(net, clean, statistic="median")
+    rl.assign_segment_speeds(net, clean, statistic="median")
     try:
-        bc = rt.edge_betweenness_centrality(net, weight="travel_time_s")
+        bc = rl.edge_betweenness_centrality(net, weight="travel_time_s")
     except ValueError as exc:
         print(f"skipped: {exc}")
         return

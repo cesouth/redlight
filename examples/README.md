@@ -6,7 +6,7 @@ sample dataset, so you can run them in any order once the data exists.
 ## Start here
 
 ```bash
-pip install -e .            # or: pip install roadtraffic
+pip install -e .            # or: pip install redlight
 python examples/00_setup/generate_sample_data.py
 python examples/01_basics/load_match_derive.py
 ```

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 
 
 def build_grid_geojson(path, n=6, spacing_deg=0.005, lon0=-77.30, lat0=38.68):
@@ -84,53 +84,53 @@ def main():
     simulate_points(pts_path)
 
     print("== Load network ==")
-    net = rt.Network.from_geojson(net_path)
+    net = rl.Network.from_geojson(net_path)
     print(f"nodes={net.number_of_nodes()} edges={net.number_of_edges()} "
           f"crs={net.crs_metric.to_epsg()}")
 
     print("\n== Load points ==")
-    pts = rt.load_points(pts_path, speed_unit="mph")
+    pts = rl.load_points(pts_path, speed_unit="mph")
     print(f"loaded {len(pts)} points, has_traj={pts.has_traj}")
 
     print("\n== Nearest matcher ==")
-    nm = rt.NearestMatcher(net, max_dist=60)
+    nm = rl.NearestMatcher(net, max_dist=60)
     m_near = nm.match(pts)
     print(f"matched edges (nearest): "
           f"{(m_near['edge_id'] != -1).sum()}/{len(m_near)}")
 
     print("\n== HMM matcher ==")
-    hm = rt.HMMMatcher(net, sigma_z=6, beta=30, max_dist=60)
+    hm = rl.HMMMatcher(net, sigma_z=6, beta=30, max_dist=60)
     m_hmm = hm.match(pts)
     print(f"matched edges (hmm): {(m_hmm['edge_id'] != -1).sum()}/{len(m_hmm)}")
 
     print("\n== Filter ==")
-    clean = rt.filter_by_speed(m_near, min_speed=2, max_speed=80, unit="mph",
+    clean = rl.filter_by_speed(m_near, min_speed=2, max_speed=80, unit="mph",
                                mad_outliers=True, per_edge=True)
     print(f"after filter: {len(clean)} (from {len(m_near)})")
 
     print("\n== Aggregate hourly (both stats) ==")
-    agg = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
+    agg = rl.aggregate_speeds(clean, block_hours=1, statistic="both",
                               output_unit="mph")
     print(agg[["block_label", "n", "mean_speed", "sem_speed",
                "median_speed", "iqr_speed"]].to_string(index=False))
 
     print("\n== Aggregate 6-hour blocks ==")
-    agg6 = rt.aggregate_speeds(clean, block_hours=6, statistic="mean",
+    agg6 = rl.aggregate_speeds(clean, block_hours=6, statistic="mean",
                                output_unit="mph")
     print(agg6[["block_label", "n", "mean_speed", "ci95_low",
                 "ci95_high"]].to_string(index=False))
 
     print("\n== Peak analysis ==")
-    pk = rt.peak_analysis(agg, statistic="mean", n_peak=2, n_offpeak=2)
+    pk = rl.peak_analysis(agg, statistic="mean", n_peak=2, n_offpeak=2)
     print("peak (slowest):", [(r["block_label"], round(r["mean_speed"], 1))
                               for r in pk["peak"]])
     print("off-peak (fastest):", [(r["block_label"], round(r["mean_speed"], 1))
                                   for r in pk["off_peak"]])
 
     print("\n== Assign speeds + route ==")
-    info = rt.assign_speeds(net, clean, statistic="median")
+    info = rl.assign_speeds(net, clean, statistic="median")
     print(f"edges observed: {info['n_edges_observed']}/{info['n_edges_total']}")
-    router = rt.Router(net)
+    router = rl.Router(net)
     o = (-77.30, 38.68)
     d = (-77.30 + 0.025, 38.68 + 0.025)
     r_time = router.route(o, d, mode="time")
@@ -175,16 +175,16 @@ def test_mode_screening_recovers_vehicle_only_speeds(straight_net, make_points_c
 
     def intervals(rows, name):
         path = make_points_csv(rows, name=name)
-        pts = rt.load_points(path, id_col="id")
-        matched = rt.HMMMatcher(straight_net, max_dist=60).match(pts)
-        return rt.derive_speeds(straight_net, matched, pts)["intervals"]
+        pts = rl.load_points(path, id_col="id")
+        matched = rl.HMMMatcher(straight_net, max_dist=60).match(pts)
+        return rl.derive_speeds(straight_net, matched, pts)["intervals"]
 
     truth = intervals(veh_rows, "veh.csv")["speed_mps"].median()
     mixed = intervals(veh_rows + ped_rows, "mixed.csv")
     contaminated = mixed["speed_mps"].median()
 
-    movers = rt.classify_movers(mixed, threshold=3.0, unit="mps")
-    screened = rt.filter_by_mode(mixed, movers)["speed_mps"].median()
+    movers = rl.classify_movers(mixed, threshold=3.0, unit="mps")
+    screened = rl.filter_by_mode(mixed, movers)["speed_mps"].median()
 
     assert contaminated < truth * 0.9          # contamination is real
     assert abs(screened - truth) < abs(contaminated - truth)

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from roadtraffic.units import SpeedUnit, from_mps, to_mps
+from redlight.units import SpeedUnit, from_mps, to_mps
 
 
 def test_parse_aliases():

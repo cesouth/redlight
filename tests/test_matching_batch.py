@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 from conftest import drive_along_road
-from roadtraffic.matching import _CSRDistCache
+from redlight.matching import _CSRDistCache
 
 
 def _random_metric_points(net, n=300, spread_deg=0.0035, seed=7):
@@ -73,7 +73,7 @@ def test_csgraph_min_over_parallel_edges(tmp_path):
         line_feature([[0, 0], [0.001, 0]], name="straight"),
         line_feature([[0, 0], [0.0005, 0.0006], [0.001, 0]], name="detour"),
     ])
-    net = rt.Network.from_geojson(path)
+    net = rl.Network.from_geojson(path)
     csr, node_int, _ = net.csgraph()
     u, v = node_int[(0.0, 0.0)], node_int[(0.001, 0.0)]
     # CSR keeps the min length over parallel edges, matching Dijkstra's choice
@@ -129,13 +129,13 @@ def _hmm_scenario_points(make_points_csv):
                  "time": "2026-06-01T08:00:40"})
     rows += drive_along_road(3, traj="d", start_lon=0.0012,
                              t0="2026-06-01 08:00:50")
-    return rt.load_points(make_points_csv(rows))
+    return rl.load_points(make_points_csv(rows))
 
 
 def test_hmm_parallel_equals_serial(grid_net, make_points_csv):
     pts = _hmm_scenario_points(make_points_csv)
-    serial = rt.HMMMatcher(grid_net, max_dist=60, n_jobs=1).match(pts)
-    parallel = rt.HMMMatcher(grid_net, max_dist=60, n_jobs=2).match(pts)
+    serial = rl.HMMMatcher(grid_net, max_dist=60, n_jobs=1).match(pts)
+    parallel = rl.HMMMatcher(grid_net, max_dist=60, n_jobs=2).match(pts)
     a = serial.sort_values("point_id").reset_index(drop=True)
     b = parallel.sort_values("point_id").reset_index(drop=True)
     pd.testing.assert_frame_equal(a, b)
@@ -143,14 +143,14 @@ def test_hmm_parallel_equals_serial(grid_net, make_points_csv):
 
 def test_hmm_n_jobs_minus_one_runs(grid_net, make_points_csv):
     pts = _hmm_scenario_points(make_points_csv)
-    out = rt.HMMMatcher(grid_net, max_dist=60, n_jobs=-1).match(pts)
+    out = rl.HMMMatcher(grid_net, max_dist=60, n_jobs=-1).match(pts)
     assert len(out) == len(pts)
 
 
 def test_hmm_matcher_pickle_drops_cache(grid_net, make_points_csv):
     import pickle
     pts = _hmm_scenario_points(make_points_csv)
-    m = rt.HMMMatcher(grid_net, max_dist=60)
+    m = rl.HMMMatcher(grid_net, max_dist=60)
     m.match(pts)  # warm the cache
     clone = pickle.loads(pickle.dumps(m))
     assert clone._dist_cache is None

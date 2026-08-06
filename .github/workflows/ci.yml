@@ -80,7 +80,7 @@ jobs:
       - name: Test suite passes from inside the sdist
         run: |
           mkdir -p /tmp/sdist && tar -xzf dist/*.tar.gz -C /tmp/sdist
-          cd /tmp/sdist/roadtraffic-*
+          cd /tmp/sdist/redlight-*
           python -m pip install ".[dev,mapping]"
           pytest -q
 
@@ -123,6 +123,6 @@ jobs:
       - name: Assert pyproj is genuinely absent
         run: |
           ! pip show pyproj
-          python -c "import roadtraffic; print(roadtraffic.__version__)"
+          python -c "import redlight; print(redlight.__version__)"
       - name: Run the suite
         run: pytest -q

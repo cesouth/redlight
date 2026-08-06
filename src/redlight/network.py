@@ -36,7 +36,7 @@ from . import _proj
 try:  # networkx is a core dependency
     import networkx as nx
 except ImportError as exc:  # pragma: no cover
-    raise ImportError("roadtraffic requires networkx. pip install networkx") from exc
+    raise ImportError("redlight requires networkx. pip install networkx") from exc
 
 
 def _auto_utm_epsg(lon: float, lat: float) -> int:
@@ -81,9 +81,9 @@ def _require_pyproj(what: str, supported: str):
         import pyproj
     except ImportError as exc:
         raise ImportError(
-            f"{what} needs pyproj, which roadtraffic does not install by "
+            f"{what} needs pyproj, which redlight does not install by "
             f"default. Either install the extra:\n"
-            f"    pip install 'roadtraffic[crs]'\n"
+            f"    pip install 'redlight[crs]'\n"
             f"or use a natively supported CRS: {supported}."
         ) from exc
     return pyproj
@@ -331,7 +331,7 @@ class Network:
         """Load a network from Shapefile (``.shp``) or GeoPackage (``.gpkg``).
 
         Requires the optional ``shapefile`` extra (``pip install
-        roadtraffic[shapefile]``; needs Python 3.10+), which pulls in
+        redlight[shapefile]``; needs Python 3.10+), which pulls in
         ``pyogrio`` for reading non-GeoJSON vector formats -- GeoJSON itself
         needs no extra dependency and is dispatched straight to
         :meth:`from_geojson` without importing ``pyogrio`` at all. Only
@@ -370,7 +370,7 @@ class Network:
         except ImportError as exc:
             raise ImportError(
                 "Reading Shapefile/GPKG requires the optional 'shapefile' extra. "
-                "Install with: pip install roadtraffic[shapefile]"
+                "Install with: pip install redlight[shapefile]"
             ) from exc
         # force_2d=True: drop any Z coordinate, matching the (x, y)-only
         # reprojection below (2D distance-correct math is all this package does).
@@ -430,7 +430,7 @@ class Network:
             mean forward-only, ``"-1"``/``"reverse"`` mean reverse-only.
         highway_regex : str, optional
             Regex of OSM ``highway`` values to include. Defaults to drivable
-            road classes (see :data:`roadtraffic.osm.DEFAULT_HIGHWAY_REGEX`).
+            road classes (see :data:`redlight.osm.DEFAULT_HIGHWAY_REGEX`).
         url : str, optional
             Overpass endpoint (default: the public overpass-api.de instance).
         timeout : float
@@ -475,7 +475,7 @@ class Network:
         crs_metric, fwd, inv = _metric_crs_and_transformers(metric_epsg)
 
         # Local import (once, not per record): keeps urllib -- pulled in by
-        # osm.py's Overpass client -- off the cost of importing roadtraffic,
+        # osm.py's Overpass client -- off the cost of importing redlight,
         # matching the deferred import in from_overpass below.
         from .osm import parse_maxspeed
 

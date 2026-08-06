@@ -38,7 +38,7 @@ def _require_speed_mps(df: pd.DataFrame, fn_name: str) -> None:
 
     Shared by every function in this module (and ``cleaning.py``) that needs
     a speed to operate on, so points loaded without a speed column
-    (position+time only -- see :func:`roadtraffic.points.load_points`) get a
+    (position+time only -- see :func:`redlight.points.load_points`) get a
     consistent, specific error message pointing at the fix instead of a
     generic pandas ``KeyError`` deep in a groupby.
     """
@@ -46,7 +46,7 @@ def _require_speed_mps(df: pd.DataFrame, fn_name: str) -> None:
         raise ValueError(
             f"{fn_name} needs a 'speed_mps' column. If points were loaded "
             "without a speed column, run a matcher then "
-            "roadtraffic.speeds.derive_speeds first and pass its "
+            "redlight.speeds.derive_speeds first and pass its "
             "'edge_observations' frame here."
         )
 
@@ -253,7 +253,7 @@ def aggregate_speeds(
         Bins with fewer than this many observations are dropped.
     dedup_intervals : bool
         When aggregating network-wide (``by_edge=False``) and the input carries
-        an ``interval_id`` column (from :func:`roadtraffic.speeds.derive_speeds`),
+        an ``interval_id`` column (from :func:`redlight.speeds.derive_speeds`),
         drop duplicate rows of the same interval first, so an interval that
         traversed many edges counts once. Default True. Ignored for
         ``by_edge=True``, where the per-edge duplication is the point.
@@ -271,7 +271,7 @@ def aggregate_speeds(
     weight_by_variance : bool
         Weight each observation by ``1 / speed_var`` when computing the mean,
         instead of counting every observation equally. ``speed_var`` is the
-        per-interval speed uncertainty :func:`~roadtraffic.speeds.derive_speeds`
+        per-interval speed uncertainty :func:`~redlight.speeds.derive_speeds`
         already reports (``speed_sigma_mps ** 2``), which grows as the GPS noise
         floor divided by the interval's duration -- so a speed measured over a
         long, clean baseline stops being averaged on equal terms with a noisy
@@ -690,7 +690,7 @@ def assign_segment_speeds(
     them onto the graph as ``obs_speed_mps_{overall,peak,offpeak}`` with matching
     ``travel_time_s_{overall,peak,offpeak}``. The overall values are also written
     to the plain ``obs_speed_mps`` / ``travel_time_s`` so a default
-    :class:`~roadtraffic.routing.Router` keeps working unchanged.
+    :class:`~redlight.routing.Router` keeps working unchanged.
 
     Pooling into two broad blocks (rather than 24 hourly slices) is deliberate:
     it keeps far more observations per segment, which is what makes per-edge
@@ -720,7 +720,7 @@ def assign_segment_speeds(
         pooling per-edge speeds -- e.g. ``"weekday"`` / ``"weekend"`` /
         ``[0, 1, 2]``. Build one annotated network per day-type to compare
         weekday and weekend congestion on the same segments (:func:`to_geojson`
-        / :func:`~roadtraffic.mapping.plot_speed_map`). See
+        / :func:`~redlight.mapping.plot_speed_map`). See
         :func:`aggregate_speeds` for the accepted forms; default ``None`` =
         every day. ``day_type_report`` wraps this comparison up for you.
 
@@ -820,7 +820,7 @@ def assign_speeds(
     """Compute a representative speed per edge and write it onto the graph.
 
     Stores the result as edge attribute ``obs_speed_mps`` -- always m/s, since
-    this is what :class:`~roadtraffic.routing.Router` reads -- and
+    this is what :class:`~redlight.routing.Router` reads -- and
     ``travel_time_s = length_m / obs_speed_mps``. Edges with no observations
     get ``default_speed_mps`` if provided, else are left without a travel time
     (router can fall back to length). Unlike :func:`aggregate_speeds`, there is
@@ -1099,12 +1099,12 @@ def congestion_report(
     fast a road is *allowed* to run and how fast it *actually* ran. A ratio of
     1.0 means traffic moved at the posted limit; 0.45 means it crawled at 45%
     of it. Needs the ``maxspeed_mps`` edge attribute, which
-    :meth:`~roadtraffic.network.Network.from_geojson` and friends parse from an
+    :meth:`~redlight.network.Network.from_geojson` and friends parse from an
     OSM ``maxspeed`` tag at load time.
 
     Parameters
     ----------
-    network : roadtraffic.network.Network
+    network : redlight.network.Network
         Supplies the posted limits. Edges with no usable ``maxspeed_mps``
         (absent, or a NaN/non-positive value from the caller's own source
         data) are reported with a NaN limit and ratio rather than dropped, so

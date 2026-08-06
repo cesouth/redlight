@@ -1,4 +1,4 @@
-site_name: roadtraffic
+site_name: redlight
 site_description: Lightweight, bring-your-own-data trafficability analysis for road networks.
 theme:
   name: material

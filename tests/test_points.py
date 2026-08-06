@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 from conftest import drive_along_road
 
 
@@ -12,7 +12,7 @@ def test_basic_load_autodetect(make_points_csv):
         {"Longitude": 1.0, "Latitude": 2.0, "Timestamp": "2026-06-01T08:00:00",
          "Speed": 30.0, "track_id": "a"},
     ])
-    pts = rt.load_points(path)
+    pts = rl.load_points(path)
     assert list(pts.df["lon"]) == [1.0]
     assert pts.has_traj
     # default unit is mph
@@ -24,7 +24,7 @@ def test_speed_unit_inferred_from_column_name(make_points_csv):
     path = make_points_csv([
         {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T08:00:00", "speed_kph": 100.0},
     ])
-    pts = rt.load_points(path)
+    pts = rl.load_points(path)
     assert pts.df["speed_mps"][0] == pytest.approx(100 / 3.6)
 
 
@@ -34,7 +34,7 @@ def test_speed_unit_inferred_from_alias_column_name(make_points_csv):
     path = make_points_csv([
         {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T08:00:00", "speed_kmph": 100.0},
     ])
-    pts = rt.load_points(path, speed_col="speed_kmph")
+    pts = rl.load_points(path, speed_col="speed_kmph")
     assert pts.df["speed_mps"][0] == pytest.approx(100 / 3.6)
 
 
@@ -43,7 +43,7 @@ def test_explicit_unit_beats_column_name_with_warning(make_points_csv):
         {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T08:00:00", "speed_kph": 100.0},
     ])
     with pytest.warns(UserWarning, match="contradicts"):
-        pts = rt.load_points(path, speed_unit="mph")
+        pts = rl.load_points(path, speed_unit="mph")
     assert pts.df["speed_mps"][0] == pytest.approx(100 * 0.44704)
 
 
@@ -52,7 +52,7 @@ def test_tz_converts_utc_to_local_clock(make_points_csv):
     path = make_points_csv([
         {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T13:02:11Z"},
     ])
-    pts = rt.load_points(path, tz="America/New_York")
+    pts = rl.load_points(path, tz="America/New_York")
     t = pd.to_datetime(pts.df["time"])
     assert t.dt.hour[0] == 9          # 13:02 UTC == 09:02 EDT
     assert getattr(t.dt, "tz", None) is None  # stored naive local
@@ -63,7 +63,7 @@ def test_aware_without_tz_warns(make_points_csv):
         {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T13:02:11Z"},
     ])
     with pytest.warns(UserWarning, match="timezone-aware"):
-        pts = rt.load_points(path)
+        pts = rl.load_points(path)
     assert pd.to_datetime(pts.df["time"]).dt.hour[0] == 13
 
 
@@ -73,7 +73,7 @@ def test_mixed_offsets_do_not_crash(make_points_csv):
         {"lon": 0.0, "lat": 0.0, "time": "2026-03-08T01:30:00-05:00"},
         {"lon": 0.0, "lat": 0.0, "time": "2026-03-08T03:30:00-04:00"},
     ])
-    pts = rt.load_points(path, tz="America/New_York")
+    pts = rl.load_points(path, tz="America/New_York")
     hours = pd.to_datetime(pts.df["time"]).dt.hour.tolist()
     assert hours == [1, 3]
 
@@ -82,7 +82,7 @@ def test_epoch_with_tz(make_points_csv):
     # 2026-06-01 13:00:00 UTC
     epoch = int(pd.Timestamp("2026-06-01T13:00:00Z").timestamp())
     path = make_points_csv([{"lon": 0.0, "lat": 0.0, "time": epoch}])
-    pts = rt.load_points(path, timestamp_unit="s", tz="America/New_York")
+    pts = rl.load_points(path, timestamp_unit="s", tz="America/New_York")
     assert pd.to_datetime(pts.df["time"]).dt.hour[0] == 9
 
 
@@ -92,7 +92,7 @@ def test_epoch_without_tz_warns(make_points_csv):
     epoch = int(pd.Timestamp("2026-06-01T13:00:00Z").timestamp())
     path = make_points_csv([{"lon": 0.0, "lat": 0.0, "time": epoch}])
     with pytest.warns(UserWarning, match="epoch"):
-        pts = rt.load_points(path, timestamp_unit="s")
+        pts = rl.load_points(path, timestamp_unit="s")
     assert pd.to_datetime(pts.df["time"]).dt.hour[0] == 13
 
 
@@ -103,7 +103,7 @@ def test_missing_id_rows_dropped_with_warning(make_points_csv):
     rows[2]["id"] = None
     path = make_points_csv(rows)
     with pytest.warns(UserWarning, match="missing id"):
-        pts = rt.load_points(path)
+        pts = rl.load_points(path)
     assert len(pts) == 2
     assert pts.df["point_id"].tolist() == [0, 1]  # renumbered
 
@@ -114,7 +114,7 @@ def test_derive_speed_geodesic(make_points_csv):
         {"id": "a", "lon": 0.000, "lat": 0.0, "time": "2026-06-01T08:00:00"},
         {"id": "a", "lon": 0.001, "lat": 0.0, "time": "2026-06-01T08:01:00"},
     ])
-    pts = rt.load_points(path, derive_speed=True)
+    pts = rl.load_points(path, derive_speed=True)
     expected = 111319.5 / 1000 / 60  # ~1.855 m/s
     np.testing.assert_allclose(pts.df["speed_mps"], expected, rtol=1e-3)
 
@@ -128,7 +128,7 @@ def test_derive_speed_ignores_unused_speed_column_unit(make_points_csv, recwarn)
         {"id": "a", "lon": 0.001, "lat": 0.0, "time": "2026-06-01T08:01:00",
          "speed_kph": 999.0},
     ])
-    pts = rt.load_points(path, derive_speed=True, speed_unit="mph")
+    pts = rl.load_points(path, derive_speed=True, speed_unit="mph")
     assert not any("contradicts" in str(w.message) for w in recwarn.list)
     expected = 111319.5 / 1000 / 60
     np.testing.assert_allclose(pts.df["speed_mps"], expected, rtol=1e-3)
@@ -139,12 +139,12 @@ def test_derive_speed_requires_id(make_points_csv):
         {"lon": 0.0, "lat": 0.0, "time": "2026-06-01T08:00:00"},
     ])
     with pytest.raises(ValueError, match="unique-id column"):
-        rt.load_points(path, derive_speed=True)
+        rl.load_points(path, derive_speed=True)
 
 
 def test_position_time_only_has_no_speed_column(make_points_csv):
     path = make_points_csv(drive_along_road(3))
-    pts = rt.load_points(path)
+    pts = rl.load_points(path)
     assert "speed_mps" not in pts.df.columns
 
 
@@ -155,10 +155,10 @@ def test_save_round_trip_csv_and_geojson(make_points_csv, tmp_path):
         {"id": "a", "lon": 0.001, "lat": 0.0, "time": "2026-06-01T08:01:00",
          "speed": 12.0},
     ])
-    pts = rt.load_points(path, speed_unit="mps")
+    pts = rl.load_points(path, speed_unit="mps")
     for name in ("out.csv", "out.geojson"):
-        out = rt.save_points(pts, str(tmp_path / name), speed_unit="mps")
-        again = rt.load_points(out, speed_unit="mps")
+        out = rl.save_points(pts, str(tmp_path / name), speed_unit="mps")
+        again = rl.load_points(out, speed_unit="mps")
         np.testing.assert_allclose(again.df["speed_mps"], pts.df["speed_mps"])
         np.testing.assert_allclose(again.df["lon"], pts.df["lon"])
 
@@ -172,7 +172,7 @@ def test_extra_columns_are_preserved(make_points_csv):
         {"lon": 1.0, "lat": 2.0, "time": "2026-06-01T08:00:00",
          "accuracy": 5.0, "sats": 11, "id": "a"},
     ])
-    pts = rt.load_points(path)
+    pts = rl.load_points(path)
     assert pts.df["accuracy"].tolist() == [5.0]
     assert pts.df["sats"].tolist() == [11]
 
@@ -189,7 +189,7 @@ def test_extra_columns_stay_aligned_when_rows_are_dropped(make_points_csv):
          "accuracy": 7.0, "id": "a"},
     ])
     with pytest.warns(UserWarning, match="Dropped"):
-        pts = rt.load_points(path)
+        pts = rl.load_points(path)
     assert pts.df["accuracy"].tolist() == [5.0, 7.0]     # never [5.0, 99.0]
 
 
@@ -198,7 +198,7 @@ def test_keep_cols_selects_a_subset(make_points_csv):
         {"lon": 1.0, "lat": 2.0, "time": "2026-06-01T08:00:00",
          "accuracy": 5.0, "sats": 11, "id": "a"},
     ])
-    pts = rt.load_points(path, keep_cols=["accuracy"])
+    pts = rl.load_points(path, keep_cols=["accuracy"])
     assert "accuracy" in pts.df.columns
     assert "sats" not in pts.df.columns
 
@@ -208,7 +208,7 @@ def test_keep_cols_empty_restores_lean_frame(make_points_csv):
         {"lon": 1.0, "lat": 2.0, "time": "2026-06-01T08:00:00",
          "accuracy": 5.0, "id": "a"},
     ])
-    pts = rt.load_points(path, keep_cols=[])
+    pts = rl.load_points(path, keep_cols=[])
     assert "accuracy" not in pts.df.columns
 
 
@@ -218,7 +218,7 @@ def test_extra_column_colliding_with_canonical_is_suffixed(make_points_csv):
         {"longitude": 1.0, "latitude": 2.0, "time": "2026-06-01T08:00:00",
          "point_id": "device-A-0007", "id": "a"},
     ])
-    pts = rt.load_points(path)
+    pts = rl.load_points(path)
     assert pts.df["point_id"].tolist() == [0]             # canonical wins
     assert pts.df["point_id_src"].tolist() == ["device-A-0007"]
 
@@ -229,10 +229,10 @@ def test_accuracy_reaches_derive_speeds(straight_net, make_points_csv):
     for i, r in enumerate(rows):
         r["accuracy"] = 4.0 + i * 0.5
     path = make_points_csv(rows)
-    pts = rt.load_points(path, id_col="id")
-    m = rt.NearestMatcher(straight_net, max_dist=60).match(pts)
-    tight = rt.derive_speeds(straight_net, m, pts, pos_accuracy_col="accuracy")
-    loose = rt.derive_speeds(straight_net, m, pts, default_pos_sigma_m=40.0)
+    pts = rl.load_points(path, id_col="id")
+    m = rl.NearestMatcher(straight_net, max_dist=60).match(pts)
+    tight = rl.derive_speeds(straight_net, m, pts, pos_accuracy_col="accuracy")
+    loose = rl.derive_speeds(straight_net, m, pts, default_pos_sigma_m=40.0)
     # a ~4 m accuracy must yield a tighter speed uncertainty than an assumed 40 m
     assert (tight["intervals"]["speed_sigma_mps"].median()
             < loose["intervals"]["speed_sigma_mps"].median())

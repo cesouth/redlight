@@ -13,12 +13,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _common import prepare, rule  # noqa: E402
 
-import roadtraffic as rt  # noqa: E402
+import redlight as rl  # noqa: E402
 
 
 def main() -> None:
     net, pts, derived = prepare()
-    clean = rt.filter_by_speed(derived["edge_observations"], max_speed=80,
+    clean = rl.filter_by_speed(derived["edge_observations"], max_speed=80,
                                unit="mph", mad_outliers=True, per_edge=True)
 
     # ----------------------------------------------------- posted limits
@@ -32,7 +32,7 @@ def main() -> None:
 
     # -------------------------------------------------------- the report
     rule("Congestion report")
-    report = rt.congestion_report(net, clean, statistic="median",
+    report = rl.congestion_report(net, clean, statistic="median",
                                   output_unit="mph")
     summary = report["summary"]
     print(f"  rows                {summary['n_rows']:,}")

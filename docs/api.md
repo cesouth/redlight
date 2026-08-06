@@ -1,9 +1,9 @@
 # API reference
 
-All public objects are importable directly from `roadtraffic`.
+All public objects are importable directly from `redlight`.
 
 ```python
-import roadtraffic as rt
+import redlight as rl
 ```
 
 ---
@@ -35,12 +35,12 @@ Every parameter of `from_geojson`, plus `layer` (name or index of a layer to
 read from a multi-layer file, e.g. one table in a GeoPackage that holds
 several; default: the file's own default layer). Dispatches GeoJSON to
 `from_geojson`; Shapefile (`.shp`) and GeoPackage (`.gpkg`) require the
-`shapefile` extra (`pip install roadtraffic[shapefile]`, needs Python 3.10+).
+`shapefile` extra (`pip install redlight[shapefile]`, needs Python 3.10+).
 Source CRS is auto-reprojected to WGS84.
 
 <!-- skip-test: needs the shapefile extra and a .gpkg fixture -->
 ```python
-net = rt.Network.from_file("roads.gpkg", layer="highways")
+net = rl.Network.from_file("roads.gpkg", layer="highways")
 ```
 
 ### `Network.from_overpass(bbox, *, metric_epsg=None, directed=True, oneway_attr="oneway", highway_regex=None, url=None, timeout=90.0)`
@@ -53,8 +53,8 @@ downloaded extract + `from_geojson` for large study areas.
 **Posted speed limits.** Any network whose source data carries a `maxspeed`
 property (Overpass, or a GeoJSON exported from OSM) gets a numeric
 `maxspeed_mps` edge attribute parsed via `parse_maxspeed` (import it directly:
-`from roadtraffic.osm import parse_maxspeed` — the `osm` submodule is not
-re-exported on the top-level `roadtraffic` namespace), alongside the
+`from redlight.osm import parse_maxspeed` — the `osm` submodule is not
+re-exported on the top-level `redlight` namespace), alongside the
 untouched raw tag. A bare `maxspeed=50` is read as **km/h** per the OSM spec;
 an explicit `mph` / `km/h` suffix wins. Values carrying no unambiguous number
 (`"none"`, `"walk"`, `"signals"`, country defaults like `"RU:urban"`,
@@ -137,7 +137,7 @@ written in both m/s (`speed_mps`) and `speed_unit` (`speed_<unit>`) if present �
 handy for persisting a set loaded with `derive_speed=True`.
 
 ```python
-out = rt.save_points(points, "cleaned.geojson", speed_unit="mph")
+out = rl.save_points(points, "cleaned.geojson", speed_unit="mph")
 ```
 
 ### `PointSet`
@@ -234,7 +234,7 @@ Returns `{"intervals": DataFrame, "edge_observations": DataFrame}`:
   the deliberate per-edge replication never inflates sample sizes.
 
 ```python
-derived = rt.derive_speeds(
+derived = rl.derive_speeds(
     net, matched, points,
     pos_accuracy_col="accuracy_m",   # per-fix sigma beats one assumed value
     min_baseline_m=150,              # merge hops until they clear GPS noise
@@ -347,28 +347,28 @@ than against literals, so a future rename is a name error rather than a silent
 mismatch.
 
 ```python
-import roadtraffic as rt
+import redlight as rl
 
-assert (rt.MODE_VEHICLE, rt.MODE_PEDESTRIAN, rt.MODE_UNKNOWN) == (
+assert (rl.MODE_VEHICLE, rl.MODE_PEDESTRIAN, rl.MODE_UNKNOWN) == (
     "vehicle", "pedestrian", "unknown")
 ```
 
 ### The whole workflow, end to end
 
 ```python
-import roadtraffic as rt
+import redlight as rl
 
 # 1. Reduce every mover to one evidence row and look at the distribution.
-feat = rt.mover_features(intervals, unit="mph")
+feat = rl.mover_features(intervals, unit="mph")
 
 # 2. Let the density valley suggest a cut. None means "no walking population
 #    here" -- an honest answer, not a failure. Never substitute a default.
-threshold = rt.suggest_mode_threshold(feat["speed_p85_mph"], unit="mph")
+threshold = rl.suggest_mode_threshold(feat["speed_p85_mph"], unit="mph")
 
 if threshold is not None:
     # 3. Classify movers, then apply the verdict to their observations.
-    movers = rt.classify_movers(intervals, threshold=threshold, unit="mph")
-    vehicles_only = rt.filter_by_mode(obs, movers)
+    movers = rl.classify_movers(intervals, threshold=threshold, unit="mph")
+    vehicles_only = rl.filter_by_mode(obs, movers)
     print(movers["mode"].value_counts().to_dict())
     print(f"{len(obs)} -> {len(vehicles_only)} observations")
 ```
@@ -429,15 +429,15 @@ warning, never an error.
 
 ```python
 # Speed by hour, both statistics, suppressing thin bins that read as spikes.
-hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="both",
+hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="both",
                              output_unit="mph", min_samples=3)
 
 # Peak = slowest. Windows are contiguous and may wrap midnight.
-peaks = rt.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
+peaks = rl.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
 print([r["block_label"] for r in peaks["peak"]])
 
 # Weekday and weekend are different populations; do not pool them.
-report = rt.day_type_report(clean, statistic="median", output_unit="mph")
+report = rl.day_type_report(clean, statistic="median", output_unit="mph")
 print({k: round(v["overall_speed"], 1) for k, v in report["groups"].items()})
 ```
 
@@ -546,7 +546,7 @@ measurement. Set `False` for one uniform fallback speed everywhere.
 
 ## Network analysis
 
-`roadtraffic.analysis` — road-network structure measures scoped to what a
+`redlight.analysis` — road-network structure measures scoped to what a
 trafficability/routing tool needs, not general urban-form analysis. All three
 take a `Network` first, matching the rest of the package's free-function
 convention.
@@ -591,18 +591,18 @@ disconnected extract (`is_weakly_connected=False`) — the same diagnosis
 proactively.
 
 ```python
-stats = rt.network_stats(net, area_km2=8.3)
+stats = rl.network_stats(net, area_km2=8.3)
 print(stats["circuity_avg"], stats["n_intersections"],
       stats["streets_per_node_avg"])
 
 # Run this BEFORE routing on an unfamiliar or clipped extract.
-report = rt.connectivity_report(net)
+report = rl.connectivity_report(net)
 if not report["is_strongly_connected"]:
     print("stranded edges:", report["stranded_edge_ids"][:5])
 
 # Chokepoints. weight= is mandatory -- silently picking one is worse than an
 # error. Every edge needs travel_time_s first, so assign speeds beforehand.
-bc = rt.edge_betweenness_centrality(net, weight="travel_time_s",
+bc = rl.edge_betweenness_centrality(net, weight="travel_time_s",
                                     write_attr="betweenness")
 top = sorted(bc.items(), key=lambda kv: -kv[1])[:3]
 print([(net.edge_data(int(e)).get("name"), round(s, 3)) for e, s in top])
@@ -637,7 +637,7 @@ dependency.
 Render a quick static PNG trafficability map coloured by per-edge speed (green
 = fast, red = slow by default); unobserved edges are drawn in
 `no_data_color`. Returns the `matplotlib` Figure, and saves to `path` if
-given. Requires the `mapping` extra: `pip install roadtraffic[mapping]`.
+given. Requires the `mapping` extra: `pip install redlight[mapping]`.
 
 ---
 
@@ -658,7 +658,7 @@ aliases case-insensitively — `"km/h"`, `"kmph"`, `"m/s"`, `"mi/h"` and others.
 Unknown units raise rather than defaulting.
 
 ```python
-from roadtraffic import SpeedUnit
+from redlight import SpeedUnit
 
 assert SpeedUnit.parse("km/h") is SpeedUnit.KPH
 assert SpeedUnit.MPH == "mph"          # str subclass
@@ -670,13 +670,13 @@ Convert into and out of the canonical unit. Both accept scalars, numpy arrays
 and pandas Series, since the conversion is a single multiply that broadcasts.
 
 ```python
-import roadtraffic as rt
+import redlight as rl
 
-rt.to_mps(60, "mph")                    # 26.8224
-rt.from_mps(26.8224, "kph")             # 96.56...
+rl.to_mps(60, "mph")                    # 26.8224
+rl.from_mps(26.8224, "kph")             # 96.56...
 
 # The usual reason you reach for these: a frame's speed_mps in your own unit.
-mph = rt.from_mps(intervals["speed_mps"], "mph")
+mph = rl.from_mps(intervals["speed_mps"], "mph")
 print(f"median {mph.median():.1f} mph")
 ```
 

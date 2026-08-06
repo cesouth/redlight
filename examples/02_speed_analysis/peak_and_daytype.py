@@ -13,19 +13,19 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _common import prepare, rule  # noqa: E402
 
-import roadtraffic as rt  # noqa: E402
+import redlight as rl  # noqa: E402
 
 
 def main() -> None:
     net, pts, derived = prepare()
-    clean = rt.filter_by_speed(derived["edge_observations"], max_speed=80,
+    clean = rl.filter_by_speed(derived["edge_observations"], max_speed=80,
                                unit="mph", mad_outliers=True, per_edge=True)
 
     # -------------------------------------------------------------- peaks
     rule("Peak and off-peak, discovered from the data")
-    hourly = rt.aggregate_speeds(clean, block_hours=1, statistic="median",
+    hourly = rl.aggregate_speeds(clean, block_hours=1, statistic="median",
                                  output_unit="mph", min_samples=3)
-    peaks = rt.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
+    peaks = rl.peak_analysis(hourly, statistic="median", n_peak=3, n_offpeak=3)
     print("slowest hours (peak):")
     for r in peaks["peak"]:
         print(f"  {r['block_label']}  {r['median_speed']:5.1f} mph  n={r['n']}")
@@ -35,13 +35,13 @@ def main() -> None:
 
     # ------------------------------------------------------- classify hours
     rule("The same split, as reusable hour sets")
-    hours = rt.classify_hours(clean, statistic="median", n_peak=3, n_offpeak=3)
+    hours = rl.classify_hours(clean, statistic="median", n_peak=3, n_offpeak=3)
     print(f"peak hours    : {hours['peak_hours']}")
     print(f"off-peak hours: {hours['offpeak_hours']}")
 
     # ---------------------------------------------------------- day types
     rule("Weekday versus weekend")
-    report = rt.day_type_report(clean, statistic="median", output_unit="mph")
+    report = rl.day_type_report(clean, statistic="median", output_unit="mph")
     for label, grp in report["groups"].items():
         print(f"  {label:<8} n={grp['n']:>5,}  "
               f"median {grp['overall_speed']:.1f} mph")
@@ -54,7 +54,7 @@ def main() -> None:
 
     # ------------------------------------------------- write onto the graph
     rule("Writing per-regime speeds onto the network")
-    seg = rt.assign_segment_speeds(net, clean, statistic="median",
+    seg = rl.assign_segment_speeds(net, clean, statistic="median",
                                    n_peak=3, n_offpeak=3)
     cov = seg["coverage"]
     print(f"edges with an observed speed: overall {cov['overall']}, "

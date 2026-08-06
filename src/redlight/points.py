@@ -43,8 +43,8 @@ Speed is not always required at load time. Three ways to end up with a
    same-trajectory fix. Cheap, but biased low on curves and by GPS noise
    over short gaps -- see ``docs/statistics.md`` §7.
 3. **Neither.** Position + time only. ``speed_mps`` is omitted entirely from
-   ``.df``. Pair this with a matcher (:mod:`roadtraffic.matching`) and
-   :func:`roadtraffic.speeds.derive_speeds`, which reconstructs speed from
+   ``.df``. Pair this with a matcher (:mod:`redlight.matching`) and
+   :func:`redlight.speeds.derive_speeds`, which reconstructs speed from
    *on-road* displacement after map matching -- more accurate than (2) for
    noisy/sparse fixes, at the cost of needing a network and a matching step
    first. See ``docs/statistics.md`` §10.
@@ -157,7 +157,7 @@ def _autodetect(columns: Sequence[str], candidates: Sequence[str]) -> str | None
 def _infer_speed_unit(colname: str) -> str | None:
     """Infer the unit embedded in a speed column name, if any.
 
-    Recognizes every alias :meth:`~roadtraffic.units.SpeedUnit.parse` accepts
+    Recognizes every alias :meth:`~redlight.units.SpeedUnit.parse` accepts
     (e.g. ``kmh``, ``kmph``, ``km/h``), not just the canonical mph/kph/mps
     tokens -- so an explicit ``speed_unit=`` and an auto-detected column name
     never silently disagree just because they spelled the same unit differently.
@@ -251,7 +251,7 @@ def load_points(
         the ellipsoidal (geodesic) distance between consecutive same-id points
         divided by their time gap; see ``docs/statistics.md`` §7 for the method
         and its limits, and §10 for the more accurate on-road alternative
-        (:func:`roadtraffic.speeds.derive_speeds`, used after map matching).
+        (:func:`redlight.speeds.derive_speeds`, used after map matching).
         When False (default) and no speed column is found or given, the
         returned ``PointSet`` simply has no ``speed_mps`` column -- position and
         time are still valid on their own for matching.
@@ -320,7 +320,7 @@ def load_points(
             "a recognisable id column)."
         )
     # speed_col is optional otherwise: position+time-only data is valid input
-    # (e.g. for HMMMatcher + roadtraffic.speeds.derive_speeds).
+    # (e.g. for HMMMatcher + redlight.speeds.derive_speeds).
 
     # Resolve the unit of the source speed column. Skipped entirely when
     # deriving speed from positions: speed_col (if any) is never read in that
@@ -354,7 +354,7 @@ def load_points(
 
     # Carry through source columns the canonical schema does not name -- a
     # per-point horizontal accuracy above all, since
-    # :func:`roadtraffic.speeds.derive_speeds` reads its ``pos_accuracy_col``
+    # :func:`redlight.speeds.derive_speeds` reads its ``pos_accuracy_col``
     # straight off this frame and silently falls back to an assumed constant
     # sigma when the column is absent. Attached here, BEFORE the row drops
     # below, so the extras are filtered along with their own rows: any scheme

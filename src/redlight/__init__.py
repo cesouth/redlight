@@ -1,4 +1,4 @@
-"""roadtraffic: lightweight, bring-your-own-data trafficability analysis for road networks.
+"""redlight: lightweight, bring-your-own-data trafficability analysis for road networks.
 
 Public API
 ----------
@@ -75,7 +75,7 @@ from .routing import Router
 from .speeds import derive_speeds
 from .units import SpeedUnit, from_mps, to_mps
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "SpeedUnit",

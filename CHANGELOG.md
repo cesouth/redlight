@@ -6,9 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (0.x: minor versions may contain breaking changes, noted below).
 
-## [Unreleased]
+## [0.6.0] - 2026-08-06
 
 ### Changed
+- **The package is renamed from `roadtraffic` to `redlight`.** Update imports:
+  `import roadtraffic as rt` becomes `import redlight as rl`. The optional
+  extras move with it -- `redlight[crs]`, `redlight[shapefile]`,
+  `redlight[mapping]`, `redlight[docs]`. No API beyond the top-level name has
+  changed, so a rename of the import is the whole migration. The old name was
+  also already taken on PyPI by an unrelated project, which this resolves.
 - `pyproj` is no longer a core dependency. WGS84, the 120 WGS84 UTM zones and
   Web Mercator are now projected in numpy, and geodesic distance uses
   Vincenty's inverse formula. Verified against PROJ 9.5.1 over a full UTM zone
@@ -20,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code, so it needs recognising by name rather than by code. `EPSG:4979`
   (WGS84 3D) likewise: the Z is dropped on read, leaving EPSG:4326.
 - Reading a file in any other CRS -- national grids, non-WGS84 datums, raw-WKT
-  CRS -- now requires the new `crs` extra: `pip install 'roadtraffic[crs]'`.
+  CRS -- now requires the new `crs` extra: `pip install 'redlight[crs]'`.
   The same applies to a `metric_epsg=` override outside the UTM zones. Both
   raise an `ImportError` naming the extra rather than failing obscurely, and
   each names only the CRS *it* can handle natively (the metric path is UTM
@@ -42,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Mode screening: `roadtraffic.modes`.** A mixed GPS feed that also carries
+- **Mode screening: `redlight.modes`.** A mixed GPS feed that also carries
   people on foot drags every road's score down, and the obvious remedy is the
   one that breaks the study. A pedestrian at 3 mph and a vehicle crawling
   through a chokepoint at 3 mph are indistinguishable in a single observation,
@@ -195,7 +201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parse_maxspeed`, which is not re-exported on the top-level namespace.
 
 - **OSM posted speed limits are now parsed and used as a per-edge routing
-  fallback.** `roadtraffic.osm.parse_maxspeed` converts an OSM `maxspeed` tag
+  fallback.** `redlight.osm.parse_maxspeed` converts an OSM `maxspeed` tag
   to m/s --
   correctly reading a bare `maxspeed=50` as **km/h** per the OSM spec (reading
   it as mph would overstate the limit by ~61%) while honouring an explicit
@@ -230,7 +236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the change between weekday and weekend traffic is one printable/plottable
   table. A day-type with no observations (e.g. a dataset that never sampled a
   weekend) is reported honestly with `n=0`/NaN and a warning, not an error.
-- **`roadtraffic.analysis`**: a new module of road-network structure
+- **`redlight.analysis`**: a new module of road-network structure
   measures scoped to what a trafficability/speed-routing tool actually
   needs (not general urban-form analysis):
   - **`edge_betweenness_centrality`** -- travel-time-weighted (or any other
@@ -321,7 +327,7 @@ pass, and the fiona -> pyogrio migration for Shapefile/GeoPackage reading.
   candidate plausible. The straight-line step is now measured from the true
   last-anchored fix.
 - **HMM transition route distance omitted the partial-edge terms** that
-  `roadtraffic.speeds`'s on-road distance measurement already accounts for
+  `redlight.speeds`'s on-road distance measurement already accounts for
   (remaining length past the previous snap; length up to the current snap) —
   a systematic bias that could favor a geometrically wrong candidate. The
   transition distance is now the same three-piece sum used elsewhere.
@@ -480,7 +486,7 @@ pass: test suite, CI, linting, packaging modernization, and this changelog.
   block is the contiguous `n_peak`-hour window (wrapping midnight) with the
   lowest network-wide speed; the off-peak block is the fastest disjoint
   `n_offpeak`-hour window.
-- **`Network.from_overpass(bbox)`** and the `roadtraffic.osm` module: fetch
+- **`Network.from_overpass(bbox)`** and the `redlight.osm` module: fetch
   an OSM road network for a bounding box via the Overpass API using only the
   standard library (no new dependencies).
 - **Per-regime map export**: `to_geojson` and `plot_speed_map` accept
@@ -512,9 +518,9 @@ pass: test suite, CI, linting, packaging modernization, and this changelog.
   column name embeds a different unit — which was precisely the silent-error
   case.
 - Packaging modernized: PEP 639 SPDX license metadata, single-sourced version
-  (`roadtraffic.__version__`), project URLs point at the actual repository,
+  (`redlight.__version__`), project URLs point at the actual repository,
   Python 3.9–3.13 classifiers, `pytest`/`ruff` dev extras.
-- One shared WGS84 `Geod` (`roadtraffic._geo`) and shared input validators
+- One shared WGS84 `Geod` (`redlight._geo`) and shared input validators
   replace duplicated definitions; the redundant unit-conversion table in
   `mapping` was removed.
 

@@ -27,20 +27,20 @@ import numpy as np
 try:
     import networkx as nx
 except ImportError as exc:  # pragma: no cover
-    raise ImportError("roadtraffic requires networkx.") from exc
+    raise ImportError("redlight requires networkx.") from exc
 
 from .units import _usable_speed
 
 
 class Router:
-    """Shortest-path routing on a :class:`~roadtraffic.network.Network`.
+    """Shortest-path routing on a :class:`~redlight.network.Network`.
 
     Attributes
     ----------
-    network : roadtraffic.network.Network
+    network : redlight.network.Network
         The network being routed over. Routing reads the graph live, so
         writing new speeds onto it (e.g. re-running
-        :func:`~roadtraffic.aggregate.assign_speeds`) takes effect on the
+        :func:`~redlight.aggregate.assign_speeds`) takes effect on the
         next :meth:`route` call without constructing a new ``Router``.
     default_speed_mps : float
         Fallback speed (m/s) used for ``mode="time"`` on edges with no
@@ -55,7 +55,7 @@ class Router:
         """
         Parameters
         ----------
-        network : roadtraffic.network.Network
+        network : redlight.network.Network
             The network to route over.
         default_speed_mps : float
             Fallback speed (m/s) for ``mode="time"`` routing on edges that
@@ -66,7 +66,7 @@ class Router:
         use_maxspeed : bool
             If ``True`` (default), an unobserved edge carrying a parsed posted
             limit (``maxspeed_mps``, written by
-            :meth:`~roadtraffic.network.Network._build` from an OSM
+            :meth:`~redlight.network.Network._build` from an OSM
             ``maxspeed`` tag) is estimated at that limit instead of at
             ``default_speed_mps``. This only ever replaces a guess with a
             better guess: measured travel times always win, and the edge is
@@ -241,7 +241,7 @@ class Router:
             node. If False, they must already be graph nodes.
         period : {"overall", "peak", "offpeak"}
             For ``mode="time"``, which per-edge regime to route on (written by
-            :func:`~roadtraffic.aggregate.assign_segment_speeds`). Edges lacking
+            :func:`~redlight.aggregate.assign_segment_speeds`). Edges lacking
             that regime fall back to the overall speed, then the default speed.
 
         Returns

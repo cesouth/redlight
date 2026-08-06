@@ -1,6 +1,6 @@
 """Derive speed from matched GPS trajectories via on-road displacement.
 
-The matchers in :mod:`roadtraffic.matching` answer *which edge* each GPS fix sits
+The matchers in :mod:`redlight.matching` answer *which edge* each GPS fix sits
 on. This module answers *how fast the vehicle was going*, by differencing
 consecutive fixes within a trajectory:
 
@@ -43,11 +43,11 @@ Output
     duplicated so per-edge statistics see every interval that crossed the
     edge. Columns: ``interval_id, edge_id, speed_mps, time, traj_id, dt_s,
     distance_m, snap_dist_m, speed_sigma_mps, speed_var, quality``. This is
-    schema-compatible with :func:`roadtraffic.cleaning.filter_by_speed`,
-    :func:`roadtraffic.aggregate.aggregate_speeds` and
-    :func:`roadtraffic.aggregate.assign_speeds`. Network-wide aggregations
+    schema-compatible with :func:`redlight.cleaning.filter_by_speed`,
+    :func:`redlight.aggregate.aggregate_speeds` and
+    :func:`redlight.aggregate.assign_speeds`. Network-wide aggregations
     deduplicate on ``interval_id`` automatically (see
-    :func:`roadtraffic.aggregate.aggregate_speeds`) so the duplication does
+    :func:`redlight.aggregate.aggregate_speeds`) so the duplication does
     not inflate sample sizes.
 
 Quality
@@ -73,7 +73,7 @@ from shapely.geometry import Point
 try:
     import networkx as nx
 except ImportError as exc:  # pragma: no cover
-    raise ImportError("roadtraffic requires networkx.") from exc
+    raise ImportError("redlight requires networkx.") from exc
 
 
 # --------------------------------------------------------------------------- util
@@ -218,11 +218,11 @@ def derive_speeds(
 
     Parameters
     ----------
-    network : roadtraffic.network.Network
+    network : redlight.network.Network
     matched : DataFrame
         Output of a matcher (needs ``point_id``, ``edge_id``; ``traj_id`` if
         present). Lon/lat are recovered by joining to ``points`` on ``point_id``.
-    points : roadtraffic.points.PointSet
+    points : redlight.points.PointSet
         The points that were matched (supplies lon/lat/time, and optionally a
         per-fix accuracy column).
     pos_accuracy_col : str, optional
@@ -255,7 +255,7 @@ def derive_speeds(
         First ``interval_id`` to hand out. Default 0, so each call numbers its
         intervals 0, 1, 2, ... independently -- which means concatenating the
         output of two calls makes distinct intervals share an id, and the
-        network-wide dedup in :func:`~roadtraffic.aggregate.aggregate_speeds`
+        network-wide dedup in :func:`~redlight.aggregate.aggregate_speeds`
         would drop one of each colliding group (that function now detects the
         collision and refuses rather than silently discarding data). Prefer a
         single call over all trajectories; when you must combine runs, give

@@ -8,7 +8,7 @@ import json
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 
 
 def write_geojson(path, features):
@@ -57,7 +57,7 @@ def straight_net(tmp_path):
     path = write_geojson(tmp_path / "straight.json", [
         line_feature([[0, 0], [0.01, 0]], highway="residential", name="main"),
     ])
-    return rt.Network.from_geojson(path)
+    return rl.Network.from_geojson(path)
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ def grid_net(tmp_path):
             if i < n - 1:
                 feats.append(line_feature([[lon, lat], [lon, lat + sp]],
                                           highway="residential"))
-    return rt.Network.from_geojson(write_geojson(tmp_path / "grid.json", feats))
+    return rl.Network.from_geojson(write_geojson(tmp_path / "grid.json", feats))
 
 
 @pytest.fixture

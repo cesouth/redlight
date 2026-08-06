@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import roadtraffic as rt
+import redlight as rl
 
 
 def _matched_frame(speeds_mps, *, edge_id=0, traj="a", t0="2026-06-01 08:00:00"):
@@ -22,20 +22,20 @@ def _matched_frame(speeds_mps, *, edge_id=0, traj="a", t0="2026-06-01 08:00:00")
 
 def test_filter_by_speed_bounds():
     df = _matched_frame([0.0, 5.0, 10.0, 50.0])
-    out = rt.filter_by_speed(df, min_speed=1.0, max_speed=20.0, unit="mps")
+    out = rl.filter_by_speed(df, min_speed=1.0, max_speed=20.0, unit="mps")
     assert out["speed_mps"].tolist() == [5.0, 10.0]
 
 
 def test_filter_by_speed_requires_speed_column():
     df = _matched_frame([1.0]).drop(columns=["speed_mps"])
     with pytest.raises(ValueError, match="speed_mps"):
-        rt.filter_by_speed(df)
+        rl.filter_by_speed(df)
 
 
 def test_filter_by_speed_drops_unmatched():
     df = _matched_frame([5.0, 6.0])
     df.loc[0, "edge_id"] = -1
-    out = rt.filter_by_speed(df, unit="mps")
+    out = rl.filter_by_speed(df, unit="mps")
     assert out["edge_id"].tolist() == [0]
 
 
@@ -43,7 +43,7 @@ def test_mad_outliers_removed():
     # jitter keeps MAD > 0 (identical values would trigger the degenerate
     # MAD=0 keep-everything fallback)
     speeds = [10.0 + 0.1 * (k % 5) for k in range(20)] + [200.0]
-    out = rt.filter_by_speed(_matched_frame(speeds), unit="mps",
+    out = rl.filter_by_speed(_matched_frame(speeds), unit="mps",
                              mad_outliers=True)
     assert 200.0 not in out["speed_mps"].values
     assert len(out) == 20
@@ -52,7 +52,7 @@ def test_mad_outliers_removed():
 def test_mad_outliers_nan_speed_does_not_wipe_dataset():
     """Regression: a single NaN speed poisoned np.median, failing every row."""
     speeds = [10.0 + 0.1 * (k % 5) for k in range(20)] + [np.nan]
-    out = rt.filter_by_speed(_matched_frame(speeds), unit="mps",
+    out = rl.filter_by_speed(_matched_frame(speeds), unit="mps",
                              mad_outliers=True)
     assert len(out) == 20  # the 19 finite non-outliers, minus the NaN row
 
@@ -63,7 +63,7 @@ def test_trajectory_filter_keeps_slow_moving_traffic():
     lon = np.cumsum(np.full(n, 10.0 / 111320))  # 10 m per 10 s fix
     df = _matched_frame([1.0] * n)
     df["lon"] = lon
-    out = rt.filter_trajectory_speed(df)
+    out = rl.filter_trajectory_speed(df)
     assert len(out) == n
 
 
@@ -74,7 +74,7 @@ def test_trajectory_filter_drops_parked_dwell():
     lon += [lon[-1] + 2e-7 * k for k in range(n_park)]  # ~2 cm jitter
     df = _matched_frame([3.0] * n_move + [0.01] * n_park)
     df["lon"] = lon
-    out = rt.filter_trajectory_speed(df, dwell_radius_m=25, dwell_min_s=120)
+    out = rl.filter_trajectory_speed(df, dwell_radius_m=25, dwell_min_s=120)
     # the parked block is gone; the final moving fix sits at the parking
     # position, so the anchor-based dwell absorbs it too
     assert len(out) == n_move - 1
@@ -86,7 +86,7 @@ def test_dwell_run_that_never_leaves_the_radius_reaches_the_end():
     returns 0 on an all-False block -- i.e. 'the very first point already left'.
     A trajectory that never leaves the radius must still dwell to its last fix.
     """
-    from roadtraffic.cleaning import _dwell_mask
+    from redlight.cleaning import _dwell_mask
 
     n = 500  # longer than the probe window and several doubling blocks
     rng = np.random.default_rng(3)
@@ -100,7 +100,7 @@ def test_dwell_run_that_never_leaves_the_radius_reaches_the_end():
 @pytest.mark.parametrize("run_len", [1, 7, 8, 9, 31, 32, 33, 100])
 def test_dwell_run_ends_exactly_where_the_radius_does(run_len):
     """Run boundaries must not shift with the scan's probe/block sizes."""
-    from roadtraffic.cleaning import _dwell_mask
+    from redlight.cleaning import _dwell_mask
 
     rng = np.random.default_rng(run_len)
     d = 5.0 / 111319.5
@@ -116,7 +116,7 @@ def test_dwell_tolerates_a_missing_coordinate():
     """A NaN fix ends the run it lands in rather than failing the whole clean:
     the geodesic raises on a non-finite input instead of returning one, so the
     coordinates have to be screened before they reach it."""
-    from roadtraffic.cleaning import _dwell_mask
+    from redlight.cleaning import _dwell_mask
 
     rng = np.random.default_rng(11)
     d = 5.0 / 111319.5
