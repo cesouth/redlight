@@ -31,7 +31,7 @@ import math
 
 import networkx as nx
 
-from ._geo import GEOD_WGS84
+from ._geo import geodesic_distance
 from .network import _RESERVED_EDGE_ATTRS
 
 # Attribute names roadtraffic's own pipeline writes for speed/time data (see
@@ -307,7 +307,7 @@ def network_stats(network, *, area_km2: float | None = None) -> dict:
         eid = int(d["edge_id"])
         length = float(d["length_m"])
         total_length += length
-        _, _, gc = GEOD_WGS84.inv(u[0], u[1], v[0], v[1])
+        gc = float(geodesic_distance(u[0], u[1], v[0], v[1]))
         total_gc += gc
         rid = min(network.road_edge_ids(eid))
         if rid not in road_length_m:

@@ -23,7 +23,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ._geo import GEOD_WGS84
+from ._geo import geodesic_distance
 from .aggregate import _require_speed_mps
 from .units import SpeedUnit, to_mps
 
@@ -197,7 +197,7 @@ def _dwell_mask(lon, lat, t, radius_m, min_s) -> np.ndarray:
     while i < n:
         j = i
         while j + 1 < n:
-            _, _, dist = GEOD_WGS84.inv(lon[i], lat[i], lon[j + 1], lat[j + 1])
+            dist = geodesic_distance(lon[i], lat[i], lon[j + 1], lat[j + 1])
             if not np.isfinite(dist) or dist > radius_m:
                 break
             j += 1

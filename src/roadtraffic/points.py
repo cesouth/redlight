@@ -59,7 +59,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from ._geo import GEOD_WGS84
+from ._geo import geodesic_distance
 from .units import _SPEED_UNIT_ALIASES, SpeedUnit, from_mps, to_mps
 
 
@@ -485,7 +485,7 @@ def _derive_speed_mps(out: pd.DataFrame) -> np.ndarray:
             continue
         order = np.argsort(t[idx], kind="stable")  # time order; NaN sorts last
         sidx = idx[order]
-        _, _, dist = GEOD_WGS84.inv(
+        dist = geodesic_distance(
             lon[sidx[:-1]], lat[sidx[:-1]], lon[sidx[1:]], lat[sidx[1:]]
         )
         dt = (t[sidx[1:]] - t[sidx[:-1]]) / 1e9  # ns -> s
