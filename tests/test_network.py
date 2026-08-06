@@ -216,3 +216,33 @@ def test_unparseable_maxspeed_sets_no_numeric_attr(tmp_path):
     for _u, _v, d in net.graph.edges(data=True):
         assert "maxspeed_mps" not in d
         assert d["maxspeed"] == "none"        # raw tag still preserved
+
+
+def test_metric_crs_is_native_utm_without_pyproj(straight_net):
+    """The default path must not construct a pyproj object at all."""
+    from roadtraffic import _proj
+    assert isinstance(straight_net.crs_metric, _proj.UtmCrs)
+    assert straight_net.crs_metric.to_epsg() == 32631
+
+
+def test_non_utm_metric_epsg_errors_clearly_without_pyproj(tmp_path, monkeypatch):
+    """A user-supplied projected CRS outside the native set still works when
+    pyproj is installed, but must fail with an actionable message when it is
+    not -- never with a bare ModuleNotFoundError."""
+    import builtins
+
+    from roadtraffic import network as net_mod
+
+    path = write_geojson(tmp_path / "n.json", [
+        line_feature([[15.0, 50.0], [15.01, 50.0]], highway="residential"),
+    ])
+    real_import = builtins.__import__
+
+    def no_pyproj(name, *args, **kwargs):
+        if name == "pyproj":
+            raise ImportError("no pyproj")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pyproj)
+    with pytest.raises(ImportError, match=r"roadtraffic\[crs\]"):
+        net_mod.Network.from_geojson(path, metric_epsg=27700)

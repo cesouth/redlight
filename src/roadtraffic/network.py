@@ -26,9 +26,10 @@ import warnings
 
 import numpy as np
 import shapely
-from pyproj import CRS, Transformer
 from shapely.geometry import LineString, shape
 from shapely.ops import transform as shapely_transform
+
+from . import _proj
 
 try:  # networkx is a core dependency
     import networkx as nx
@@ -40,6 +41,47 @@ def _auto_utm_epsg(lon: float, lat: float) -> int:
     """Return the EPSG code of the UTM zone containing (lon, lat)."""
     zone = int(math.floor((lon + 180.0) / 6.0) % 60) + 1
     return (32600 if lat >= 0 else 32700) + zone
+
+
+def _require_pyproj(what: str):
+    """Import pyproj, or raise an error that names the extra and the way out.
+
+    pyproj is not a core dependency: it ships PROJ's native library and its
+    coordinate database, which is both the bulk of the install and the usual
+    source of ``proj.db`` conflicts. The natively supported systems cover
+    essentially all road data, so this is reached only for the long tail.
+    """
+    try:
+        import pyproj
+    except ImportError as exc:
+        raise ImportError(
+            f"{what} needs pyproj, which roadtraffic does not install by "
+            f"default. Either install the extra:\n"
+            f"    pip install 'roadtraffic[crs]'\n"
+            f"or use a natively supported CRS: EPSG:4326 (WGS84), EPSG:3857 "
+            f"(Web Mercator), or a WGS84 UTM zone (EPSG:32601-32660 and "
+            f"32701-32760)."
+        ) from exc
+    return pyproj
+
+
+def _metric_crs_and_transformers(epsg: int):
+    """Return ``(crs, forward, inverse)`` for the metric CRS.
+
+    UTM -- the default and the overwhelmingly common case -- is handled in
+    numpy. Any other projected CRS the caller asks for via ``metric_epsg``
+    falls back to pyproj.
+    """
+    try:
+        return _proj.utm_crs_and_transformers(epsg)
+    except ValueError:
+        pass
+    pyproj = _require_pyproj(f"metric_epsg=EPSG:{epsg}")
+    crs = pyproj.CRS.from_epsg(epsg)
+    wgs84 = pyproj.CRS.from_epsg(_proj.EPSG_WGS84)
+    return (crs,
+            pyproj.Transformer.from_crs(wgs84, crs, always_xy=True),
+            pyproj.Transformer.from_crs(crs, wgs84, always_xy=True))
 
 
 def _round_node(x: float, y: float, ndigits: int = 7):
@@ -248,6 +290,10 @@ class Network:
                 "Reading Shapefile/GPKG requires the optional 'shapefile' extra. "
                 "Install with: pip install roadtraffic[shapefile]"
             ) from exc
+        # Deferred: source-CRS handling here still goes through pyproj
+        # unconditionally (a later task narrows this to the non-native case,
+        # mirroring _metric_crs_and_transformers above).
+        from pyproj import CRS, Transformer
 
         # force_2d=True: drop any Z coordinate, matching the (x, y)-only
         # reprojection below (2D distance-correct math is all this package does).
@@ -354,9 +400,7 @@ class Network:
         c = first.coords[0]
         if metric_epsg is None:
             metric_epsg = _auto_utm_epsg(c[0], c[1])
-        crs_metric = CRS.from_epsg(metric_epsg)
-        fwd = Transformer.from_crs(CRS.from_epsg(4326), crs_metric, always_xy=True)
-        inv = Transformer.from_crs(crs_metric, CRS.from_epsg(4326), always_xy=True)
+        crs_metric, fwd, inv = _metric_crs_and_transformers(metric_epsg)
 
         # Local import (once, not per record): keeps urllib -- pulled in by
         # osm.py's Overpass client -- off the cost of importing roadtraffic,
