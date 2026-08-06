@@ -84,6 +84,42 @@ def _metric_crs_and_transformers(epsg: int):
             pyproj.Transformer.from_crs(crs, wgs84, always_xy=True))
 
 
+def _source_to_wgs84(crs):
+    """Return an ``(x, y) -> (lon, lat)`` callable for a file's source CRS.
+
+    Returns None when the source is already WGS84 and no transform is needed.
+    UTM and Web Mercator are handled in numpy; anything else -- national
+    grids, non-WGS84 datums, raw WKT with no authority code -- needs PROJ's
+    database and falls back to pyproj.
+    """
+    epsg = _proj.parse_epsg(crs)
+    if epsg is None:
+        # No CRS recorded at all means WGS84 by convention; a CRS that is
+        # recorded but unparseable (raw WKT) is a real one we cannot read.
+        if not crs:
+            return None
+        pyproj = _require_pyproj(f"Reading a file in {crs!s:.60}")
+        return pyproj.Transformer.from_crs(
+            pyproj.CRS.from_user_input(crs),
+            pyproj.CRS.from_epsg(_proj.EPSG_WGS84),
+            always_xy=True,
+        ).transform
+    if epsg == _proj.EPSG_WGS84:
+        return None
+    if epsg == _proj.EPSG_WEB_MERCATOR:
+        return _proj.web_mercator_inverse
+    try:
+        zone, north = _proj.utm_epsg_to_zone(epsg)
+    except ValueError:
+        pyproj = _require_pyproj(f"Reading a file in EPSG:{epsg}")
+        return pyproj.Transformer.from_crs(
+            pyproj.CRS.from_epsg(epsg),
+            pyproj.CRS.from_epsg(_proj.EPSG_WGS84),
+            always_xy=True,
+        ).transform
+    return lambda x, y: _proj.utm_inverse(x, y, zone, north)
+
+
 def _round_node(x: float, y: float, ndigits: int = 7):
     """Quantise a coordinate so shared endpoints hash to the same node.
 
@@ -296,11 +332,6 @@ class Network:
                 "Reading Shapefile/GPKG requires the optional 'shapefile' extra. "
                 "Install with: pip install roadtraffic[shapefile]"
             ) from exc
-        # Deferred: source-CRS handling here still goes through pyproj
-        # unconditionally (a later task narrows this to the non-native case,
-        # mirroring _metric_crs_and_transformers above).
-        from pyproj import CRS, Transformer
-
         # force_2d=True: drop any Z coordinate, matching the (x, y)-only
         # reprojection below (2D distance-correct math is all this package does).
         meta, _fids, wkb, field_data = pyogrio.raw.read(
@@ -314,10 +345,7 @@ class Network:
         field_names = list(meta["fields"])
         field_data = tuple(np.asarray(col)[has_geom] for col in field_data)
 
-        src_crs = (CRS.from_user_input(meta["crs"]) if meta.get("crs")
-                  else CRS.from_epsg(4326))
-        to_wgs = Transformer.from_crs(src_crs, CRS.from_epsg(4326), always_xy=True)
-        reproject = src_crs.to_epsg() != 4326
+        to_wgs84 = _source_to_wgs84(meta.get("crs"))
 
         records = []
         for g, row in zip(geoms, zip(*field_data)):
@@ -326,10 +354,8 @@ class Network:
             for part in parts:
                 if part.geom_type != "LineString":
                     continue
-                if reproject:
-                    part = shapely_transform(
-                        lambda x, y: to_wgs.transform(x, y), part
-                    )
+                if to_wgs84 is not None:
+                    part = shapely_transform(to_wgs84, part)
                 records.append((part, dict(props)))
         if not records:
             raise ValueError("File contained no LineString features.")

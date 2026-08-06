@@ -150,24 +150,60 @@ def test_from_file_shp_basic(tmp_path):
     assert net.number_of_nodes() == 2
 
 
-def test_from_file_reprojects_non_wgs84_crs(tmp_path):
-    """Regression risk: from_file's CRS handling is the part most likely to
-    hide a subtle bug in the fiona->pyogrio rewrite (meta['crs'] format)."""
+def test_from_file_reprojects_utm_without_pyproj(tmp_path):
+    """A UTM GeoPackage reprojects natively. Pinned eastings from PROJ 9.5.1
+    for 15.0E/50.0N and 15.01E/50.0N in EPSG:32633, so this test does not
+    import pyproj at all."""
     pytest.importorskip("pyogrio")
-    from pyproj import CRS, Transformer
-    fwd = Transformer.from_crs(CRS.from_epsg(4326), CRS.from_epsg(32633),
-                               always_xy=True)
-    lon0, lat0 = 15.0, 50.0
-    lon1, lat1 = 15.01, 50.0
-    x0, y0 = fwd.transform(lon0, lat0)
-    x1, y1 = fwd.transform(lon1, lat1)
     path = write_ogr(tmp_path / "utm.gpkg", [
-        ([[x0, y0], [x1, y1]], {"highway": "residential"}),
+        ([[500000.000000, 5538630.702867],
+          [500716.670753, 5538630.750777]], {"highway": "residential"}),
     ], crs="EPSG:32633")
     net = rt.Network.from_file(path)
     lons = sorted(n[0] for n in net.graph.nodes())
-    assert lons[0] == pytest.approx(lon0, abs=1e-6)
-    assert lons[1] == pytest.approx(lon1, abs=1e-6)
+    assert lons[0] == pytest.approx(15.0, abs=1e-6)
+    assert lons[1] == pytest.approx(15.01, abs=1e-6)
+
+
+def test_from_file_reprojects_web_mercator(tmp_path):
+    """EPSG:3857 is the other CRS handled natively."""
+    pytest.importorskip("pyogrio")
+    path = write_ogr(tmp_path / "wm.gpkg", [
+        ([[1669792.3618991035, 6446275.841017159],
+          [1670905.5568070365, 6446275.841017159]], {"highway": "residential"}),
+    ], crs="EPSG:3857")
+    net = rt.Network.from_file(path)
+    lons = sorted(n[0] for n in net.graph.nodes())
+    assert lons[0] == pytest.approx(15.0, abs=1e-6)
+
+
+def test_from_file_wgs84_needs_no_transform(tmp_path):
+    """The common case must not touch the projection code at all."""
+    pytest.importorskip("pyogrio")
+    from roadtraffic import network as net_mod
+    assert net_mod._source_to_wgs84("EPSG:4326") is None
+    assert net_mod._source_to_wgs84(None) is None
+
+
+def test_from_file_exotic_crs_errors_clearly_without_pyproj(tmp_path, monkeypatch):
+    """British National Grid has no closed form here. Without pyproj the
+    failure must name the extra, not surface as ModuleNotFoundError."""
+    pytest.importorskip("pyogrio")
+    import builtins
+
+    path = write_ogr(tmp_path / "bng.gpkg", [
+        ([[529000.0, 181000.0], [529100.0, 181100.0]], {"highway": "residential"}),
+    ], crs="EPSG:27700")
+    real_import = builtins.__import__
+
+    def no_pyproj(name, *args, **kwargs):
+        if name == "pyproj":
+            raise ImportError("no pyproj")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pyproj)
+    with pytest.raises(ImportError, match=r"roadtraffic\[crs\]"):
+        rt.Network.from_file(path)
 
 
 def test_from_file_layer_param(tmp_path):
