@@ -5,9 +5,11 @@ WGS84 geographic (EPSG:4326), the 120 WGS84 UTM zones (EPSG:326xx/327xx), and
 Web Mercator (EPSG:3857). Anything else is left to the optional ``crs`` extra.
 
 The UTM implementation is the Krueger series as given in Karney (2011),
-"Transverse Mercator with an accuracy of a few nanometers". Truncated at n^5
-it agrees with PROJ to under ten nanometres anywhere inside a zone -- some
-nine orders of magnitude finer than the GPS noise this package absorbs.
+"Transverse Mercator with an accuracy of a few nanometers". Every series is
+truncated at n^5, which agrees with PROJ to a few tens of nanometres anywhere
+inside a zone (measured against pyproj over a full zone: 7.5 nm forward,
+14 nm inverse) -- some eight orders of magnitude finer than the GPS noise this
+package absorbs.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ import re
 import numpy as np
 
 EPSG_WGS84 = 4326
+EPSG_WGS84_3D = 4979          # WGS84 with an ellipsoidal height; 2D it is 4326
 EPSG_WEB_MERCATOR = 3857
 
 _A = 6378137.0                    # WGS84 semi-major axis (metres)
@@ -28,9 +31,24 @@ _FALSE_NORTHING = 10000000.0      # southern hemisphere only
 
 _EPSG_RE = re.compile(r"^\s*epsg\s*:\s*(\d+)\s*$", re.IGNORECASE)
 
+# CRS84 is WGS84 with the axis order fixed to lon/lat. It carries no EPSG code,
+# so it only ever shows up as the authority/id node of a WKT string (or, from a
+# caller passing it straight through, as the bare "OGC:CRS84" token).
+_CRS84_RE = re.compile(
+    r"^\s*ogc\s*:\s*crs84\s*$"
+    r"|(?:authority|id)\s*\[\s*\"ogc\"\s*,\s*\"?crs84\"?\s*\]",
+    re.IGNORECASE,
+)
+
 
 def _kruger_series():
-    """Krueger series coefficients for the WGS84 ellipsoid, to order n^5."""
+    """Krueger series coefficients for the WGS84 ellipsoid.
+
+    All three series -- ``alpha`` (forward), ``beta`` (inverse) and ``delta``
+    (conformal latitude -> geodetic latitude) -- run to order n^5. Dropping
+    delta's n^5 terms costs a factor of 180 in inverse-latitude accuracy
+    (14 nm -> 2.6 um) for four extra multiplications done once at import.
+    """
     n = _F / (2 - _F)
     n2, n3, n4, n5, n6 = n**2, n**3, n**4, n**5, n**6
     a_bar = _A / (1 + n) * (1 + n2 / 4 + n4 / 64 + n6 / 256)
@@ -49,10 +67,11 @@ def _kruger_series():
         4583 * n5 / 161280,
     )
     delta = (
-        2 * n - 2 * n2 / 3 - 2 * n3 + 116 * n4 / 45,
-        7 * n2 / 3 - 8 * n3 / 5 - 227 * n4 / 45,
-        56 * n3 / 15 - 136 * n4 / 35,
-        4279 * n4 / 630,
+        2 * n - 2 * n2 / 3 - 2 * n3 + 116 * n4 / 45 + 26 * n5 / 45,
+        7 * n2 / 3 - 8 * n3 / 5 - 227 * n4 / 45 + 2704 * n5 / 315,
+        56 * n3 / 15 - 136 * n4 / 35 - 1262 * n5 / 105,
+        4279 * n4 / 630 - 332 * n5 / 35,
+        4174 * n5 / 315,
     )
     return a_bar, alpha, beta, delta
 
@@ -71,6 +90,40 @@ def parse_epsg(crs) -> int | None:
         return None
     match = _EPSG_RE.match(str(crs))
     return int(match.group(1)) if match else None
+
+
+def is_wgs84(crs) -> bool:
+    """True when a CRS string already *is* WGS84 lon/lat, however it is spelled.
+
+    Three spellings mean the same coordinates and need no transform:
+
+    * ``EPSG:4326``, the plain code;
+    * ``EPSG:4979``, WGS84 with an ellipsoidal height -- identical horizontally,
+      and the Z is dropped before any of this runs;
+    * ``OGC:CRS84``, which is what GDAL/QGIS/ogr2ogr stamp on GeoJSON. It has no
+      EPSG code, so :func:`parse_epsg` cannot see it and it arrives as raw WKT.
+
+    Missing this last one is expensive: it would send the single most common
+    exported file format down the pyproj path for a transform that is the
+    identity.
+
+    Parameters
+    ----------
+    crs : str or None
+        A CRS as reported by pyogrio -- an ``"EPSG:NNNN"`` token or raw WKT.
+
+    Returns
+    -------
+    bool
+        False for an empty or unrecognised CRS; the caller decides what a
+        missing CRS means.
+    """
+    if not crs:
+        return False
+    epsg = parse_epsg(crs)
+    if epsg is not None:
+        return epsg in (EPSG_WGS84, EPSG_WGS84_3D)
+    return _CRS84_RE.search(str(crs)) is not None
 
 
 def utm_epsg_to_zone(epsg: int) -> tuple[int, bool]:
@@ -138,7 +191,11 @@ def utm_inverse(x, y, zone: int, north: bool):
     chi = np.arcsin(np.clip(np.sin(xi_p) / np.cosh(eta_p), -1.0, 1.0))
     phi = chi + sum(d * np.sin(2 * (j + 1) * chi) for j, d in enumerate(_DELTA))
     lam = np.arctan2(np.sinh(eta_p), np.cos(xi_p))
-    return np.degrees(lam + lon0), np.degrees(phi)
+    # Zone 60 straddles the antimeridian, so its western half comes out above
+    # +180. Wrap into [-180, 180) -- RFC 7946 requires it of any coordinate we
+    # write out, and node keys must match the source file's own longitudes.
+    lon = (np.degrees(lam + lon0) + 180.0) % 360.0 - 180.0
+    return lon, np.degrees(phi)
 
 
 def web_mercator_inverse(x, y):

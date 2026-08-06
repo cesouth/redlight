@@ -112,10 +112,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install without any extras
+      # pyogrio, not the full shapefile stack: it needs only certifi, numpy and
+      # packaging, so PROJ still never arrives. Without it every from_file test
+      # importorskips out and this job never exercises the source-CRS path,
+      # which is precisely the code that has to work with no pyproj.
+      - name: Install with the shapefile extra only
         run: |
           python -m pip install --upgrade pip
-          pip install . pytest
+          pip install '.[shapefile]' pytest
       - name: Assert pyproj is genuinely absent
         run: |
           ! pip show pyproj

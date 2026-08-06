@@ -34,8 +34,11 @@ def test_utm_inverse_matches_reference(lon, lat, epsg, east, north):
     """The inverse recovers the original degrees from PROJ's own eastings."""
     zone, is_north = _proj.utm_epsg_to_zone(epsg)
     got_lon, got_lat = _proj.utm_inverse(east, north, zone, is_north)
-    assert float(got_lon) == pytest.approx(lon, abs=1e-9)
-    assert float(got_lat) == pytest.approx(lat, abs=1e-9)
+    # 1e-10 deg is ~11 um. The floor here is the reference itself: the eastings
+    # above are pinned to a micrometre, i.e. ~5e-12 deg of rounding. Observed
+    # residual across these five points is at most 4.2e-12 deg.
+    assert float(got_lon) == pytest.approx(lon, abs=1e-10)
+    assert float(got_lat) == pytest.approx(lat, abs=1e-10)
 
 
 def test_utm_roundtrip_across_a_full_zone_width():
@@ -46,9 +49,31 @@ def test_utm_roundtrip_across_a_full_zone_width():
     lat = rng.uniform(0.5, 84.0, 2000)
     x, y = _proj.utm_forward(lon, lat, 33, True)
     got_lon, got_lat = _proj.utm_inverse(x, y, 33, True)
-    # 1e-8 deg is ~1.1 mm at the equator.
-    assert np.max(np.abs(got_lon - lon)) < 1e-8
-    assert np.max(np.abs(got_lat - lat)) < 1e-8
+    # 1e-11 deg is ~1.1 um at the equator. Observed worst case over these 2000
+    # points is 1.3e-13 deg, so this bound holds with ~80x of margin; it is set
+    # this tight deliberately, because a truncated series is exactly what a
+    # loose round-trip tolerance would hide.
+    assert np.max(np.abs(got_lon - lon)) < 1e-11
+    assert np.max(np.abs(got_lat - lat)) < 1e-11
+
+
+def test_zone_60_inverse_wraps_across_the_antimeridian():
+    """Zone 60 straddles 180 deg, so its western half comes out of the series
+    above +180. Longitudes must be wrapped back into [-180, 180): node keys
+    have to match the source file's own coordinates, and GeoJSON output above
+    180 is invalid per RFC 7946."""
+    x, y = _proj.utm_forward(-179.0, 60.0, 60, True)
+    lon, lat = _proj.utm_inverse(x, y, 60, True)
+    assert float(lon) == pytest.approx(-179.0, abs=1e-10)
+    assert float(lat) == pytest.approx(60.0, abs=1e-10)
+
+    # Vectorised, and on both sides of the seam.
+    lons = np.array([-179.5, -177.0, 177.0, 179.5])
+    xs, ys = _proj.utm_forward(lons, np.full(4, -40.0), 60, False)
+    got_lon, got_lat = _proj.utm_inverse(xs, ys, 60, False)
+    assert np.all(got_lon >= -180.0) and np.all(got_lon < 180.0)
+    assert np.allclose(got_lon, lons, atol=1e-10)
+    assert np.allclose(got_lat, -40.0, atol=1e-10)
 
 
 def test_southern_hemisphere_applies_the_false_northing():
@@ -93,6 +118,35 @@ def test_parse_epsg(raw, expected):
     """pyogrio hands back 'EPSG:NNNN' when the file carries an authority code,
     and raw WKT when it does not. Only the former can be handled natively."""
     assert _proj.parse_epsg(raw) == expected
+
+
+# What GDAL/QGIS/ogr2ogr stamp on a CRS84 file, as pyogrio reports it back.
+CRS84_WKT = (
+    'GEOGCS["WGS 84 (CRS84)",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,'
+    '298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],'
+    'PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",'
+    '0.0174532925199433,AUTHORITY["EPSG","9122"]],AXIS["Longitude",EAST],'
+    'AXIS["Latitude",NORTH],AUTHORITY["OGC","CRS84"]]'
+)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("EPSG:4326", True),
+    ("EPSG:4979", True),      # WGS84 3D; identical horizontally
+    ("OGC:CRS84", True),
+    (CRS84_WKT, True),
+    ('GEOGCRS["WGS 84 (CRS84)",ID["OGC","CRS84"]]', True),  # WKT2 spelling
+    ("EPSG:32633", False),
+    ("EPSG:3857", False),
+    ("EPSG:27700", False),
+    ('PROJCS["OSGB 1936 / British National Grid",GEOGCS[...]]', False),
+    (None, False),
+    ("", False),
+])
+def test_is_wgs84(raw, expected):
+    """CRS84 carries no EPSG code, so parse_epsg cannot see it -- yet it is the
+    single most common spelling in exported GeoJSON and needs no transform."""
+    assert _proj.is_wgs84(raw) is expected
 
 
 def test_utm_crs_shim_exposes_to_epsg():

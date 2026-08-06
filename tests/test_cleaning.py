@@ -79,3 +79,52 @@ def test_trajectory_filter_drops_parked_dwell():
     # position, so the anchor-based dwell absorbs it too
     assert len(out) == n_move - 1
     assert (out["speed_mps"] == 3.0).all()
+
+
+def test_dwell_run_that_never_leaves_the_radius_reaches_the_end():
+    """The block scan finds the first point past the radius with argmax, which
+    returns 0 on an all-False block -- i.e. 'the very first point already left'.
+    A trajectory that never leaves the radius must still dwell to its last fix.
+    """
+    from roadtraffic.cleaning import _dwell_mask
+
+    n = 500  # longer than the probe window and several doubling blocks
+    rng = np.random.default_rng(3)
+    d = 5.0 / 111319.5
+    lon = 15.0 + rng.uniform(-d, d, n)
+    lat = 50.0 + rng.uniform(-d, d, n)
+    t = np.arange(n, dtype=float) * 10.0
+    assert _dwell_mask(lon, lat, t, 25.0, 120.0).all()
+
+
+@pytest.mark.parametrize("run_len", [1, 7, 8, 9, 31, 32, 33, 100])
+def test_dwell_run_ends_exactly_where_the_radius_does(run_len):
+    """Run boundaries must not shift with the scan's probe/block sizes."""
+    from roadtraffic.cleaning import _dwell_mask
+
+    rng = np.random.default_rng(run_len)
+    d = 5.0 / 111319.5
+    lon = np.concatenate([15.0 + rng.uniform(-d, d, run_len + 1), [15.5]])
+    lat = np.concatenate([50.0 + rng.uniform(-d, d, run_len + 1), [50.0]])
+    t = np.arange(run_len + 2, dtype=float) * 30.0
+    mask = _dwell_mask(lon, lat, t, 25.0, 30.0)
+    assert mask[:run_len + 1].all()
+    assert not mask[run_len + 1]
+
+
+def test_dwell_tolerates_a_missing_coordinate():
+    """A NaN fix ends the run it lands in rather than failing the whole clean:
+    the geodesic raises on a non-finite input instead of returning one, so the
+    coordinates have to be screened before they reach it."""
+    from roadtraffic.cleaning import _dwell_mask
+
+    rng = np.random.default_rng(11)
+    d = 5.0 / 111319.5
+    lon = 15.0 + rng.uniform(-d, d, 40)
+    lat = 50.0 + rng.uniform(-d, d, 40)
+    lon[20] = np.nan
+    t = np.arange(40, dtype=float) * 10.0
+    mask = _dwell_mask(lon, lat, t, 25.0, 120.0)
+    assert mask[:20].all()          # the run ends at the missing fix
+    assert not mask[20]             # which is itself not part of any dwell
+    assert mask[21:].all()          # and a fresh run starts after it

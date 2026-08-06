@@ -185,6 +185,38 @@ def test_from_file_wgs84_needs_no_transform(tmp_path):
     assert net_mod._source_to_wgs84(None) is None
 
 
+def test_from_file_crs84_needs_no_transform(tmp_path, monkeypatch):
+    """OGC:CRS84 is plain WGS84 lon/lat, and is what GDAL/QGIS/ogr2ogr write
+    for GeoJSON. It has no EPSG code, so it arrives as raw WKT -- if that sent
+    the file down the pyproj path, a default install would fail on the most
+    common export format there is, for a transform that is the identity."""
+    pytest.importorskip("pyogrio")
+    import builtins
+
+    path = write_ogr(tmp_path / "crs84.gpkg", [
+        ([[15.0, 50.0], [15.01, 50.0]], {"highway": "residential"}),
+    ], crs="OGC:CRS84")
+    real_import = builtins.__import__
+
+    def no_pyproj(name, *args, **kwargs):
+        if name == "pyproj":
+            raise ImportError("no pyproj")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pyproj)
+    net = rt.Network.from_file(path)
+    lons = sorted(n[0] for n in net.graph.nodes())
+    assert lons[0] == pytest.approx(15.0, abs=1e-9)
+    assert lons[1] == pytest.approx(15.01, abs=1e-9)
+
+
+def test_from_file_wgs84_3d_needs_no_transform():
+    """EPSG:4979 is WGS84 with an ellipsoidal height. force_2d has already
+    dropped the Z, so horizontally it is EPSG:4326 and needs no transform."""
+    from roadtraffic import network as net_mod
+    assert net_mod._source_to_wgs84("EPSG:4979") is None
+
+
 def test_from_file_exotic_crs_errors_clearly_without_pyproj(tmp_path, monkeypatch):
     """British National Grid has no closed form here. Without pyproj the
     failure must name the extra, not surface as ModuleNotFoundError."""
@@ -204,6 +236,49 @@ def test_from_file_exotic_crs_errors_clearly_without_pyproj(tmp_path, monkeypatc
     monkeypatch.setattr(builtins, "__import__", no_pyproj)
     with pytest.raises(ImportError, match=r"roadtraffic\[crs\]"):
         rt.Network.from_file(path)
+
+
+def test_metric_crs_error_does_not_recommend_the_crs_that_just_failed(monkeypatch):
+    """The metric path handles UTM only -- Web Mercator is deliberately not
+    supported there, because it inflates ground distance by sec(latitude).
+    So metric_epsg=3857 must not be told to try 3857."""
+    import builtins
+
+    from roadtraffic import network as net_mod
+
+    real_import = builtins.__import__
+
+    def no_pyproj(name, *args, **kwargs):
+        if name == "pyproj":
+            raise ImportError("no pyproj")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_pyproj)
+    with pytest.raises(ImportError) as exc:
+        net_mod._metric_crs_and_transformers(3857)
+    msg = str(exc.value)
+    assert "roadtraffic[crs]" in msg
+    # The failing CRS is named once, as the thing that failed -- but never in
+    # the list of alternatives.
+    suggested = msg.split("natively supported CRS:", 1)[1]
+    assert "32601-32660" in suggested
+    assert "3857" not in suggested and "Web Mercator" not in suggested
+    assert "4326" not in suggested
+
+
+def test_unreadable_crs_message_marks_its_truncation():
+    """The excerpt of a long WKT must read as deliberately cut, not corrupt."""
+    from roadtraffic import network as net_mod
+
+    wkt = ('PROJCS["Some National Grid",GEOGCS["Some Datum",'
+           'SPHEROID["WGS 84",6378137,298.257223563]],'
+           'PROJECTION["Transverse_Mercator"],UNIT["metre",1]]')
+    excerpt = net_mod._crs_excerpt(wkt)
+    assert excerpt.endswith(" ...")
+    assert len(excerpt) <= 60
+    assert excerpt.startswith('PROJCS["Some National Grid"')
+    # Short CRS strings are passed through whole, with no spurious marker.
+    assert net_mod._crs_excerpt("EPSG:27700") == "EPSG:27700"
 
 
 def test_from_file_layer_param(tmp_path):

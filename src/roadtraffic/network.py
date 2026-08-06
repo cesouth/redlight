@@ -45,13 +45,37 @@ def _auto_utm_epsg(lon: float, lat: float) -> int:
     return (32600 if lat >= 0 else 32700) + zone
 
 
-def _require_pyproj(what: str):
+# What each caller of _require_pyproj can natively handle. These differ: a
+# source file may be read from any of the three, but only UTM is safe as the
+# *metric* CRS, because Web Mercator inflates ground distance by sec(latitude)
+# -- some 55% at 50 deg N -- which would corrupt every length and speed.
+_SOURCE_CRS_NATIVE = (
+    "EPSG:4326 (WGS84), OGC:CRS84, EPSG:3857 (Web Mercator), or a WGS84 UTM "
+    "zone (EPSG:32601-32660 and 32701-32760)"
+)
+_METRIC_CRS_NATIVE = (
+    "a WGS84 UTM zone (EPSG:32601-32660 for the northern hemisphere, "
+    "32701-32760 for the southern), which is also the default"
+)
+
+
+def _require_pyproj(what: str, supported: str):
     """Import pyproj, or raise an error that names the extra and the way out.
 
     pyproj is not a core dependency: it ships PROJ's native library and its
     coordinate database, which is both the bulk of the install and the usual
     source of ``proj.db`` conflicts. The natively supported systems cover
     essentially all road data, so this is reached only for the long tail.
+
+    Parameters
+    ----------
+    what : str
+        The operation that needs pyproj, e.g. ``"metric_epsg=EPSG:3035"``.
+    supported : str
+        The alternatives *this* caller can handle without pyproj -- pass
+        ``_SOURCE_CRS_NATIVE`` or ``_METRIC_CRS_NATIVE``. The two sets are not
+        the same, and suggesting the wrong one sends the user back to the CRS
+        that just failed.
     """
     try:
         import pyproj
@@ -60,11 +84,24 @@ def _require_pyproj(what: str):
             f"{what} needs pyproj, which roadtraffic does not install by "
             f"default. Either install the extra:\n"
             f"    pip install 'roadtraffic[crs]'\n"
-            f"or use a natively supported CRS: EPSG:4326 (WGS84), EPSG:3857 "
-            f"(Web Mercator), or a WGS84 UTM zone (EPSG:32601-32660 and "
-            f"32701-32760)."
+            f"or use a natively supported CRS: {supported}."
         ) from exc
     return pyproj
+
+
+def _crs_excerpt(crs, width: int = 60) -> str:
+    """Shorten a CRS for an error message, marking that it was cut.
+
+    A WKT string is hundreds of characters, and a bare slice of one ends
+    mid-token (``SPHEROID["WGS 84",6``) and reads like corruption rather than
+    an excerpt. ``textwrap.shorten`` is not used here: WKT's only spaces are
+    inside quoted names, so a word-boundary cut can throw away almost the
+    whole excerpt. The trailing marker is what makes the cut legible.
+    """
+    text = " ".join(str(crs).split())
+    if len(text) <= width:
+        return text
+    return text[:width - 4].rstrip() + " ..."
 
 
 def _metric_crs_and_transformers(epsg: int):
@@ -78,7 +115,7 @@ def _metric_crs_and_transformers(epsg: int):
         return _proj.utm_crs_and_transformers(epsg)
     except ValueError:
         pass
-    pyproj = _require_pyproj(f"metric_epsg=EPSG:{epsg}")
+    pyproj = _require_pyproj(f"metric_epsg=EPSG:{epsg}", _METRIC_CRS_NATIVE)
     crs = pyproj.CRS.from_epsg(epsg)
     wgs84 = pyproj.CRS.from_epsg(_proj.EPSG_WGS84)
     return (crs,
@@ -89,31 +126,32 @@ def _metric_crs_and_transformers(epsg: int):
 def _source_to_wgs84(crs):
     """Return an ``(x, y) -> (lon, lat)`` callable for a file's source CRS.
 
-    Returns None when the source is already WGS84 and no transform is needed.
-    UTM and Web Mercator are handled in numpy; anything else -- national
-    grids, non-WGS84 datums, raw WKT with no authority code -- needs PROJ's
-    database and falls back to pyproj.
+    Returns None when the source is already WGS84 and no transform is needed --
+    including the CRS84 and 4979 spellings of it, which carry no usable EPSG
+    code but describe the very same lon/lat. UTM and Web Mercator are handled
+    in numpy; anything else -- national grids, non-WGS84 datums, raw WKT with
+    no authority code -- needs PROJ's database and falls back to pyproj.
     """
+    # No CRS recorded at all means WGS84 by convention; a CRS that is recorded
+    # but unparseable (raw WKT) is a real one we cannot read.
+    if not crs or _proj.is_wgs84(crs):
+        return None
     epsg = _proj.parse_epsg(crs)
     if epsg is None:
-        # No CRS recorded at all means WGS84 by convention; a CRS that is
-        # recorded but unparseable (raw WKT) is a real one we cannot read.
-        if not crs:
-            return None
-        pyproj = _require_pyproj(f"Reading a file in {crs!s:.60}")
+        pyproj = _require_pyproj(f"Reading a file in {_crs_excerpt(crs)}",
+                                 _SOURCE_CRS_NATIVE)
         return pyproj.Transformer.from_crs(
             pyproj.CRS.from_user_input(crs),
             pyproj.CRS.from_epsg(_proj.EPSG_WGS84),
             always_xy=True,
         ).transform
-    if epsg == _proj.EPSG_WGS84:
-        return None
     if epsg == _proj.EPSG_WEB_MERCATOR:
         return _proj.web_mercator_inverse
     try:
         zone, north = _proj.utm_epsg_to_zone(epsg)
     except ValueError:
-        pyproj = _require_pyproj(f"Reading a file in EPSG:{epsg}")
+        pyproj = _require_pyproj(f"Reading a file in EPSG:{epsg}",
+                                 _SOURCE_CRS_NATIVE)
         return pyproj.Transformer.from_crs(
             pyproj.CRS.from_epsg(epsg),
             pyproj.CRS.from_epsg(_proj.EPSG_WGS84),

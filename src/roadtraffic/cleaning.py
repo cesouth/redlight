@@ -189,18 +189,88 @@ def filter_trajectory_speed(
     return df[keep].reset_index(drop=True)
 
 
+# The geodesic is iterative, so one call costs ~90 us of Python and numpy
+# overhead almost regardless of how many pairs it covers -- and a call on a
+# one-element *array* costs about twice a call on 0-d scalars, because numpy's
+# scalar fast path drops out. So the run scan does both: the first few points
+# one at a time (a moving vehicle leaves the radius almost immediately, and
+# that case must stay exactly as cheap as it was), then blocks that double in
+# size, which is what turns a long dwell from quadratic into a handful of calls.
+_DWELL_SCAN_PROBE = 8
+_DWELL_SCAN_BLOCK = 32
+
+
+def _run_end(lon, lat, finite, i, radius_m) -> int:
+    """Last index of the run anchored at ``i``: still within ``radius_m`` of it.
+
+    Returns ``i`` itself when the very next point already leaves the radius, and
+    ``len(lon) - 1`` when the run never leaves it.
+    """
+    n = len(lon)
+    if not finite[i]:
+        # No distance from this anchor is measurable, so the run cannot extend.
+        return i
+    lon_i, lat_i = lon[i], lat[i]
+
+    j = i
+    while j + 1 < n and j - i < _DWELL_SCAN_PROBE:
+        dist = geodesic_distance(lon_i, lat_i, lon[j + 1], lat[j + 1])
+        if not finite[j + 1] or not np.isfinite(dist) or dist > radius_m:
+            return j
+        j += 1
+
+    start, size = j + 1, _DWELL_SCAN_BLOCK
+    while start < n:
+        stop = min(start + size, n)
+        try:
+            dist = geodesic_distance(lon_i, lat_i,
+                                     lon[start:stop], lat[start:stop])
+        except ValueError:
+            # A near-antipodal pair somewhere in the block makes the whole
+            # vectorised call fail. Fall back to measuring point by point, so
+            # a run that would have ended before reaching it still ends there
+            # -- and so the failure surfaces at the same pair it used to.
+            for k in range(start, stop):
+                d = geodesic_distance(lon_i, lat_i, lon[k], lat[k])
+                if not finite[k] or not np.isfinite(d) or d > radius_m:
+                    return k - 1
+            start, size = stop, size * 2
+            continue
+        beyond = ~(np.isfinite(dist) & finite[start:stop]) | (dist > radius_m)
+        if beyond.any():
+            # argmax gives the first True -- but only because one is known to
+            # exist. On an all-False block it returns 0, which would wrongly
+            # end the run at its first point, hence the .any() guard.
+            return start + int(np.argmax(beyond)) - 1
+        start, size = stop, size * 2
+    return n - 1
+
+
 def _dwell_mask(lon, lat, t, radius_m, min_s) -> np.ndarray:
-    """Boolean mask (True = stationary dwell) for one time-ordered trajectory."""
+    """Boolean mask (True = stationary dwell) for one time-ordered trajectory.
+
+    A run is a maximal block of consecutive points all within ``radius_m`` of
+    the block's first point; it is a dwell if it spans at least ``min_s``. A
+    distance that is not finite ends a run just as an out-of-radius one does.
+
+    Non-finite coordinates are projected onto (0, 0) for the measurement and
+    their distances forced back to NaN afterwards: ``geodesic_distance`` raises
+    on a non-finite input rather than returning one, and a single missing fix
+    should end a run, not the whole cleaning pass.
+    """
     n = len(lon)
     mask = np.zeros(n, dtype=bool)
+    if n == 0:
+        return mask
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    finite = np.isfinite(lon) & np.isfinite(lat)
+    lon_safe = np.where(finite, lon, 0.0)
+    lat_safe = np.where(finite, lat, 0.0)
+
     i = 0
     while i < n:
-        j = i
-        while j + 1 < n:
-            dist = geodesic_distance(lon[i], lat[i], lon[j + 1], lat[j + 1])
-            if not np.isfinite(dist) or dist > radius_m:
-                break
-            j += 1
+        j = _run_end(lon_safe, lat_safe, finite, i, radius_m)
         dur = t[j] - t[i]
         if j > i and np.isfinite(dur) and dur >= min_s:
             mask[i:j + 1] = True

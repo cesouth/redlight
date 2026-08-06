@@ -462,8 +462,9 @@ def _derive_speed_mps(out: pd.DataFrame) -> np.ndarray:
     coordinate/time yield NaN, and such points are dropped downstream.
 
     Differencing is strictly per-trajectory so two distinct movements are never
-    connected. WGS84 lon/lat are used directly with a geodesic (Geod) inverse, so
-    no projection is needed and distances are true ground metres.
+    connected. WGS84 lon/lat are used directly with an inverse geodesic solution
+    on the WGS84 ellipsoid, so no projection is needed and distances are true
+    ground metres.
     """
     n = len(out)
     speed = np.full(n, np.nan)

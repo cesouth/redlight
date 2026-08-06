@@ -530,7 +530,7 @@ construction, since one edge's contribution to the numerator and denominator
 is bounded by its own (bounded) length either way. Whether directed edges are
 deduplicated by physical road turns out not to matter for this formula
 either: a two-way road's forward and reverse edges have identical length and
-identical geodesic distance (`Geod.inv` is symmetric), so including both
+identical geodesic distance (the inverse geodesic is symmetric), so including both
 scales numerator and denominator by the same factor and leaves the ratio
 unchanged — the implementation can iterate every directed edge with no
 per-road bookkeeping.

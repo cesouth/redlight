@@ -30,6 +30,7 @@ from __future__ import annotations
 import math
 
 import networkx as nx
+import numpy as np
 
 from ._geo import geodesic_distance
 from .network import _RESERVED_EDGE_ATTRS
@@ -302,17 +303,26 @@ def network_stats(network, *, area_km2: float | None = None) -> dict:
     road_length_m: dict[int, float] = {}
     road_nodes: dict[int, tuple] = {}
     total_length = 0.0
-    total_gc = 0.0
+    # Endpoint pairs are collected and measured in a single vectorised call:
+    # the geodesic is iterative, so calling it per edge inside this loop costs
+    # ~90 us each and dominates the whole function on a city-sized graph.
+    endpoints: list[tuple] = []
     for u, v, d in graph.edges(data=True):
         eid = int(d["edge_id"])
         length = float(d["length_m"])
         total_length += length
-        gc = float(geodesic_distance(u[0], u[1], v[0], v[1]))
-        total_gc += gc
+        endpoints.append((u[0], u[1], v[0], v[1]))
         rid = min(network.road_edge_ids(eid))
         if rid not in road_length_m:
             road_length_m[rid] = length
             road_nodes[rid] = (u, v)
+
+    if endpoints:
+        ep = np.asarray(endpoints, dtype=float)
+        total_gc = float(np.sum(geodesic_distance(ep[:, 0], ep[:, 1],
+                                                  ep[:, 2], ep[:, 3])))
+    else:
+        total_gc = 0.0
 
     node_roads: dict = {n: set() for n in graph.nodes()}
     for rid, (u, v) in road_nodes.items():

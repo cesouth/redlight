@@ -11,14 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `pyproj` is no longer a core dependency. WGS84, the 120 WGS84 UTM zones and
   Web Mercator are now projected in numpy, and geodesic distance uses
-  Vincenty's inverse formula. Verified against PROJ 9.5.1 to under 10 nm for
-  the UTM forward projection and a few micrometres for geodesic distance.
-  This removes 21 MB from an install and the `proj.db` class of environment
-  conflicts along with it.
+  Vincenty's inverse formula. Verified against PROJ 9.5.1 over a full UTM zone
+  to 7.5 nm forward and 14 nm inverse, and to a few micrometres for geodesic
+  distance. This removes 21 MB from an install and the `proj.db` class of
+  environment conflicts along with it.
+- `OGC:CRS84` source files are read natively. It is plain WGS84 lon/lat and is
+  what GDAL/QGIS/`ogr2ogr` stamp on exported GeoJSON, but it carries no EPSG
+  code, so it needs recognising by name rather than by code. `EPSG:4979`
+  (WGS84 3D) likewise: the Z is dropped on read, leaving EPSG:4326.
 - Reading a file in any other CRS -- national grids, non-WGS84 datums, raw-WKT
   CRS -- now requires the new `crs` extra: `pip install 'roadtraffic[crs]'`.
   The same applies to a `metric_epsg=` override outside the UTM zones. Both
-  raise an `ImportError` naming the extra rather than failing obscurely.
+  raise an `ImportError` naming the extra rather than failing obscurely, and
+  each names only the CRS *it* can handle natively (the metric path is UTM
+  only -- Web Mercator is excluded there because it inflates ground distance
+  by sec(latitude), some 55% at 50 deg N).
+
+### Fixed
+- `filter_trajectory_speed` no longer slows to a crawl on long stationary
+  clusters -- the exact case it exists to detect. The dwell scan measures
+  candidate points in blocks instead of one geodesic call at a time
+  (a 4,000-point idle: minutes -> 3 ms), and a missing coordinate now ends the
+  run it lands in rather than raising.
+- `network_stats` computes all its great-circle distances in one vectorised
+  call (19,320 edges: 1.31 s -> 0.05 s).
+- UTM inverse longitudes in zone 60 are wrapped into [-180, 180) instead of
+  coming back above +180, which is invalid GeoJSON per RFC 7946.
 
 ## [0.5.0] - 2026-08-01
 
