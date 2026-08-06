@@ -217,6 +217,36 @@ def test_from_file_wgs84_3d_needs_no_transform():
     assert net_mod._source_to_wgs84("EPSG:4979") is None
 
 
+def test_source_to_wgs84_rejects_projcrs_with_nested_crs84_base():
+    """Regression guard: a PROJCRS whose BASEGEOGCRS happens to carry the
+    CRS84 id must not be treated as already-WGS84. Its coordinates are the
+    projection's own (here, UTM-style metres) -- if _source_to_wgs84 returned
+    None for this, those eastings/northings would be written straight into
+    the network's lon/lat node keys with no transform and no warning."""
+    from roadtraffic import network as net_mod
+
+    # Same nested-CRS84-in-BASEGEOGCRS structure as the finding's reproduction,
+    # with a DATUM node added to BASEGEOGCRS: WKT2 (ISO 19162) requires a
+    # DATUM or ENSEMBLE there, and without one pyproj/PROJ 9.5.1 rejects the
+    # string outright (CRSError: "Missing DATUM or ENSEMBLE node") before
+    # is_wgs84 is ever reached -- this variant isolates the classification bug
+    # from that unrelated well-formedness issue.
+    bad_wkt = (
+        'PROJCRS["Fictitious Grid built on a CRS84 base",'
+        'BASEGEOGCRS["WGS 84",DATUM["World Geodetic System 1984",'
+        'ELLIPSOID["WGS 84",6378137,298.257223563]],ID["OGC","CRS84"]],'
+        'CONVERSION["UTM zone 33N",METHOD["Transverse Mercator"]],'
+        'CS[Cartesian,2],AXIS["easting",east],AXIS["northing",north],'
+        'LENGTHUNIT["metre",1],ID["EPSG",99999]]'
+    )
+    assert net_mod._proj.is_wgs84(bad_wkt) is False
+    # pyproj is installed in this environment, so a real transformer builds --
+    # assert on "not None" (a transform is applied) rather than its type.
+    transform = net_mod._source_to_wgs84(bad_wkt)
+    assert transform is not None
+    assert callable(transform)
+
+
 def test_from_file_exotic_crs_errors_clearly_without_pyproj(tmp_path, monkeypatch):
     """British National Grid has no closed form here. Without pyproj the
     failure must name the extra, not surface as ModuleNotFoundError."""

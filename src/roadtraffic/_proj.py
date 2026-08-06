@@ -34,11 +34,23 @@ _EPSG_RE = re.compile(r"^\s*epsg\s*:\s*(\d+)\s*$", re.IGNORECASE)
 # CRS84 is WGS84 with the axis order fixed to lon/lat. It carries no EPSG code,
 # so it only ever shows up as the authority/id node of a WKT string (or, from a
 # caller passing it straight through, as the bare "OGC:CRS84" token).
-_CRS84_RE = re.compile(
-    r"^\s*ogc\s*:\s*crs84\s*$"
-    r"|(?:authority|id)\s*\[\s*\"ogc\"\s*,\s*\"?crs84\"?\s*\]",
-    re.IGNORECASE,
+_CRS84_BARE_RE = re.compile(r"^\s*ogc\s*:\s*crs84\s*$", re.IGNORECASE)
+_CRS84_NODE_RE = re.compile(
+    r"(?:authority|id)\s*\[\s*\"ogc\"\s*,\s*\"?crs84\"?\s*\]", re.IGNORECASE
 )
+
+# The outermost WKT keyword, e.g. "GEOGCRS" out of 'GEOGCRS["WGS 84",...]'.
+_WKT_KEYWORD_RE = re.compile(r"^\s*([A-Za-z_]+)\s*\[")
+
+# A CRS84/AUTHORITY["OGC","CRS84"] node can legally appear nested inside a
+# projected CRS's base geographic CRS (a PROJCRS's BASEGEOGCRS, a BOUNDCRS's
+# SOURCECRS, ...). That nested tag describes the *base* the projection was
+# built on, not the CRS the string as a whole denotes -- so it must not be
+# read as "this string is CRS84". Only a geographic-CRS keyword at the top
+# guarantees the identifier belongs to the CRS itself.
+_GEOGRAPHIC_WKT_KEYWORDS = frozenset({
+    "GEOGCS", "GEOGCRS", "GEODCRS", "GEODETICCRS", "GEOGRAPHICCRS",
+})
 
 
 def _kruger_series():
@@ -107,6 +119,15 @@ def is_wgs84(crs) -> bool:
     exported file format down the pyproj path for a transform that is the
     identity.
 
+    For the WKT case, a CRS84 identifier only counts when it belongs to the
+    CRS the string as a whole denotes -- i.e. when the *outermost* WKT keyword
+    is itself a geographic-CRS keyword (``GEOGCS``, ``GEOGCRS``, ``GEODCRS``,
+    ``GEODETICCRS`` or ``GEOGRAPHICCRS``). A projected CRS built on a CRS84
+    base (``PROJCRS[...BASEGEOGCRS["WGS 84",ID["OGC","CRS84"]]...]``) carries
+    that same identifier nested inside it, but its coordinates are the
+    projection's -- typically metres, not degrees -- and reporting it as
+    already-WGS84 would apply no transform to a CRS that badly needs one.
+
     Parameters
     ----------
     crs : str or None
@@ -123,7 +144,13 @@ def is_wgs84(crs) -> bool:
     epsg = parse_epsg(crs)
     if epsg is not None:
         return epsg in (EPSG_WGS84, EPSG_WGS84_3D)
-    return _CRS84_RE.search(str(crs)) is not None
+    text = str(crs)
+    if _CRS84_BARE_RE.match(text):
+        return True
+    keyword = _WKT_KEYWORD_RE.match(text)
+    if keyword is None or keyword.group(1).upper() not in _GEOGRAPHIC_WKT_KEYWORDS:
+        return False
+    return _CRS84_NODE_RE.search(text) is not None
 
 
 def utm_epsg_to_zone(epsg: int) -> tuple[int, bool]:

@@ -129,6 +129,30 @@ CRS84_WKT = (
     'AXIS["Latitude",NORTH],AUTHORITY["OGC","CRS84"]]'
 )
 
+# A legal WKT2 PROJCRS whose BASEGEOGCRS happens to carry the CRS84 id. The
+# string as a whole denotes a projected CRS in metres, not lon/lat degrees --
+# the nested tag describes what the projection was built on, not what this
+# CRS is. Regression case: an unanchored regex matches the nested node and
+# misclassifies the whole thing as WGS84, so downstream code applies no
+# transform to coordinates that are actually eastings/northings.
+BAD_PROJCRS_WKT = (
+    'PROJCRS["Fictitious Grid built on a CRS84 base",'
+    'BASEGEOGCRS["WGS 84",ID["OGC","CRS84"]],'
+    'CONVERSION["UTM zone 33N",METHOD["Transverse Mercator"]],'
+    'CS[Cartesian,2],AXIS["easting",east],AXIS["northing",north],'
+    'LENGTHUNIT["metre",1],ID["EPSG",99999]]'
+)
+
+# Same class of bug, different wrapper: a BOUNDCRS's SOURCECRS can also carry
+# a nested CRS84 id without the BOUNDCRS itself being plain WGS84 lon/lat.
+BOUNDCRS_WKT = (
+    'BOUNDCRS[SOURCECRS[GEOGCRS["WGS 84",ID["OGC","CRS84"]]],'
+    'TARGETCRS[GEOGCRS["WGS 84",ID["EPSG",4326]]],'
+    'ABRIDGEDTRANSFORMATION["Null geographic offset",'
+    'METHOD["Geographic2D offsets"],'
+    'PARAMETER["Longitude offset",0],PARAMETER["Latitude offset",0]]]'
+)
+
 
 @pytest.mark.parametrize("raw,expected", [
     ("EPSG:4326", True),
@@ -140,6 +164,8 @@ CRS84_WKT = (
     ("EPSG:3857", False),
     ("EPSG:27700", False),
     ('PROJCS["OSGB 1936 / British National Grid",GEOGCS[...]]', False),
+    (BAD_PROJCRS_WKT, False),   # nested CRS84 id inside a PROJCRS's base
+    (BOUNDCRS_WKT, False),      # nested CRS84 id inside a BOUNDCRS's source
     (None, False),
     ("", False),
 ])
@@ -147,6 +173,25 @@ def test_is_wgs84(raw, expected):
     """CRS84 carries no EPSG code, so parse_epsg cannot see it -- yet it is the
     single most common spelling in exported GeoJSON and needs no transform."""
     assert _proj.is_wgs84(raw) is expected
+
+
+def test_is_wgs84_real_gdal_crs84_wkt(tmp_path):
+    """The regression fix keys is_wgs84 off the outermost WKT keyword -- make
+    sure that still recognises the WKT GDAL itself writes for CRS84, not just
+    a hand-pasted approximation of it."""
+    pytest.importorskip("pyogrio")
+    import numpy as np
+    import pyogrio
+    import pyogrio.raw
+    import shapely
+
+    path = tmp_path / "crs84.gpkg"
+    geoms = np.array([shapely.LineString([[15.0, 50.0], [15.01, 50.0]])], dtype=object)
+    wkb = shapely.to_wkb(geoms)
+    pyogrio.raw.write(str(path), wkb, (np.array(["x"]),), ["name"],
+                      geometry_type="LineString", crs="OGC:CRS84")
+    crs = pyogrio.read_info(str(path))["crs"]
+    assert _proj.is_wgs84(crs) is True
 
 
 def test_utm_crs_shim_exposes_to_epsg():
