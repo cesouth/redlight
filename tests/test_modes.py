@@ -60,6 +60,17 @@ def test_mover_features_empty_input_returns_typed_empty_frame():
     assert "speed_p85_mps" in feat.columns
 
 
+def test_mover_features_empty_input_keeps_the_same_columns_as_a_full_one():
+    """An emptied feed must not change the shape of the answer. A feed can
+    filter down to nothing upstream, and a caller reading the documented
+    snap_dist_m diagnostic should not get a KeyError for the privilege."""
+    full = obs_frame({"a": [5.0] * 4})
+    empty = full.iloc[:0]
+    assert "snap_dist_m" in empty.columns, "the fixture must carry the column"
+    assert (list(rl.mover_features(empty, unit="mps").columns)
+            == list(rl.mover_features(full, unit="mps").columns))
+
+
 def test_suggest_threshold_finds_the_valley_between_two_humps():
     rng = np.random.default_rng(0)
     walkers = rng.normal(1.4, 0.15, 90)

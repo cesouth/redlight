@@ -101,9 +101,14 @@ def mover_features(obs, *, percentile: float = 85.0, unit="mph") -> pd.DataFrame
     df = df[df["speed_mps"].notna()]
 
     if not len(df):
-        empty = pd.DataFrame(
-            {c: pd.Series(dtype=float)
-             for c in ("n_intervals", pct_col, med_col, "distance_m")})
+        # Built from the same rule the populated path below uses, so an emptied
+        # feed cannot change the shape of the answer. Hardcoding the list here
+        # instead let the two branches disagree about snap_dist_m, and a caller
+        # reading that column got a KeyError only once its data ran out.
+        cols = ["n_intervals", pct_col, med_col, "distance_m"]
+        if "snap_dist_m" in df.columns:
+            cols.append("snap_dist_m")
+        empty = pd.DataFrame({c: pd.Series(dtype=float) for c in cols})
         empty.index.name = "traj_id"
         return empty
 
