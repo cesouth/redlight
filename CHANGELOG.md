@@ -8,7 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - 2026-08-06
 
+### Added
+- `network_stats` now measures the study area itself, so the per-km2 densities
+  no longer need a hand-measured `area_km2`. The area comes from the network's
+  own projected geometry -- the convex hull of every road vertex, already in
+  metres -- so it needs no reprojection, no equal-area maths and no new
+  dependency. The earlier docstring claimed no automatic area was possible
+  because a `Network` stores no query boundary; that overlooked the projected
+  geometry it does store. Verified against lattices of known extent: the hull
+  recovers a 5x5 grid's 11.05 km2 as 11.11 and a 2x12 corridor's 7.60 km2 as
+  7.64, both inside 0.5%.
+  - New `area_method` argument: `"convex_hull"` (default), `"bbox"`, or `None`
+    to disable detection and keep the previous opt-in behaviour.
+  - New `area_method` key in the returned dict, recording where the area came
+    from -- `"supplied"`, the detection method, or `None`. A supplied
+    `area_km2` always wins over detection.
+  - Detection declines (returns `None`, not `0.0`) when the network encloses
+    no area -- empty, a single road, or exactly collinear roads -- since zero
+    would make every density a division by zero.
+  - The hull over-states a **non-convex** extract, filling the empty space the
+    roads bend around: the inside of an L, a ring road's doughnut hole, the
+    wedges of a radial network. For those, read the area as an upper bound and
+    the densities as a lower bound, or pass `area_km2`. This is documented
+    rather than corrected for, because no cheap test tells an empty wedge from
+    an unmapped one.
+
 ### Changed
+- **Behaviour change:** `intersection_density_km2` and `edge_density_km2` are
+  now populated by default. They were `None` unless `area_km2` was passed.
+  Pass `area_method=None` to restore the old behaviour.
+- `scripts/customer_report.py` relabels its `Edges / km2` tile to
+  `Road metres / km2`, which is what the figure has always been, and captions
+  it with the area used and where it came from.
 - **The package is renamed from `roadtraffic` to `redlight`.** Update imports:
   `import roadtraffic as rt` becomes `import redlight as rl`. The optional
   extras move with it -- `redlight[crs]`, `redlight[shapefile]`,

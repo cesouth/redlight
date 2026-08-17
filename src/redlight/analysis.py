@@ -10,11 +10,11 @@ congestion risk):
   trafficability chokepoints, not just topologically central roads; weighted
   by length, it's the purely geometric equivalent; unweighted, it's pure
   topology.
-* :func:`network_stats` -- circuity, streets-per-node, and intersection/
-  dead-end counts always; intersection/edge density additionally when an
-  ``area_km2`` is supplied by the caller (unlike ``osmnx``, a
-  :class:`~redlight.network.Network` has no stored query-boundary polygon
-  to compute one from automatically).
+* :func:`network_stats` -- circuity, streets-per-node, intersection/dead-end
+  counts, and intersection/edge density. The study area behind those two
+  densities is measured from the network's own projected geometry by default
+  (see :func:`_detect_area_km2`), and can be overridden with a hand-measured
+  ``area_km2`` whenever you know the real study boundary.
 * :func:`connectivity_report` -- largest strongly-connected-component size
   and the actual node/edge partition (not just a headline number), plus a
   weakly- vs. strongly-connected distinction that separates a one-way trap
@@ -232,21 +232,98 @@ def edge_betweenness_centrality(
     return scores
 
 
-def network_stats(network, *, area_km2: float | None = None) -> dict:
+_AREA_METHODS = ("convex_hull", "bbox")
+
+
+def _network_vertices(network):
+    """Every vertex of every edge, as an ``(N, 2)`` array of **metres**.
+
+    The projected geometry is used, not lon/lat: ``Network`` already stores
+    each edge in a metric CRS (UTM, or Web Mercator/a supplied ``metric_epsg``
+    -- see :meth:`redlight.network.Network._build`), so an area in those
+    coordinates is already in m^2 and needs no reprojection, no equal-area
+    trickery, and no PROJ. Full vertices rather than just graph nodes, so a
+    road that bulges outside the hull of its own endpoints still counts.
+    """
+    coords = [np.asarray(network.edge_geometry(int(eid)).coords, dtype=float)
+              for eid in network.edge_ids]
+    return np.vstack(coords) if coords else np.empty((0, 2), dtype=float)
+
+
+def _detect_area_km2(network, method: str) -> float | None:
+    """Measure the study area from the network's own footprint, or decline.
+
+    ``"convex_hull"`` is the tightest convex polygon containing every vertex;
+    ``"bbox"`` is the axis-aligned bounding rectangle, which is never smaller
+    and is usually a good deal larger.
+
+    Returns ``None`` -- rather than ``0.0`` -- when the network encloses no
+    area at all: an empty network, a single road, or any set of exactly
+    collinear roads. Zero would be arithmetically fatal downstream, turning
+    every density into a division by zero, so declining is the honest answer.
+
+    The hull is computed by ``scipy.spatial.ConvexHull`` (Qhull), which is
+    roughly 15x faster than building a shapely ``MultiPoint`` for the same
+    result -- ~4 ms versus ~62 ms over 28k vertices. Qhull raises on
+    degenerate input instead of returning a zero-area hull, so that case
+    falls back to shapely, which handles collinear points by returning a
+    ``LineString`` whose ``.area`` is a plain ``0.0``.
+    """
+    pts = _network_vertices(network)
+    if len(pts) < 3:
+        return None
+
+    if method == "bbox":
+        area_m2 = float(np.ptp(pts[:, 0]) * np.ptp(pts[:, 1]))
+    else:
+        try:
+            from scipy.spatial import QhullError
+        except ImportError:                     # scipy < 1.8
+            from scipy.spatial.qhull import QhullError
+        from scipy.spatial import ConvexHull
+        try:
+            # In 2-D, Qhull's "volume" is the enclosed area.
+            area_m2 = float(ConvexHull(pts).volume)
+        except QhullError:
+            # Degenerate (collinear, or near enough that Qhull's initial
+            # simplex is flat). shapely is slower but never raises here.
+            from shapely.geometry import MultiPoint
+            area_m2 = float(MultiPoint(pts).convex_hull.area)
+
+    return (area_m2 / 1e6) if area_m2 > 0 else None
+
+
+def network_stats(network, *, area_km2: float | None = None,
+                  area_method: str | None = "convex_hull") -> dict:
     """Basic descriptive statistics about the network's structure.
 
     Parameters
     ----------
     network : redlight.network.Network
     area_km2 : float, optional
-        Study-area size in square kilometres, supplied by the caller.
-        ``Network`` has no stored query-boundary polygon (unlike ``osmnx``,
-        which derives one from the query region it fetched), so there is no
-        automatic way to compute an area -- a convex hull of the nodes was
-        considered and rejected, since it systematically over-estimates area
-        for the linear/corridor-shaped extracts this package expects (an
-        arterial study, not a blob-shaped city). When omitted, the two
-        density fields below are ``None`` rather than a misleading estimate.
+        Study-area size in square kilometres. Supplying one is a measurement
+        and always wins over the detected value below, so pass it whenever
+        you know your real study boundary -- a jurisdiction, a delivery
+        polygon, a clipped AOI. Omit it and the area is measured from the
+        network's own footprint instead.
+    area_method : {'convex_hull', 'bbox', None}, default 'convex_hull'
+        How to measure the area when ``area_km2`` is not supplied.
+        ``'convex_hull'`` is the tightest convex polygon around every road
+        vertex; ``'bbox'`` is the axis-aligned bounding rectangle. ``None``
+        disables detection entirely, leaving the densities ``None`` unless
+        ``area_km2`` is given.
+
+        The hull is exact for a convex extract -- it recovers a rectangular
+        lattice's true extent to well under 1%. Where it over-states is a
+        **non-convex** extract, because it fills in the empty space the roads
+        bend around: measured on synthetic cases, an L-shaped arterial's hull
+        is 22.5 km^2 against a corridor that occupies a fraction of it, and a
+        ring road's hull includes the entire doughnut hole. If your extract is
+        L-shaped, ring-shaped or radial, treat a detected area as an upper
+        bound -- the densities are then correspondingly a lower bound -- and
+        pass ``area_km2`` when the distinction matters. No cheap automatic
+        test can tell an empty wedge from an unmapped one, so this is
+        reported (via ``area_method``) rather than guessed at.
 
     Returns
     -------
@@ -287,13 +364,31 @@ def network_stats(network, *, area_km2: float | None = None) -> dict:
             leaves the ratio unchanged. 1.0 means every road is perfectly
             straight; higher means more circuitous.
         ``area_km2`` : float or None
-            Echoes the input, for provenance.
+            The area the densities were divided by, whether supplied or
+            detected. ``None`` only when detection was disabled or declined.
+        ``area_method`` : str or None
+            Provenance for the line above: ``'supplied'`` when it came from
+            the caller, otherwise the detection method used
+            (``'convex_hull'``/``'bbox'``). ``None`` when there is no area --
+            either ``area_method=None`` was passed, or the network encloses
+            no area to measure (empty, a single road, or exactly collinear
+            roads). Check this before quoting a density.
         ``intersection_density_km2``, ``edge_density_km2`` : float or None
             ``n_intersections / area_km2``, and metres of *physical* road
             length (not directed-edge length -- a two-way road is not
-            double-counted) per km². Both ``None`` when ``area_km2`` wasn't
-            given.
+            double-counted) per km². Both ``None`` when ``area_km2`` is.
+
+    Raises
+    ------
+    ValueError
+        If ``area_method`` is neither ``None`` nor one of
+        ``'convex_hull'``/``'bbox'``.
     """
+    if area_method is not None and area_method not in _AREA_METHODS:
+        raise ValueError(
+            f"area_method must be None or one of {list(_AREA_METHODS)}, "
+            f"got {area_method!r}"
+        )
     graph = network.graph
     n_nodes = graph.number_of_nodes()
     n_edges = graph.number_of_edges()
@@ -339,6 +434,16 @@ def network_stats(network, *, area_km2: float | None = None) -> dict:
 
     circuity_avg = (total_length / total_gc) if total_gc > 0 else float("nan")
 
+    # A supplied area is a measurement and outranks a detected one; detection
+    # only runs when the caller left it out.
+    if area_km2 is not None:
+        area_source: str | None = "supplied"
+    elif area_method is not None:
+        area_km2 = _detect_area_km2(network, area_method)
+        area_source = area_method if area_km2 is not None else None
+    else:
+        area_source = None
+
     intersection_density_km2 = None
     edge_density_km2 = None
     if area_km2 is not None:
@@ -355,6 +460,7 @@ def network_stats(network, *, area_km2: float | None = None) -> dict:
         "streets_per_node_counts": streets_per_node_counts,
         "circuity_avg": circuity_avg,
         "area_km2": area_km2,
+        "area_method": area_source,
         "intersection_density_km2": intersection_density_km2,
         "edge_density_km2": edge_density_km2,
     }

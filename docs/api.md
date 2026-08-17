@@ -569,15 +569,27 @@ attribute (networkx would otherwise silently treat a missing weight as
 `1.0`, corrupting the ranking — see [statistics §11](statistics.md)), if
 `k < 1`, or on a `write_attr` collision.
 
-### `network_stats(network, *, area_km2=None) -> dict`
+### `network_stats(network, *, area_km2=None, area_method="convex_hull") -> dict`
 
 Basic descriptive stats: `n_nodes`, `n_edges`, `n_physical_roads`,
 `n_intersections`/`n_dead_ends` (by physical-road-degree, not raw directed
-degree), `streets_per_node_avg`/`streets_per_node_counts`, `circuity_avg`
-(always computed), plus `intersection_density_km2`/`edge_density_km2` (only
-when `area_km2` is supplied — `Network` has no stored query-boundary polygon
-to compute an area from automatically). See
+degree), `streets_per_node_avg`/`streets_per_node_counts`, `circuity_avg`,
+plus `intersection_density_km2`/`edge_density_km2`. See
 [statistics §11](statistics.md) for the exact formulas and why.
+
+You do not have to measure the study area yourself. `Network` stores every
+edge projected into a metric CRS, so the area is measured directly off that
+geometry in m² — no reprojection, no PROJ, no equal-area maths.
+
+| `area_method` | Area used |
+| --- | --- |
+| `"convex_hull"` (default) | Tightest convex polygon around every road vertex. Exact for a convex extract: it recovers a rectangular lattice's true extent to well under 1%. |
+| `"bbox"` | Axis-aligned bounding rectangle. Never smaller than the hull, usually a good deal larger. |
+| `None` | No detection. Densities stay `None` unless you pass `area_km2`. |
+
+Passing `area_km2` is a measurement and always wins over detection. The
+returned `area_method` records which you got — `"supplied"`, the method name,
+or `None` when there is no area to report.
 
 ### `connectivity_report(network) -> dict`
 
@@ -591,9 +603,15 @@ disconnected extract (`is_weakly_connected=False`) — the same diagnosis
 proactively.
 
 ```python
-stats = rl.network_stats(net, area_km2=8.3)
+# No area argument: it is measured from the network's own footprint.
+stats = rl.network_stats(net)
 print(stats["circuity_avg"], stats["n_intersections"],
       stats["streets_per_node_avg"])
+print(f"{stats['area_km2']:.2f} km2 via {stats['area_method']}")
+
+# Override whenever you know the real study boundary.
+measured = rl.network_stats(net, area_km2=8.3)
+assert measured["area_method"] == "supplied"
 
 # Run this BEFORE routing on an unfamiliar or clipped extract.
 report = rl.connectivity_report(net)
@@ -608,9 +626,14 @@ top = sorted(bc.items(), key=lambda kv: -kv[1])[:3]
 print([(net.edge_data(int(e)).get("name"), round(s, 3)) for e, s in top])
 ```
 
-The density fields are `None` unless you pass `area_km2` — they are never
-guessed from a bounding box, because a clipped extract's bounds are not its
-study area.
+One caveat on the detected area: the hull over-states a **non-convex**
+extract, because it fills in the empty space the roads bend around. An
+L-shaped arterial's hull covers the inside of the L; a ring road's covers the
+doughnut hole; a radial network's covers the wedges between the spokes. Treat
+a detected area for those shapes as an upper bound — and the densities as a
+lower bound — or pass `area_km2`. No cheap automatic test distinguishes an
+empty wedge from an unmapped one, which is why `area_method` reports what was
+used instead of the library quietly correcting for it.
 
 ---
 

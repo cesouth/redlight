@@ -26,10 +26,9 @@ def main() -> None:
 
     # ----------------------------------------------------------- structure
     rule("Network structure")
-    # The sample grid spans about 2.67 km N-S by 3.12 km E-W. Densities are
-    # only as good as the area you supply, so measure your study area rather
-    # than eyeballing it -- the library cannot check this number for you.
-    stats = rl.network_stats(net, area_km2=8.3)
+    # No area argument needed: it is measured off the network's own projected
+    # geometry. area_method records where the number came from.
+    stats = rl.network_stats(net)
     print(f"  nodes                  {stats['n_nodes']:,}")
     print(f"  directed edges         {stats['n_edges']:,}")
     print(f"  physical roads         {stats['n_physical_roads']:,}")
@@ -37,13 +36,26 @@ def main() -> None:
     print(f"  dead ends              {stats['n_dead_ends']:,}")
     print(f"  streets per node (avg) {stats['streets_per_node_avg']:.2f}")
     print(f"  circuity (avg)         {stats['circuity_avg']:.3f}")
+    print(f"  study area km2         {stats['area_km2']:.2f} "
+          f"({stats['area_method']})")
     print(f"  road length m/km2      {stats['edge_density_km2']:,.0f}")
     print(f"  intersections /km2     {stats['intersection_density_km2']:.1f}")
     print("\ncircuity is on-road distance divided by straight-line distance:")
     print("1.0 is a perfect grid, higher means detours. 'physical roads'")
     print("counts a two-way street once, where 'directed edges' counts it")
-    print("twice. The two densities need area_km2 to be passed in, and are")
-    print("None without it -- they are not guessed from the bounding box.")
+    print("twice.")
+    print("\nThe area behind the two densities is measured from the network's")
+    print("own projected geometry -- the convex hull of every road vertex, in")
+    print("metres, so no reprojection is involved. That is exact for a convex")
+    print("extract like this grid. For an L-shaped, ring or radial extract the")
+    print("hull also encloses the empty space the roads bend around, so read")
+    print("it as an upper bound on area (a lower bound on density) or pass")
+    print("area_km2= with your real study boundary. area_method tells you")
+    print("which you got: 'convex_hull', 'bbox', or 'supplied'.")
+
+    supplied = rl.network_stats(net, area_km2=8.3)
+    print(f"\n  with area_km2=8.3     {supplied['edge_density_km2']:,.0f} "
+          f"m/km2 ({supplied['area_method']})")
 
     # -------------------------------------------------------- connectivity
     rule("Connectivity")

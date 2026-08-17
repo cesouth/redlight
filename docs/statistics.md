@@ -535,6 +535,45 @@ scales numerator and denominator by the same factor and leaves the ratio
 unchanged — the implementation can iterate every directed edge with no
 per-road bookkeeping.
 
+**Study area, and the two densities.** `intersection_density_km2` is
+`n_intersections / area_km2`; `edge_density_km2` is metres of *physical* road
+per km², deduplicating a two-way street to one road so it is not counted
+twice. Both need an area, and `network_stats` measures one by default rather
+than requiring you to supply it.
+
+The measurement is direct. A `Network` stores every edge geometry projected
+into a metric CRS (§1) — UTM by default — so its coordinates are already in
+metres, and the area of a polygon over them is already in m². No
+reprojection, no equal-area projection, and no spherical-excess correction is
+involved. The default `area_method="convex_hull"` takes the convex hull of
+every road *vertex* (not just graph nodes, so a road bulging outside the hull
+of its own endpoints still counts) via Qhull, whose 2-D "volume" is the
+enclosed area. `"bbox"` takes the axis-aligned bounding rectangle instead,
+which is never smaller.
+
+For a convex extract the hull is essentially exact: against lattices of known
+extent it recovers 11.05 km² as 11.11 and 7.60 km² as 7.64, both inside 0.5%,
+the residual being the check figure's cos(latitude) approximation rather than
+the hull. Its failure mode is a **non-convex** extract, where the hull spans
+the empty space the roads bend around — the inside of an L-shaped arterial, a
+ring road's doughnut hole, the wedges between a radial network's spokes. The
+area is then an over-estimate and the densities a corresponding
+under-estimate, so pass a measured `area_km2` when the study boundary is
+known. This is reported through the returned `area_method` rather than
+corrected for: distinguishing an empty wedge from an unmapped one is not
+decidable from the network alone, and the obvious heuristics do not survive
+contact with the cases they exist to catch. A road-buffer coverage ratio
+using the network's own median edge length as its radius was tried and
+rejected — on a radial network the spokes are long, so the self-scaling
+radius swallows the whole hull and reports full coverage for the sparsest
+case in the set, and it cost 20 s on a 3,600-node network besides.
+
+Where the network encloses no area at all — empty, a single road, or exactly
+collinear roads — detection returns `None` rather than `0.0`, since zero
+would turn every density into a division by zero. An explicitly supplied
+`area_km2` always takes precedence over detection, and `area_method` records
+which of the two produced the figure.
+
 **Connectivity: strongly vs. weakly connected.** `connectivity_report`
 distinguishes two failure modes that otherwise only surface one failed
 `Router.route()` call at a time: a **one-way trap** (every node is reachable

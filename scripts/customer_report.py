@@ -380,8 +380,14 @@ def build_tiles(args, R):
         (f"{100.0 * scc:.1f}%" if scc is not None else "--",
          "Largest connected part", "")]
     if stats.get("edge_density_km2") is not None:
+        # Metres of physical road per km2, not a count of edges -- the old
+        # "Edges / km2" label named the wrong quantity entirely.
+        method = stats.get("area_method")
+        note = (f"over {stats['area_km2']:,.1f} km2"
+                if method == "supplied"
+                else f"over {stats['area_km2']:,.1f} km2, {method} of the network")
         structure.insert(4, (_fmt(stats["edge_density_km2"], 1),
-                             "Edges / km2", ""))
+                             "Road metres / km2", note))
     out["structure"] = structure
     return out
 
@@ -1312,7 +1318,9 @@ def parse_args(argv=None):
     p.add_argument("--n-peak", type=int, default=3)
     p.add_argument("--n-offpeak", type=int, default=3)
     p.add_argument("--area-km2", type=float, default=None,
-                   help="study-area size, enables per-km2 densities")
+                   help="study-area size for the per-km2 densities. Omit it "
+                        "and the area is measured from the network's convex "
+                        "hull; pass your real study boundary to override that")
     p.add_argument("--require-quality", action="store_true",
                    help="drop intervals that failed the quality screen "
                         "(recommended for customer deliverables)")

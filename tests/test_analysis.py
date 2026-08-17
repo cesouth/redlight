@@ -185,16 +185,31 @@ def test_circuity_bent_road_greater_than_one(tmp_path):
     assert stats["circuity_avg"] > 1.2
 
 
-def test_area_metrics_none_without_area_km2(grid_net):
+def test_area_detected_automatically_when_not_supplied(grid_net):
+    """The headline change: densities no longer need a hand-measured area."""
     stats = rl.network_stats(grid_net)
-    assert stats["area_km2"] is None
-    assert stats["intersection_density_km2"] is None
-    assert stats["edge_density_km2"] is None
+    assert stats["area_method"] == "convex_hull"
+    assert stats["area_km2"] is not None
+    assert stats["intersection_density_km2"] is not None
+    assert stats["edge_density_km2"] is not None
 
 
-def test_area_metrics_computed_with_area_km2(grid_net):
+def test_detected_area_matches_the_known_extent(grid_net):
+    """grid_net is a 3x3 lattice at 0.001 deg spacing on the equator, so it
+    spans 2 x 0.001 deg each way -- about 222.6 m by 221.1 m. The hull of a
+    filled rectangular lattice is that rectangle exactly, which makes this a
+    real check on the projection and the area maths, not just a smoke test."""
+    stats = rl.network_stats(grid_net)
+    expected_km2 = (2 * 0.001 * 111319.5) * (2 * 0.001 * 110574.0) / 1e6
+    assert stats["area_km2"] == pytest.approx(expected_km2, rel=0.01)
+
+
+def test_supplied_area_wins_over_detection(grid_net):
+    """An explicit area is a measurement; a detected one is an inference.
+    The measurement must win, and say so."""
     stats = rl.network_stats(grid_net, area_km2=2.0)
     assert stats["area_km2"] == 2.0
+    assert stats["area_method"] == "supplied"
     assert stats["intersection_density_km2"] == pytest.approx(
         stats["n_intersections"] / 2.0)
     # physical-road length, not directed-edge length (would double-count)
@@ -204,6 +219,59 @@ def test_area_metrics_computed_with_area_km2(grid_net):
         if int(e) == min(grid_net.road_edge_ids(int(e)))
     )
     assert stats["edge_density_km2"] == pytest.approx(expected_physical_m / 2.0)
+
+
+def test_bbox_method_is_never_smaller_than_the_hull(grid_net):
+    hull = rl.network_stats(grid_net)["area_km2"]
+    bbox = rl.network_stats(grid_net, area_method="bbox")["area_km2"]
+    assert bbox >= hull
+
+
+def test_area_method_none_restores_the_old_opt_in_behaviour(grid_net):
+    stats = rl.network_stats(grid_net, area_method=None)
+    assert stats["area_km2"] is None
+    assert stats["area_method"] is None
+    assert stats["intersection_density_km2"] is None
+    assert stats["edge_density_km2"] is None
+
+
+def test_unknown_area_method_raises(grid_net):
+    with pytest.raises(ValueError, match="area_method"):
+        rl.network_stats(grid_net, area_method="alpha_shape")
+
+
+def test_collinear_network_reports_no_detectable_area(straight_net):
+    """One straight road encloses no area at all. Reporting 0.0 would make
+    every density infinite, so detection must decline instead -- this is the
+    case that separates 'declined' from 'crashed with a QhullError'."""
+    stats = rl.network_stats(straight_net)
+    assert stats["area_km2"] is None
+    assert stats["area_method"] is None
+    assert stats["intersection_density_km2"] is None
+    assert stats["edge_density_km2"] is None
+
+
+def test_collinear_network_still_accepts_a_supplied_area(straight_net):
+    """Declining to *detect* an area must not block a caller who knows one."""
+    stats = rl.network_stats(straight_net, area_km2=0.5)
+    assert stats["area_km2"] == 0.5
+    assert stats["area_method"] == "supplied"
+    assert stats["edge_density_km2"] is not None
+
+
+def test_densities_use_the_detected_area(grid_net):
+    """The auto path must feed the same formula as the supplied path, or the
+    two would silently disagree."""
+    stats = rl.network_stats(grid_net)
+    area = stats["area_km2"]
+    assert stats["intersection_density_km2"] == pytest.approx(
+        stats["n_intersections"] / area)
+    expected_physical_m = sum(
+        grid_net.edge_length(int(e))
+        for e in grid_net.edge_ids
+        if int(e) == min(grid_net.road_edge_ids(int(e)))
+    )
+    assert stats["edge_density_km2"] == pytest.approx(expected_physical_m / area)
 
 
 # --------------------------------------------------------------------------- #
