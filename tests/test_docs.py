@@ -18,6 +18,20 @@ before the fence::
 
 Add ``<!-- skip-test: reason -->`` to record why.
 
+A block that only needs an *optional* dependency should not be skipped
+everywhere -- it would then go unverified in the environments that do have it.
+Mark those with the module they require instead, and they run wherever it is
+importable and skip where it is not::
+
+    <!-- needs: matplotlib -->
+    ```python
+    rl.plot_speed_map(net, "speeds.png")   # the mapping extra
+    ```
+
+This matters because the CI matrix deliberately includes installs without the
+optional extras (a core install has no PROJ, and the packaging job has no
+pyproj), so any block assuming an extra fails there and nowhere else.
+
 The namespace is rebuilt for each block, so blocks cannot depend on each other
 and can be reordered or edited freely. That rebuild is not optional: a shallow
 copy would share the ``Network`` object, and a block calling ``assign_speeds``
@@ -39,9 +53,11 @@ import redlight as rl
 REPO = Path(__file__).resolve().parent.parent
 DOC_FILES = [REPO / "README.md"] + sorted((REPO / "docs").glob("*.md"))
 
-# ```python ... ``` with an optional <!-- skip-test --> on the preceding line.
+# ```python ... ``` with an optional directive comment on the preceding line:
+# <!-- skip-test[: reason] --> or <!-- needs: mod[, mod...] -->.
 BLOCK = re.compile(
-    r"(?P<skip><!--\s*skip-test.*?-->\s*\n)?```python\n(?P<code>.*?)```",
+    r"(?:<!--\s*(?P<directive>skip-test|needs)(?P<arg>[^>]*?)-->\s*\n)?"
+    r"```python\n(?P<code>.*?)```",
     re.S,
 )
 
@@ -167,20 +183,25 @@ def doc_namespace(_doc_workdir):
 
 
 def _blocks():
-    """(doc-relative-path, 1-based block index, line number, code) per block."""
+    """(doc-path, 1-based block index, line number, code, required-modules)."""
     out = []
     for path in DOC_FILES:
         if not path.exists():
             continue
         text = path.read_text()
         for n, m in enumerate(BLOCK.finditer(text), start=1):
-            if m.group("skip"):
+            if m.group("directive") == "skip-test":
                 continue
+            needs = ()
+            if m.group("directive") == "needs":
+                needs = tuple(part.strip()
+                              for part in m.group("arg").lstrip(":").split(",")
+                              if part.strip())
             line = text[:m.start()].count("\n") + 1
             # A fence nested inside a list item is indented; dedent it or
             # every such block is an IndentationError rather than a real test.
             code = textwrap.dedent(m.group("code"))
-            out.append((path.relative_to(REPO).as_posix(), n, line, code))
+            out.append((path.relative_to(REPO).as_posix(), n, line, code, needs))
     return out
 
 
@@ -197,11 +218,14 @@ def test_documentation_contains_python_examples():
 
 
 @pytest.mark.parametrize(
-    "doc,index,line,code",
+    "doc,index,line,code,needs",
     BLOCKS,
-    ids=[f"{d}:block{i}" for d, i, _, _ in BLOCKS],
+    ids=[f"{d}:block{i}" for d, i, _, _, _ in BLOCKS],
 )
-def test_doc_example_runs(doc, index, line, code, doc_namespace):
+def test_doc_example_runs(doc, index, line, code, needs, doc_namespace):
+    for module in needs:
+        pytest.importorskip(
+            module, reason=f"{doc} block {index} needs {module}")
     try:
         exec(compile(code, f"{doc}:{line}", "exec"), doc_namespace)
     except Exception as exc:  # noqa: BLE001 - we re-raise with context

@@ -1,3 +1,5 @@
+import importlib.util
+
 import networkx as nx
 import pytest
 
@@ -240,11 +242,21 @@ def test_source_to_wgs84_rejects_projcrs_with_nested_crs84_base():
         'LENGTHUNIT["metre",1],ID["EPSG",99999]]'
     )
     assert net_mod._proj.is_wgs84(bad_wkt) is False
-    # pyproj is installed in this environment, so a real transformer builds --
-    # assert on "not None" (a transform is applied) rather than its type.
-    transform = net_mod._source_to_wgs84(bad_wkt)
-    assert transform is not None
-    assert callable(transform)
+
+    # What _source_to_wgs84 does next depends on whether pyproj is installed,
+    # but *both* outcomes prove the same thing, because the misclassification
+    # this guards against short-circuits before either one: a CRS judged
+    # already-WGS84 returns None immediately and needs no transform at all.
+    # So "a transform was built" and "pyproj was demanded" are equally good
+    # evidence, and asserting whichever applies keeps this test meaningful in
+    # a default install rather than erroring there.
+    if importlib.util.find_spec("pyproj") is None:
+        with pytest.raises(ImportError, match="redlight\\[crs\\]"):
+            net_mod._source_to_wgs84(bad_wkt)
+    else:
+        transform = net_mod._source_to_wgs84(bad_wkt)
+        assert transform is not None
+        assert callable(transform)
 
 
 def test_from_file_exotic_crs_errors_clearly_without_pyproj(tmp_path, monkeypatch):

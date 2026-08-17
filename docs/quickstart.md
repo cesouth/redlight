@@ -213,8 +213,13 @@ onto the graph, export it as a map:
 ```python
 # GeoJSON for QGIS / Kepler / Leaflet / Mapbox -- no extra dependency
 rl.to_geojson(net, "speeds.geojson", speed_unit="mph")
+```
 
-# Quick static PNG, coloured by speed (needs: pip install redlight[mapping])
+For a quick static PNG coloured by speed, install the mapping extra
+(`pip install redlight[mapping]`):
+
+<!-- needs: matplotlib -->
+```python
 rl.plot_speed_map(net, "speeds.png", speed_unit="mph")
 ```
 
