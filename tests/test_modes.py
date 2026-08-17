@@ -98,6 +98,22 @@ def test_suggest_threshold_needs_enough_movers():
     assert rl.suggest_mode_threshold(np.full(10, 1.4), unit="mps") is None
 
 
+@pytest.mark.parametrize("n_walkers,found", [(90, True), (15, False)])
+def test_suggest_threshold_has_a_minority_detection_floor(n_walkers, found):
+    """CHARACTERIZATION. The walking hump must carry real mass, not just sit at
+    the right speed, so a small walking minority is reported as no split at all.
+    That floor is a documented consequence of the mass guard, not an accident:
+    it is the same guard that stops a vehicle-only feed's left-tail ripple from
+    inventing pedestrians out of genuinely gridlocked vehicles. Pinned here so
+    the docstring's stated floor cannot drift away from the behaviour."""
+    rng = np.random.default_rng(0)
+    speeds = np.concatenate([
+        rng.normal(1.4, 0.15, n_walkers),
+        np.clip(rng.normal(12.0, 3.0, 300 - n_walkers), 5.0, None),
+    ])
+    assert (rl.suggest_mode_threshold(speeds, unit="mps") is not None) is found
+
+
 def test_suggest_threshold_accepts_a_series():
     rng = np.random.default_rng(0)
     speeds = np.concatenate([rng.normal(1.4, 0.15, 90),

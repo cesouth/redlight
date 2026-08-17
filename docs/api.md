@@ -302,14 +302,26 @@ when the input carries it.
 
 Speed at the density valley separating walkers from drivers. `mover_speeds` is
 one speed per mover in `unit` — typically the `speed_p85_<unit>` column of
-`mover_features`. The density is estimated in log speed and a candidate valley
-must both be prominent (`min(left_peak, right_peak) / valley`) and have a
-density peak below it that sits at walking pace, so a vehicle-only feed's
-interior gridlock/free-flow valley is not mistaken for a mode boundary.
+`mover_features`. The density is estimated in log speed, and a candidate valley
+must clear three guards: it must be prominent
+(`min(left_peak, right_peak) / valley`); there must be a genuine hump below it,
+meaning a place where the density turns over rather than merely a lower value;
+and that hump must sit at walking pace *and* carry real mass. Together they
+stop a vehicle-only feed's interior gridlock/free-flow valley from being
+mistaken for a mode boundary.
 
-Returns `None` when there is no walking-speed population to split off —
-callers must not substitute a default, since a silently chosen threshold that
-is wrong produces a study that looks correct.
+Returns `None` when no walking-speed population can be split off — callers must
+not substitute a default, since a silently chosen threshold that is wrong
+produces a study that looks correct.
+
+`None` also covers a walking population that is real but too **small** to
+identify. The mass guard is not cleared by a minority under roughly a tenth of
+movers: on synthetic mixes a 10% pedestrian minority is found and a 5% one is
+not. That is the intended trade — the same guard is what stops a vehicle-only
+feed's left-tail ripple from inventing pedestrians out of genuinely gridlocked
+vehicles, which is the congestion the study exists to measure. If you know a
+small walking minority is present, pass an explicit `threshold` rather than
+reading `None` as its absence.
 
 ### `classify_movers(obs, *, threshold, percentile=85.0, min_intervals=3, min_distance_m=0.0, unit="mph") -> DataFrame`
 

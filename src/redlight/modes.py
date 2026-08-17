@@ -157,10 +157,19 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
     Returns
     -------
     float or None
-        ``None`` when there is no walking-speed population to split off,
-        which is the honest answer for a single-mode feed. Callers must not
-        substitute a default: a silently chosen threshold that is wrong
-        produces a study that looks correct.
+        ``None`` when no walking-speed population can be split off, which is
+        the honest answer for a single-mode feed. Callers must not substitute
+        a default: a silently chosen threshold that is wrong produces a study
+        that looks correct.
+
+        Note that ``None`` also covers a walking population that is real but
+        too *small* to identify. Guard 3 below asks the walking hump to carry
+        mass, and a minority under roughly a tenth of movers does not clear it
+        -- measured on synthetic mixes, a 10% minority is found and a 5% one is
+        not. That is deliberate, since the same guard is what stops a
+        vehicle-only feed's left-tail ripple from inventing pedestrians out of
+        gridlocked vehicles. If a small walking minority is known to be present,
+        pass an explicit threshold rather than reading ``None`` as its absence.
 
     Notes
     -----
@@ -170,17 +179,22 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
     couple of mph across. Log speed makes the bandwidth scale-free, so
     resolution near walking pace does not depend on the fastest vehicle.
 
-    Two guards decide whether a valley is a *mode* boundary at all:
+    Three guards decide whether a valley is a *mode* boundary at all:
 
     1. Candidates are ranked by **prominence**, ``min(left_peak, right_peak) /
        valley``, and the density is evaluated well beyond the selection window
        in both directions. Ranking by absolute depth instead selects the lowest
        point of a monotone tail at the window edge, which is not a valley.
-    2. There must be a real walking **hump** below the candidate: an interior
-       local maximum of the density, located at walking pace, carrying at least
+    2. There must be a **hump** below the candidate, not merely a lower value:
+       an interior local maximum, a place where the density turns over. On a
+       monotone left tail the grid point just below the candidate always sits
+       just below it, so a position test alone verifies nothing.
+    3. That hump must be **at walking pace and carry mass** -- located between
+       ``_WALK_MODE_LO_MPS`` and ``_WALK_MODE_HI_MPS``, and at least
        ``_MIN_HUMP_SHARE`` of the peak density. A vehicle-only feed has interior
-       valleys of its own; without this guard the boundary between gridlock and
-       free flow is accepted as a mode split.
+       valleys of its own and ripples in its left tail at a fraction of a
+       percent of the peak; without both halves of this guard the boundary
+       between gridlock and free flow is accepted as a mode split.
     """
     unit = SpeedUnit.parse(unit)
     x = np.asarray(pd.Series(mover_speeds).to_numpy(), dtype=float)
