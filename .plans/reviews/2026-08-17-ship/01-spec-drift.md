@@ -178,8 +178,8 @@ Nothing in this spec is NOT IMPLEMENTED.
 - **Suggested fix:** Build the empty frame's column list from the same rules the
   populated path uses — append `snap_dist_m` when `"snap_dist_m" in df.columns`
   — so the two branches agree by construction rather than by duplication.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** ACCEPT
+- **Outcome:** fixed (ec34250)
 
 ---
 
@@ -233,8 +233,8 @@ Nothing in this spec is NOT IMPLEMENTED.
   one sentence to the `suggest_mode_threshold` docstring and `docs/api.md`
   stating that a walking minority below roughly a tenth of movers will not be
   detected and needs an explicit threshold. No code change.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** ACCEPT
+- **Outcome:** fixed (b414002) -- documentation only; behaviour unchanged
 
 ---
 
@@ -266,8 +266,8 @@ Nothing in this spec is NOT IMPLEMENTED.
 - **Suggested fix:** Annotate the plan's Task 2 code block as superseded by
   `c7744c0`, or leave it and rely on this findings file as the record. No code
   change.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** REJECT
+- **Outcome:** no change needed (the code is already right; the plan is history)
 
 ---
 
@@ -303,8 +303,8 @@ Nothing in this spec is NOT IMPLEMENTED.
   table now under-describes the contract. Neither changes a documented
   behaviour, so nothing downstream is misled.
 - **Suggested fix:** Add both rows to the design's Errors table. No code change.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** REJECT
+- **Outcome:** no change needed (both behaviours are correct and tested)
 
 ---
 
@@ -337,8 +337,8 @@ Nothing in this spec is NOT IMPLEMENTED.
 - **Suggested fix:** Nothing in the code. If the spec is retained as history,
   note the supersession; if `_proj.py:10-11` is to keep a number, restate it as
   "under 20 nm" or name the sample it was measured on.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** DEFER
+- **Outcome:** deferred to Task 2 (the live `_proj.py:10-11` figure only)
 
 ---
 
@@ -377,8 +377,8 @@ Nothing in this spec is NOT IMPLEMENTED.
   the module is affected. **The spec is the thing that is wrong.**
 - **Suggested fix:** None to the code. Correct the spec's Interfaces line if it
   is retained as a reference.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** REJECT
+- **Outcome:** no change needed (private helper; the code is right)
 
 ---
 
@@ -419,8 +419,8 @@ Nothing in this spec is NOT IMPLEMENTED.
   merely incomplete.
 - **Suggested fix:** None to the code. Extend the spec's Task 2 and Task 4
   Interfaces lists if the documents are kept as reference.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** REJECT
+- **Outcome:** no change needed (the code is right; the spec is merely incomplete)
 
 ---
 
@@ -459,12 +459,14 @@ Nothing in this spec is NOT IMPLEMENTED.
   improvement and **the spec is what is out of date**. Recorded only so the
   deviation is not mistaken later for an accident.
 - **Suggested fix:** None. Note the supersession in the spec if it is retained.
-- **Verdict:**
-- **Outcome:**
+- **Verdict:** REJECT
+- **Outcome:** no change needed (deliberate, and already explained in ci.yml)
 
 ---
 
 ## Repo state on exit
+
+At the end of the **audit pass** (commit `2aa8720`), before any triage:
 
 ```
 $ .venv/bin/pytest -q
@@ -474,5 +476,68 @@ $ git status --porcelain
 (empty)
 ```
 
-Baseline test count matches `00-baseline.md`. No source file was modified and
-nothing was committed; all scratch scripts live in the session scratchpad.
+Baseline test count matches `00-baseline.md`. No source file was modified by
+the audit and nothing was committed by it; all scratch scripts live in the
+session scratchpad. The Fix Cycle recorded below ran afterwards, as a separate
+step, and is the only thing in this repo that changed code.
+
+---
+
+## Triage and fix cycle
+
+Triaged 2026-08-17. Two findings accepted, one deferred, five rejected.
+
+| Finding | Sev | Verdict | Outcome |
+|---|---|---|---|
+| F-1.1 | S2 | ACCEPT | fixed (`ec34250`) |
+| F-1.2 | S3 | ACCEPT | fixed (`b414002`) — docs only, behaviour unchanged |
+| F-1.3 | S3 | REJECT | no change needed |
+| F-1.4 | S3 | REJECT | no change needed |
+| F-1.5 | S3 | DEFER | the `_proj.py:10-11` figure handed to Task 2 |
+| F-1.6 | S3 | REJECT | no change needed |
+| F-1.7 | S3 | REJECT | no change needed |
+| F-1.8 | S5 | REJECT | no change needed |
+
+**Why five rejections.** F-1.3, F-1.4, F-1.6, F-1.7 and F-1.8 all report the
+same shape of drift: the shipped code is right and an approved spec describes
+something narrower. `00-baseline.md` already set this repo's convention for
+that situation — it *supersedes* stale figures in the older plans rather than
+editing them ("both are historical"). Amending a spec dated 2026-07-31 and
+marked "approved, not yet implemented" to describe code written in August would
+falsify the record of what was approved. This findings file is now the
+supersession note, which is what the convention asks for. The same reasoning is
+why the F-1.2 fix touched the *live* docstring and `docs/api.md` but left
+`2026-07-31-mover-mode-screening-design.md` alone.
+
+**Why F-1.5 is deferred rather than rejected.** Its main claim — the stale
+accuracy table in the drop-pyproj plan — is history and rejected on the grounds
+above. But its sub-item is not history: `_proj.py:10-11` states "14 nm inverse"
+as a bound, and a wider sample measures 15.03 nm. That is a live docstring
+claim in shipped source, which is precisely Task 2's remit, so it goes there
+rather than being fixed here by a pass whose scope was spec drift.
+
+**Note on F-1.2's fix.** It could not be driven by a failing test: the
+behaviour is correct and the documentation was wrong, so a red test would have
+required breaking working code. Per the Fix Cycle's own instruction, that is
+recorded explicitly rather than worked around. What was added instead is
+`test_suggest_threshold_has_a_minority_detection_floor`, a characterization
+test that pins the newly documented floor (a 10% walking minority is found, a
+5% one is not) so the prose and the behaviour cannot drift apart again. It
+passed from the moment it was written, which is expected and not a defect.
+
+### Verification after both fixes
+
+```
+$ .venv/bin/pytest -q
+378 passed, 6 warnings in 13.51s
+
+$ .venv/bin/ruff check src tests scripts examples
+All checks passed!
+
+$ .venv/bin/pytest -q tests/test_docs.py
+27 passed in 4.04s
+```
+
+378 = the 375 baseline + 1 test for F-1.1 + 2 parametrized cases for F-1.2. No
+test was weakened or removed, and the three gates in `00-baseline.md` all still
+hold.
