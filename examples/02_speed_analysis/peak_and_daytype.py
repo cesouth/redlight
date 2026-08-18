@@ -34,10 +34,20 @@ def main() -> None:
         print(f"  {r['block_label']}  {r['median_speed']:5.1f} mph  n={r['n']}")
 
     # ------------------------------------------------------- classify hours
-    rule("The same split, as reusable hour sets")
+    rule("A different question: contiguous windows, as reusable hour sets")
     hours = rl.classify_hours(clean, statistic="median", n_peak=3, n_offpeak=3)
     print(f"peak hours    : {hours['peak_hours']}")
     print(f"off-peak hours: {hours['offpeak_hours']}")
+    print("\nExpect these NOT to match the three hours listed above, and")
+    print("do not read them as 'the same answer in another shape'. The two")
+    print("functions rank differently under the same n_peak= argument:")
+    print("  peak_analysis  returns the n individually slowest bins, which")
+    print("                 may be scattered across the day;")
+    print("  classify_hours returns the slowest CONTIGUOUS n-hour window.")
+    print("A regime has to be a period you can route on, which is why")
+    print("assign_segment_speeds wants the window rather than the ranking.")
+    print("Being contiguous, a window can also span an hour that carries no")
+    print("observations at all -- check n before quoting any single hour.")
 
     # ---------------------------------------------------------- day types
     rule("Weekday versus weekend")
