@@ -31,7 +31,10 @@ def geodesic_distance(lon1, lat1, lon2, lat2):
     -------
     numpy.ndarray
         Distance in metres. Agrees with PROJ's geodesic to a few micrometres
-        at every separation this package encounters.
+        at every separation this package encounters. Elements with a
+        non-finite input coordinate come back as NaN rather than raising, so
+        one missing fix does not cost the whole array; the finite elements
+        beside it are unaffected.
 
     Raises
     ------
@@ -46,6 +49,18 @@ def geodesic_distance(lon1, lat1, lon2, lat2):
     """
     lon1, lat1, lon2, lat2 = (np.asarray(v, dtype=float)
                               for v in (lon1, lat1, lon2, lat2))
+    # A non-finite coordinate can never satisfy the convergence test, so
+    # without this it would be reported as a near-antipodal pair -- a specific
+    # and wrong diagnosis. Substitute a coincident pair so the iteration still
+    # converges for everyone else in the array, and restore NaN at the end;
+    # one bad row must not abort the good rows beside it.
+    finite = (np.isfinite(lon1) & np.isfinite(lat1)
+              & np.isfinite(lon2) & np.isfinite(lat2))
+    all_finite = bool(np.all(finite))
+    if not all_finite:
+        lon1, lat1, lon2, lat2 = (np.where(finite, v, 0.0)
+                                  for v in (lon1, lat1, lon2, lat2))
+
     lam_l = np.radians(lon2 - lon1)
     u1 = np.arctan((1 - _F) * np.tan(np.radians(lat1)))
     u2 = np.arctan((1 - _F) * np.tan(np.radians(lat2)))
@@ -99,4 +114,5 @@ def geodesic_distance(lon1, lat1, lon2, lat2):
             * (-3 + 4 * cos_2sigma_m**2)
         )
     )
-    return _B * big_a * (sigma - delta_sigma)
+    dist = _B * big_a * (sigma - delta_sigma)
+    return dist if all_finite else np.where(finite, dist, np.nan)

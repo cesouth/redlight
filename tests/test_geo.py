@@ -78,3 +78,32 @@ def test_realistic_gps_tick_scale():
     got = float(geodesic_distance(15.0, 50.0, 15.00005, 50.00005))
     assert 3.0 < got < 10.0
     assert math.isfinite(got)
+
+
+def test_non_finite_coordinates_give_nan_not_antipodal_error():
+    """NaN in, NaN out -- and no claim about antipodal points.
+
+    Regression for F-3.5: a non-finite coordinate never satisfies the
+    convergence test, so it used to raise the near-antipodal ValueError, which
+    names the wrong cause. One bad pair also aborted every good pair in the
+    same vectorised call.
+    """
+    assert np.isnan(geodesic_distance(0.0, np.nan, 1.0, 1.0))
+    assert np.isnan(geodesic_distance(np.nan, 0.0, 1.0, 1.0))
+    assert np.isnan(geodesic_distance(0.0, np.inf, 1.0, 1.0))
+
+    # a single bad pair must not poison its neighbours
+    lon1 = np.array([0.0, 0.0, 0.0])
+    lat1 = np.array([50.0, 50.0, np.nan])
+    lon2 = np.array([0.001, 0.002, 0.003])
+    lat2 = np.array([50.0, 50.0, 50.0])
+    d = geodesic_distance(lon1, lat1, lon2, lat2)
+    assert np.isfinite(d[:2]).all()
+    assert np.isnan(d[2])
+    np.testing.assert_allclose(d[:2], [71.6957, 143.3915], rtol=1e-4)
+
+
+def test_genuine_antipodal_pair_still_raises():
+    """The real non-convergence case keeps its error -- it is not a NaN case."""
+    with pytest.raises(ValueError, match="near-antipodal"):
+        geodesic_distance(0.0, 0.0, 179.9, 0.1)
