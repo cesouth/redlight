@@ -236,3 +236,22 @@ def test_accuracy_reaches_derive_speeds(straight_net, make_points_csv):
     # a ~4 m accuracy must yield a tighter speed uncertainty than an assumed 40 m
     assert (tight["intervals"]["speed_sigma_mps"].median()
             < loose["intervals"]["speed_sigma_mps"].median())
+
+
+def test_mixed_iso8601_spellings_are_all_parsed(make_points_csv):
+    """'T' and space separators, and optional fractional seconds, in one column.
+
+    Regression for F-3.6: pandas >= 2.0 infers one format from the first value
+    and coerces the rest to NaT, so rows were dropped behind a warning that
+    blamed missing data. Every value here is unambiguous ISO 8601.
+    """
+    rows = [
+        {"id": "a", "lon": 0.0005, "lat": 1e-5, "time": "2026-06-01T08:00:00"},
+        {"id": "a", "lon": 0.0011, "lat": 1e-5, "time": "2026-06-01 08:00:10"},
+        {"id": "a", "lon": 0.0017, "lat": 1e-5, "time": "2026-06-01T08:00:20.5"},
+        {"id": "a", "lon": 0.0023, "lat": 1e-5, "time": "2026-06-01 08:00:30"},
+    ]
+    pts = rl.load_points(make_points_csv(rows), id_col="id")
+    assert len(pts.df) == 4
+    assert pts.df["time"].notna().all()
+    assert pts.df["time"].is_monotonic_increasing

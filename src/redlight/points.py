@@ -169,6 +169,32 @@ def _infer_speed_unit(colname: str) -> str | None:
     return None
 
 
+def _coerce_datetimes(values, *, utc: bool) -> pd.Series:
+    """``pd.to_datetime`` that tolerates more than one spelling in one column.
+
+    pandas >= 2.0 infers a single format from the first non-null value and
+    coerces everything not matching it to ``NaT``. A column mixing
+    ``2026-06-01T08:00:00`` with ``2026-06-01 08:00:10`` -- or whole seconds
+    with fractional ones, which is what a logger that prints ``.%f`` only when
+    non-zero emits -- would therefore lose rows, and lose them behind a warning
+    that blames missing data. Both spellings are valid ISO 8601 and parse fine
+    on their own.
+
+    Only pay for the retry when the first pass actually dropped something.
+    ``format="mixed"`` is pandas >= 2.0, so the call is guarded: on 1.3-1.5
+    (still supported) the original parse is already the lenient per-element
+    one, and there is nothing to repair.
+    """
+    t = pd.to_datetime(values, errors="coerce", utc=utc)
+    lost = pd.isna(t).to_numpy() & pd.notna(pd.Series(values)).to_numpy()
+    if not lost.any():
+        return t
+    try:
+        return pd.to_datetime(values, errors="coerce", utc=utc, format="mixed")
+    except (TypeError, ValueError):
+        return t
+
+
 def _parse_times(values, timestamp_unit: str | None, tz: str | None) -> pd.Series:
     """Parse timestamps to a timezone-naive local-clock datetime Series.
 
@@ -191,12 +217,12 @@ def _parse_times(values, timestamp_unit: str | None, tz: str | None) -> pd.Serie
         return t.dt.tz_localize(None)
 
     try:
-        t = pd.to_datetime(values, errors="coerce", utc=False)
+        t = _coerce_datetimes(values, utc=False)
     except (ValueError, TypeError):
         # mixed UTC offsets (e.g. a DST change): parse as UTC, convert below
-        t = pd.to_datetime(values, errors="coerce", utc=True)
+        t = _coerce_datetimes(values, utc=True)
     if t.dtype == object:  # older pandas: mixed offsets degrade to object
-        t = pd.to_datetime(values, errors="coerce", utc=True)
+        t = _coerce_datetimes(values, utc=True)
 
     aware = getattr(t.dt, "tz", None) is not None
     if aware:
