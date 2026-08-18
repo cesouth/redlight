@@ -217,6 +217,26 @@ def test_documentation_contains_python_examples():
     )
 
 
+def test_prose_version_claims_match_the_package():
+    """Any version restated in prose must be the real one.
+
+    pyproject reads the version from ``redlight.__version__`` so the package
+    metadata cannot drift, but a number typed into a document can -- and did:
+    the README masthead sat at 0.5.0 for the whole of 0.6.0.
+    """
+    pattern = re.compile(r"\*\*Version\s+(\d+\.\d+\.\d+)\*\*")
+    found = []
+    for path in DOC_FILES:
+        for m in pattern.finditer(path.read_text()):
+            found.append((path.relative_to(REPO).as_posix(), m.group(1)))
+    assert found, "no prose version claim found -- has the masthead format changed?"
+    wrong = [(doc, got) for doc, got in found if got != rl.__version__]
+    assert not wrong, (
+        f"documentation claims a version the package does not have "
+        f"(redlight.__version__ == {rl.__version__}): {wrong}"
+    )
+
+
 @pytest.mark.parametrize(
     "doc,index,line,code,needs",
     BLOCKS,

@@ -1,6 +1,6 @@
 # redlight
 
-**Version 0.5.0** · MIT licensed · Python 3.9+
+**Version 0.6.0** · MIT licensed · Python 3.9+
 
 **Trafficability analysis for road networks, from your own GPS data.**
 
