@@ -284,7 +284,7 @@ git commit -m "docs: ship-review plan and recorded baseline"
 - Produces: `01-spec-drift.md`. Task 2 reads its Summary so it does not
   re-report the same doc gaps.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are auditing the Python package `redlight` at
@@ -333,12 +333,12 @@ the exact format defined in .plans/2026-08-17-redlight-ship-review.md under
 Verdict and Outcome line blank. Change no source file. Do not commit.
 ```
 
-- [ ] **Step 2: Triage** — fill in every Verdict line in `01-spec-drift.md`.
+- [x] **Step 2: Triage** — fill in every Verdict line in `01-spec-drift.md`.
 
-- [ ] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
+- [x] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
 `.plans/reviews/2026-08-17-ship/01-spec-drift.md`.
 
-- [ ] **Step 4: Commit the findings file**
+- [x] **Step 4: Commit the findings file**
 
 ```bash
 git add .plans/reviews/2026-08-17-ship/01-spec-drift.md
@@ -364,7 +364,7 @@ that claims a behaviour, a bound, or a number the code does not deliver.
 - Consumes: `00-baseline.md`, `01-spec-drift.md` Summary.
 - Produces: `02-doc-drift.md`.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are auditing the Python package `redlight` at
@@ -426,12 +426,12 @@ format from .plans/2026-08-17-redlight-ship-review.md. Leave Verdict and
 Outcome blank. Change no source file. Do not commit.
 ```
 
-- [ ] **Step 2: Triage** — fill in every Verdict line.
+- [x] **Step 2: Triage** — fill in every Verdict line.
 
-- [ ] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
+- [x] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
 `.plans/reviews/2026-08-17-ship/02-doc-drift.md`.
 
-- [ ] **Step 4: Commit the findings file**
+- [x] **Step 4: Commit the findings file**
 
 ```bash
 git add .plans/reviews/2026-08-17-ship/02-doc-drift.md
@@ -457,7 +457,7 @@ every downstream number inherits it, and nothing in the output looks wrong.
 - Produces: `03-numerical-accuracy.md`. Task 4 assumes the primitives audited
   here are trustworthy, so this pass must run before it.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are auditing the numerical core of the Python package `redlight` at
@@ -541,13 +541,13 @@ format from .plans/2026-08-17-redlight-ship-review.md. Leave Verdict and
 Outcome blank. Do not commit.
 ```
 
-- [ ] **Step 2: Triage** — fill in every Verdict line. Expect this file to be
+- [x] **Step 2: Triage** — fill in every Verdict line. Expect this file to be
 the most consequential in the plan; read it slowly.
 
-- [ ] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
+- [x] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
 `.plans/reviews/2026-08-17-ship/03-numerical-accuracy.md`.
 
-- [ ] **Step 4: Commit the findings file**
+- [x] **Step 4: Commit the findings file**
 
 ```bash
 git add .plans/reviews/2026-08-17-ship/03-numerical-accuracy.md

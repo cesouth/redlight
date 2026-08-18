@@ -251,10 +251,12 @@ at 90° from the central meridian.
   keeps successive snaps close together on the edge, where arc and chord agree,
   so the gap has no reachable consequence that this pass could construct. The
   change was written, tested and reverted rather than shipped unverified.
-- **Verdict:** ACCEPT (revisit -- see correction)
-- **Outcome:** **STOPPED -- no change made.** See the correction note above; the claim
-  this finding rests on did not survive re-testing, and the Verdict needs
-  revisiting before anything is changed.
+- **Verdict:** DEFER
+- **Outcome:** deferred -- no change made. The decode evidence did not survive
+  re-testing (see the correction above): the change was written, tested against
+  300 randomised networks, found to alter nothing, and reverted. The modelling
+  gap it names is real, so this is deferred rather than rejected -- revisit it
+  alongside Task 8, where any same-edge change would be measured anyway.
 
 ---
 
