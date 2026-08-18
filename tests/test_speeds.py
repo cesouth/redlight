@@ -209,3 +209,22 @@ def test_duplicate_timestamps_warn(straight_net, make_points_csv):
     pts, m = _match(straight_net, make_points_csv, _tied_rows(4))
     with pytest.warns(UserWarning, match="duplicate timestamp"):
         rl.derive_speeds(straight_net, m, pts)
+
+
+def test_nat_timestamp_emits_no_interval(straight_net, make_points_csv):
+    """A NaT timestamp must be skipped like a zero or negative dt.
+
+    Regression for F-3.7: the guard was ``dt_s <= 0``, and NaN fails that
+    comparison, so a NaT produced an interval with dt_s and speed_mps both NaN.
+    """
+    import pandas as pd
+
+    pts, m = _match(straight_net, make_points_csv, drive_along_road(3, traj="a"))
+    m = m.copy()
+    m.loc[1, "time"] = pd.NaT
+    pts.df.loc[1, "time"] = pd.NaT
+
+    res = rl.derive_speeds(straight_net, m, pts)
+    iv = res["intervals"]
+    assert not iv["dt_s"].isna().any()
+    assert not iv["speed_mps"].isna().any()

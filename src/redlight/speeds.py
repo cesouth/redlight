@@ -388,7 +388,10 @@ def derive_speeds(
 
             a, b = i, last
             dt_s = (tstamp[b] - tstamp[a]) / np.timedelta64(1, "s")
-            if dt_s <= 0:
+            # `not (dt_s > 0)` rather than `dt_s <= 0`: a NaT timestamp makes
+            # dt_s NaN, and NaN fails every comparison, so `<= 0` would let it
+            # through and emit an interval whose dt and speed are both NaN.
+            if not (dt_s > 0):
                 i = b
                 continue
 
