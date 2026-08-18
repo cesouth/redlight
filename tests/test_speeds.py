@@ -176,3 +176,36 @@ def test_interval_id_start_lets_two_runs_be_combined(straight_net,
     out = rl.aggregate_speeds(combined, output_unit="mps")
     assert out["n"].sum() == len(obs_a["interval_id"].unique()) + \
         len(obs_b["interval_id"].unique())
+
+
+def _tied_rows(n_tied=150):
+    """``n_tied`` fixes sharing one timestamp, then one fix 10 s later."""
+    rows = [{"id": "a", "lon": 0.0005 + 1e-5 * k, "lat": 1e-5,
+             "time": "2026-06-01T08:00:00"} for k in range(n_tied)]
+    rows.append({"id": "a", "lon": 0.0005 + 1e-5 * n_tied, "lat": 1e-5,
+                 "time": "2026-06-01T08:00:10"})
+    return rows
+
+
+def test_duplicate_timestamps_resolve_in_file_order(straight_net,
+                                                    make_points_csv):
+    """Tied timestamps must resolve by a stated rule, not by pandas' sort.
+
+    Regression for F-3.3: ``sort_values`` defaults to quicksort, which is not
+    stable, so with enough tied rows the fix that survived to anchor the next
+    interval was chosen by the sort implementation rather than by the data.
+    The documented rule is that the last tied fix in file order anchors it.
+    """
+    n_tied = 150
+    pts, m = _match(straight_net, make_points_csv, _tied_rows(n_tied))
+    res = rl.derive_speeds(straight_net, m, pts)
+    assert len(res["intervals"]) == 1
+    assert int(res["intervals"]["point_id_from"].iloc[0]) == n_tied - 1
+
+
+def test_duplicate_timestamps_warn(straight_net, make_points_csv):
+    """Contradictory fixes at one instant are reported, not silently resolved."""
+    import pytest
+    pts, m = _match(straight_net, make_points_csv, _tied_rows(4))
+    with pytest.warns(UserWarning, match="duplicate timestamp"):
+        rl.derive_speeds(straight_net, m, pts)

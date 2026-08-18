@@ -63,8 +63,19 @@ the noise floor (``distance_m < min_snr * sigma_combined``), when ``dt`` is outs
 trajectory ran out of points before the merged interval reached it. Keep
 ``quality`` rows for aggregation; the ``speed_var`` column also supports
 inverse-variance weighting.
+
+Duplicate timestamps
+--------------------
+Fixes are sorted by time with a **stable** sort, so fixes sharing a timestamp
+keep their input order. An interval needs ``dt > 0``, so a tied pair produces
+none, and the last fix of each tied group (in input order) is the one that
+anchors the surrounding intervals. ``derive_speeds`` warns when it sees such a
+group: two positions at one instant are contradictory input, and which one
+survives is decided by input order rather than by the data.
 """
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -275,6 +286,26 @@ def derive_speeds(
     # one group (a point set with no id column is a single trajectory)
     if "traj_id" not in df.columns:
         df["traj_id"] = None
+
+    # Two fixes stamped at the same instant are contradictory: they put one
+    # mover in two places at once. The zero-length interval between them is
+    # skipped below, which means one of them silently stops contributing, so
+    # say so rather than let it pass as a clean result.
+    tied = df.duplicated(subset=["traj_id", "time"], keep=False)
+    if bool(tied.any()):
+        n_tied = int(tied.sum())
+        tids = [t for t in df.loc[tied, "traj_id"].unique() if t is not None]
+        where = f" in trajectory/ies {sorted(map(str, tids))}" if tids else ""
+        warnings.warn(
+            f"{n_tied} fix(es) share a duplicate timestamp with another fix"
+            f"{where}. A mover cannot be in two places at one instant: the "
+            "zero-length interval between them is skipped, so only the last "
+            "of each tied group (in input order) anchors the surrounding "
+            "intervals. Deduplicate or re-stamp these fixes if the choice "
+            "matters to you.",
+            stacklevel=2,
+        )
+
     group_iter = df.groupby("traj_id", sort=False, dropna=False)
 
     has_snap_col = "snap_dist_m" in matched.columns
@@ -283,7 +314,11 @@ def derive_speeds(
     edge_rows: list[dict] = []
 
     for tid, sub in group_iter:
-        sub = sub.sort_values("time").reset_index(drop=True)
+        # kind="stable" so tied timestamps keep input order: the default
+        # quicksort permutes them once a tied block gets large (~100 rows),
+        # which would let the sort implementation, rather than the data,
+        # decide which fix survives to anchor an interval.
+        sub = sub.sort_values("time", kind="stable").reset_index(drop=True)
         n = len(sub)
         if n < 2:
             continue
