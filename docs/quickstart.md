@@ -181,11 +181,11 @@ for r in peaks["peak"]:        # slowest = busiest
 info = rl.assign_segment_speeds(net, clean, statistic="median")
 print("peak hours:", info["peak_hours"], "coverage:", info["coverage"])
 router = rl.Router(net)
-res = router.route((-77.30, 38.68), (-77.27, 38.71), mode="time", period="peak")
+res = router.route((-77.30, 38.80), (-77.27, 38.81), mode="time", period="peak")
 print(res["travel_time_s"], "s; edges on default speed:", res["n_edges_default"])
 
 # Compare against the shortest-distance route
-res_d = router.route((-77.30, 38.68), (-77.27, 38.71), mode="distance")
+res_d = router.route((-77.30, 38.80), (-77.27, 38.81), mode="distance")
 ```
 
 For a custom objective, pass `mode="cost"` with a weight function. The network

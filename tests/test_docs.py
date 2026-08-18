@@ -237,6 +237,51 @@ def test_prose_version_claims_match_the_package():
     )
 
 
+def test_documented_route_endpoints_lie_on_the_documented_network():
+    """Route examples must use coordinates from the network the docs build.
+
+    ``Router.route`` snaps to the nearest node at any distance, so a snippet
+    naming a point 13 km away still runs, still prints a route, and still
+    passes ``test_doc_example_runs`` -- while demonstrating nothing about the
+    coordinates it names. Executing a block cannot catch that; only checking
+    the coordinates against the network can.
+    """
+    from redlight._geo import geodesic_distance
+
+    call = re.compile(r"\.route\(\s*\(\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\)"
+                      r"\s*,\s*\(\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\)")
+    pairs = []
+    for path in DOC_FILES:
+        text = path.read_text()
+        for m in call.finditer(text):
+            line = text[:m.start()].count("\n") + 1
+            lo1, la1, lo2, la2 = (float(g) for g in m.groups())
+            doc = path.relative_to(REPO).as_posix()
+            pairs.append((doc, line, (lo1, la1), (lo2, la2)))
+    assert pairs, "no router.route() coordinate pairs found in the docs"
+
+    # The same grid tests/test_docs.py builds for the snippets themselves.
+    lon0, lat0, dlon, dlat = -77.30, 38.80, 0.009, 0.008
+    nodes = [(lon0 + c * dlon, lat0 + r * dlat)
+             for r in range(3) for c in range(4)]
+    # Generous: the grid is ~2.7 km wide, so 2 km of slack still catches a
+    # coordinate left behind in a different part of the county.
+    limit_m = 2000.0
+
+    far = []
+    for doc, line, origin, dest in pairs:
+        for label, pt in (("origin", origin), ("destination", dest)):
+            d = min(float(geodesic_distance(pt[0], pt[1], n[0], n[1]))
+                    for n in nodes)
+            if d > limit_m:
+                far.append(f"{doc}:{line} {label} {pt} is {d:,.0f} m "
+                           f"from the nearest node")
+    assert not far, (
+        "documentation routes from coordinates that are not on the network "
+        "the documentation builds:\n  " + "\n  ".join(far)
+    )
+
+
 @pytest.mark.parametrize(
     "doc,index,line,code,needs",
     BLOCKS,
