@@ -123,3 +123,44 @@ def test_hmm_prefers_trajectory_consistency(grid_net, make_points_csv):
     for eid in m["edge_id"]:
         (u, v) = grid_net.edge_endpoints(int(eid))
         assert u[1] == 0.0 and v[1] == 0.0
+
+
+def _staircase_rows(sp=0.001, legs=2, per_leg=5, traj="a"):
+    """Fixes exactly on the centreline of a staircase route through a grid.
+
+    East one block, north one block, repeat. Every fix lies strictly inside a
+    leg and exactly on the road, so the only correct match has snap_dist_m 0.
+    """
+    import pandas as pd
+    t0 = pd.Timestamp("2026-06-01 08:00:00")
+    corners, lon, lat = [], 0.0, 0.0
+    for _ in range(legs):
+        corners.append(((lon, lat), (lon + sp, lat)))
+        lon += sp
+        corners.append(((lon, lat), (lon, lat + sp)))
+        lat += sp
+    rows, k = [], 0
+    for (x0, y0), (x1, y1) in corners:
+        for f in np.linspace(0.08, 0.92, per_leg):
+            rows.append({"id": traj,
+                         "lon": x0 + f * (x1 - x0), "lat": y0 + f * (y1 - y0),
+                         "time": (t0 + pd.Timedelta(seconds=10 * k)).isoformat()})
+            k += 1
+    return rows
+
+
+def test_hmm_transition_uses_true_arc_position(grid_net, make_points_csv):
+    """Every fix sits exactly on a road, so every match must snap to ~0 m.
+
+    Regression for F-3.1: the transition route distance was built from the
+    segment-local ``t`` of candidate_edges scaled by the whole edge length,
+    which pushed fixes onto a neighbouring edge metres away.
+    """
+    pts = _load(make_points_csv, _staircase_rows())
+    m = rl.HMMMatcher(grid_net, max_dist=50.0).match(pts)
+    assert (m["edge_id"] != -1).all()
+    # 1 mm: the rows are interpolated in lon/lat while the road is a straight
+    # line in the metric CRS, so ~1e-5 m of curvature residue is expected. The
+    # bug this pins produced 8.9 m, four orders of magnitude above the bound.
+    worst = np.nanmax(m["snap_dist_m"].to_numpy(dtype=float))
+    assert worst < 1e-3, f"matched a fix to an edge {worst:.3f} m away"

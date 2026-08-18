@@ -589,26 +589,29 @@ class Network:
         rows = []
         for eid in self._edge_ids:
             coords = np.asarray(self._edge_geoms_proj[eid].coords)
+            arc0 = 0.0          # arc length from the edge start to this segment
             for i in range(len(coords) - 1):
                 x0, y0 = coords[i]
                 x1, y1 = coords[i + 1]
                 seg_len = math.hypot(x1 - x0, y1 - y0)
                 n_sub = max(1, int(math.ceil(seg_len / d))) if d and d > 0 else 1
                 if n_sub == 1:
-                    rows.append((eid, x0, y0, x1, y1))
+                    rows.append((eid, x0, y0, x1, y1, arc0))
                 else:
                     ts = np.linspace(0.0, 1.0, n_sub + 1)
                     xs = x0 + ts * (x1 - x0)
                     ys = y0 + ts * (y1 - y0)
                     for j in range(n_sub):
-                        rows.append((eid, xs[j], ys[j], xs[j + 1], ys[j + 1]))
+                        rows.append((eid, xs[j], ys[j], xs[j + 1], ys[j + 1],
+                                     arc0 + ts[j] * seg_len))
+                arc0 += seg_len
         if not rows:
             raise ValueError(
                 "Network has no usable edges: every feature was degenerate "
                 "(zero length, or a closed loop whose endpoints coincide). "
                 "Split closed ways into open segments before loading."
             )
-        self._seg_table = np.array(rows, dtype=float)  # cols: eid,x0,y0,x1,y1
+        self._seg_table = np.array(rows, dtype=float)  # cols: eid,x0,y0,x1,y1,arc0
         mids = np.column_stack([
             (self._seg_table[:, 1] + self._seg_table[:, 3]) / 2.0,
             (self._seg_table[:, 2] + self._seg_table[:, 4]) / 2.0,
@@ -658,7 +661,9 @@ class Network:
         One batch KDTree query plus one vectorised foot-of-perpendicular
         computation over the whole (n, k) candidate matrix — the same math as
         :meth:`candidate_edges`, minus the per-point Python overhead. Returns
-        ``(edge_ids, perp_dists, ts)``, each of shape ``(n, k)``.
+        ``(edge_ids, perp_dists, ts, arcs)``, each of shape ``(n, k)``, where
+        ``ts`` are fractions of a densified sub-segment and ``arcs`` are the
+        corresponding arc lengths in metres from the edge's start node.
         """
         pts = np.column_stack([np.asarray(px, dtype=float),
                                np.asarray(py, dtype=float)])
@@ -674,7 +679,8 @@ class Network:
         t = np.clip(((qx - x0) * dx + (qy - y0) * dy) / seg_len2, 0.0, 1.0)
         fx, fy = x0 + t * dx, y0 + t * dy
         perp = np.hypot(qx - fx, qy - fy)
-        return seg[..., 0].astype(np.int64), perp, t
+        arc = seg[..., 5] + t * np.hypot(dx, dy)
+        return seg[..., 0].astype(np.int64), perp, t, arc
 
     def nearest_edges(self, px, py, *, k: int = 10, max_dist: float = 50.0,
                       chunk_size: int = 200_000):
@@ -692,7 +698,7 @@ class Network:
         snap = np.full(n, np.nan)
         for s in range(0, n, chunk_size):
             e = min(s + chunk_size, n)
-            em, pm, _tm = self._candidates_matrix(px[s:e], py[s:e], k)
+            em, pm, _tm, _am = self._candidates_matrix(px[s:e], py[s:e], k)
             j = np.argmin(pm, axis=1)
             rows = np.arange(e - s)
             best = pm[rows, j]
@@ -709,7 +715,7 @@ class Network:
         candidate lists with the same content and ordering as
         :meth:`candidate_edges`.
         """
-        em, pm, tm = self._candidates_matrix(px, py, k)
+        em, pm, tm, _am = self._candidates_matrix(px, py, k)
         order_all = np.argsort(pm, axis=1, kind="stable")  # one call, all rows
         out = []
         for i in range(len(em)):
@@ -722,6 +728,38 @@ class Network:
                 if e not in best:
                     best[e] = (float(d), float(tm[i, j]))
             out.append([(e, d, tt) for e, (d, tt) in best.items()])
+        return out
+
+    def _candidate_arcs_batch(self, px, py, *, k: int = 10,
+                              max_dist: float = 50.0):
+        """Per-point candidates as ``(edge_id, perp_dist, arc_m)``.
+
+        Same candidates, ordering and tolerance as
+        :meth:`candidate_edges_batch`, but the third element is the snap's
+        **arc length along the edge in metres**, measured from the directed
+        edge's start node -- the quantity
+        :func:`redlight.speeds._arc_position` computes with shapely, obtained
+        here from the snap table at no extra cost.
+
+        It is deliberately a separate method rather than a third element added
+        to :meth:`candidate_edges_batch`: that method's ``t`` is a fraction of
+        one densified sub-segment, and the two must not be confused. Scaling
+        ``t`` by the edge length is wrong by up to a full edge length, which is
+        exactly the bug this method exists to make unavailable.
+        """
+        em, pm, _tm, am = self._candidates_matrix(px, py, k)
+        order_all = np.argsort(pm, axis=1, kind="stable")
+        out = []
+        for i in range(len(em)):
+            best = {}
+            for j in order_all[i]:
+                d = pm[i, j]
+                if d > max_dist:
+                    break  # sorted ascending: nothing further qualifies
+                e = int(em[i, j])
+                if e not in best:
+                    best[e] = (float(d), float(am[i, j]))
+            out.append([(e, d, a) for e, (d, a) in best.items()])
         return out
 
     # ------------------------------------------------------------ CSR graph

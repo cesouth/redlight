@@ -242,7 +242,7 @@ class HMMMatcher:
         dcache = self._get_dist_cache()
 
         # candidate sets for the whole trajectory in one vectorised pass
-        cand_list = self.network.candidate_edges_batch(
+        cand_list = self.network._candidate_arcs_batch(
             px, py, k=self.k, max_dist=self.max_dist
         )
         has_cand = [bool(c) for c in cand_list]
@@ -250,8 +250,9 @@ class HMMMatcher:
         # Viterbi
         V = [dict() for _ in range(n)]      # state -> best log-prob
         back = [dict() for _ in range(n)]   # state -> previous edge_id (or None)
-        snap_t = [dict() for _ in range(n)]  # state -> fractional position (0..1)
-                                              # along that edge, from candidate_edges
+        snap_s = [dict() for _ in range(n)]  # state -> arc length (metres) of the
+                                             # snap along that edge, from its
+                                             # start node
         # anchor[i]: index whose raw GPS position (px, py) is "the" observed
         # position for whatever state V[i] currently holds. Equal to i for a row
         # with its own candidates; propagated from anchor[i-1] across a
@@ -265,16 +266,16 @@ class HMMMatcher:
                 if i > 0:
                     V[i] = dict(V[i - 1])
                     back[i] = {e: e for e in V[i]}
-                    snap_t[i] = dict(snap_t[i - 1])
+                    snap_s[i] = dict(snap_s[i - 1])
                     anchor[i] = anchor[i - 1]
                 continue
 
             if i == 0 or not V[i - 1]:
                 # Start (or restart after a candidate-less prefix): emission only.
-                for eid, dist, t_cur in cand_list[i]:
+                for eid, dist, s_cur in cand_list[i]:
                     V[i][eid] = self._emission_logp(dist)
                     back[i][eid] = None
-                    snap_t[i][eid] = t_cur
+                    snap_s[i][eid] = s_cur
                 continue
 
             # Straight-line distance from the last row that actually anchored a
@@ -288,10 +289,10 @@ class HMMMatcher:
             # per (source node, cutoff regime) and reused across steps.
             prev_end = {peid: self.network.edge_endpoints(peid)[1]
                         for peid in V[i - 1]}
-            for eid, dist, t_cur in cand_list[i]:
+            for eid, dist, s_cur in cand_list[i]:
                 em = self._emission_logp(dist)
                 u_cur, _ = self.network.edge_endpoints(eid)
-                leadin_cur = t_cur * self.network.edge_length(eid)
+                leadin_cur = s_cur
                 best_lp, best_prev = -np.inf, None
                 for peid, plp in V[i - 1].items():
                     if peid == eid:
@@ -310,8 +311,8 @@ class HMMMatcher:
                         # quantity: remaining length of the previous edge past
                         # its snap, the node-to-node middle, then the current
                         # edge's length up to its own snap.
-                        remaining_prev = ((1.0 - snap_t[i - 1][peid])
-                                          * self.network.edge_length(peid))
+                        remaining_prev = (self.network.edge_length(peid)
+                                          - snap_s[i - 1][peid])
                         rd = remaining_prev + node_dist + leadin_cur
                     delta = abs(gc_step - rd)
                     lp = plp + self._transition_logp(delta) + em
@@ -332,7 +333,7 @@ class HMMMatcher:
                     best_prev = pbest
                 V[i][eid] = best_lp
                 back[i][eid] = best_prev
-                snap_t[i][eid] = t_cur
+                snap_s[i][eid] = s_cur
 
         # backtrack from the last step that has any state; fixes without
         # candidates stay -1 (never fabricate a match for them)
@@ -356,7 +357,7 @@ class HMMMatcher:
         for i in range(n):
             if matched[i] == -1:
                 continue
-            for eid, dist, _t in cand_list[i]:
+            for eid, dist, _s in cand_list[i]:
                 if eid == matched[i]:
                     snap[i] = dist
                     break
