@@ -164,3 +164,32 @@ def test_hmm_transition_uses_true_arc_position(grid_net, make_points_csv):
     # bug this pins produced 8.9 m, four orders of magnitude above the bound.
     worst = np.nanmax(m["snap_dist_m"].to_numpy(dtype=float))
     assert worst < 1e-3, f"matched a fix to an edge {worst:.3f} m away"
+
+
+def test_emission_logp_is_a_gaussian_in_snap_distance():
+    """Pin Newson & Krumm eq. (1): log N(dist; 0, sigma_z), constant included.
+
+    Regression for F-6.1: dropping the square -- turning the Gaussian into an
+    exponential -- left the whole suite green. Values are pinned rather than
+    computed from scipy so this holds in an environment without it, matching
+    tests/test_geo.py's house style.
+    """
+    m = rl.HMMMatcher.__new__(rl.HMMMatcher)
+    m.sigma_z = 6.0
+    for dist, expect in [(0.0, -2.710698002432728),
+                         (6.0, -3.210698002432728),
+                         (12.0, -4.710698002432728),
+                         (25.0, -11.391253557988286)]:
+        assert m._emission_logp(dist) == pytest.approx(expect, abs=1e-12)
+
+    # the normalising constant must track sigma_z, not be a fixed offset
+    for sigma_z, expect in [(2.0, -1.6120857137646178),
+                            (20.0, -3.9146708067586635)]:
+        m.sigma_z = sigma_z
+        assert m._emission_logp(0.0) == pytest.approx(expect, abs=1e-12)
+
+    # and the fall-off must be quadratic, not linear
+    m.sigma_z = 6.0
+    d1, d2 = m._emission_logp(0.0) - m._emission_logp(6.0), \
+        m._emission_logp(6.0) - m._emission_logp(12.0)
+    assert d2 == pytest.approx(3.0 * d1, rel=1e-12)

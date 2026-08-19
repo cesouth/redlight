@@ -1,5 +1,7 @@
 import networkx as nx
 import numpy as np
+import pandas as pd
+import pytest
 
 import redlight as rl
 from conftest import drive_along_road
@@ -228,3 +230,27 @@ def test_nat_timestamp_emits_no_interval(straight_net, make_points_csv):
     iv = res["intervals"]
     assert not iv["dt_s"].isna().any()
     assert not iv["speed_mps"].isna().any()
+
+
+def test_speed_sigma_combines_both_endpoint_accuracies(straight_net, tmp_path):
+    """Pin sigma_v = sqrt(sigma_i^2 + sigma_j^2) / dt, and speed_var = sigma_v^2.
+
+    Regression for F-6.2: using one endpoint instead of both left the suite
+    green, and speed_var is what aggregate_speeds(weight_by_variance=True)
+    weights by. 5 and 12 chosen so hypot is exactly 13.
+    """
+    p = tmp_path / "acc.csv"
+    pd.DataFrame({
+        "id": ["a", "a"],
+        "lon": [0.0005, 0.0011],
+        "lat": [1e-5, 1e-5],
+        "time": ["2026-06-01T08:00:00", "2026-06-01T08:00:10"],
+        "acc_m": [5.0, 12.0],
+    }).to_csv(p, index=False)
+    pts = rl.load_points(str(p), id_col="id")
+    m = rl.NearestMatcher(straight_net, max_dist=60).match(pts)
+    iv = rl.derive_speeds(straight_net, m, pts, pos_accuracy_col="acc_m")["intervals"]
+
+    assert len(iv) == 1
+    assert float(iv["speed_sigma_mps"].iloc[0]) == pytest.approx(1.3, abs=1e-12)
+    assert float(iv["speed_var"].iloc[0]) == pytest.approx(1.69, abs=1e-12)
