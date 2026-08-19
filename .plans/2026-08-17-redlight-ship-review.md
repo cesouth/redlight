@@ -974,7 +974,7 @@ provably preserve output, and a written FMM proposal you decide on later.
 - Produces: an optimized matcher with byte-identical output, and a standalone
   FMM proposal document.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are optimizing the HMM map matcher in the Python package `redlight` at
@@ -1069,14 +1069,14 @@ Commit Part A optimizations individually as you go. Commit the proposal and
 the work log separately at the end.
 ```
 
-- [ ] **Step 2: Review the diff yourself**
+- [x] **Step 2: Review the diff yourself**
 
 ```bash
 git log --oneline -15
 git diff <baseline-sha>..HEAD -- src/redlight/matching.py
 ```
 
-- [ ] **Step 3: Decide on the FMM proposal.** Read
+- [x] **Step 3: Decide on the FMM proposal.** Read
 `.plans/2026-08-17-fast-map-matching-proposal.md` and record your decision at
 the top of it: build now, build later, or decline. Commit that decision.
 
