@@ -130,8 +130,8 @@ cause to the HMM.
 - **Verdict:** DEFER -- into a single regeneration step after Tasks 5 and 6, the last passes
   that can still change behaviour (Task 8 is invariance-constrained). Doing it
   now means doing it twice.
-- **Outcome:** deferred -- bundled with F-4.2/F-4.3/F-4.4 into one regeneration step after
-  Tasks 5 and 6; see the Verdict.
+- **Outcome:** fixed (6b8ab39) -- regenerated after the drift was bisected to 07d52ae
+  (see Unverified suspicions #1). 16/16 table values cross-checked against the JSON.
 
 ---
 
@@ -160,7 +160,7 @@ cause to the HMM.
   σ ≈ 30 m and narrows at σ = 50 m where both matchers are failing. That is a
   better argument for the HMM than the original claim.
 - **Verdict:** DEFER -- with F-4.1; the rewrite needs the final numbers.
-- **Outcome:** deferred -- with F-4.1.
+- **Outcome:** fixed (6b8ab39) -- claim rewritten; the margin now grows with noise to 30 m.
 
 ---
 
@@ -191,7 +191,7 @@ cause to the HMM.
   surplus is documented as having been matcher error since removed. Worth citing
   F-3.1 explicitly — it turns a caveat into a result.
 - **Verdict:** DEFER -- with F-4.1; the rewrite needs the final numbers.
-- **Outcome:** deferred -- with F-4.1.
+- **Outcome:** fixed (6b8ab39) -- section re-centred on the bias; the surplus it explained is gone.
 
 ---
 
@@ -230,7 +230,10 @@ cause to the HMM.
   experiment.
 - **Verdict:** DEFER -- with F-4.1, but note the *script* change (n_peak=6) must land BEFORE
   regeneration, not with the prose.
-- **Outcome:** deferred -- with F-4.1; the n_peak=6 script change must precede regeneration.
+- **Outcome:** fixed (6b8ab39) -- prose only. **The n_peak=6 fix this finding suggested was
+  wrong**: classify_hours returns a contiguous window, so n_peak=6 yields
+  [7,8,9,10,11,12] (3/6 truly congested, peak speed 6.41 vs truth 4.0) -- strictly
+  worse. Script unchanged; the prose now states why raising the width cannot help.
 
 ---
 
