@@ -1,4 +1,5 @@
 import importlib.util
+import json
 
 import networkx as nx
 import pytest
@@ -399,3 +400,52 @@ def test_non_utm_metric_epsg_errors_clearly_without_pyproj(tmp_path, monkeypatch
     monkeypatch.setattr(builtins, "__import__", no_pyproj)
     with pytest.raises(ImportError, match=r"redlight\[crs\]"):
         net_mod.Network.from_geojson(path, metric_epsg=27700)
+
+
+def _geojson_with_crs(tmp_path, name, coords, crs_name):
+    """A GeoJSON carrying a pre-RFC7946 ``crs`` member, as QGIS/ogr2ogr emit."""
+    doc = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": crs_name}},
+        "features": [{
+            "type": "Feature",
+            "properties": {"highway": "residential"},
+            "geometry": {"type": "LineString", "coordinates": coords},
+        }],
+    }
+    p = tmp_path / name
+    p.write_text(json.dumps(doc))
+    return str(p)
+
+
+def test_geojson_crs_member_utm_is_projected_natively(tmp_path):
+    """A 1 km road in UTM 31N must measure 1 km, not 16,000 km.
+
+    Regression for F-5.1: from_geojson ignored the crs member and read
+    eastings/northings as degrees.
+    """
+    path = _geojson_with_crs(tmp_path, "utm.geojson",
+                             [[500000, 5000000], [501000, 5000000]],
+                             "urn:ogc:def:crs:EPSG::32631")
+    net = rl.Network.from_geojson(path)
+    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1000.0, abs=1.0)
+    lon, lat = net.edge_coords_lonlat(int(net.edge_ids[0]))[0]
+    assert 2.0 < lon < 4.0 and 44.0 < lat < 46.0, (lon, lat)
+
+
+def test_geojson_crs_member_plain_epsg_spelling(tmp_path):
+    """The ``EPSG:NNNN`` spelling of the crs member works too."""
+    path = _geojson_with_crs(tmp_path, "utm2.geojson",
+                             [[500000, 5000000], [501000, 5000000]],
+                             "EPSG:32631")
+    net = rl.Network.from_geojson(path)
+    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1000.0, abs=1.0)
+
+
+def test_geojson_crs84_member_is_still_lonlat(tmp_path):
+    """OGC:CRS84 is WGS84 lon/lat and must not be transformed."""
+    path = _geojson_with_crs(tmp_path, "crs84.geojson",
+                             [[0.0, 0.0], [0.01, 0.0]],
+                             "urn:ogc:def:crs:OGC:1.3:CRS84")
+    net = rl.Network.from_geojson(path)
+    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1113.2, abs=2.0)

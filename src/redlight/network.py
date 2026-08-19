@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import warnings
 
 import numpy as np
@@ -158,6 +159,33 @@ def _source_to_wgs84(crs):
             always_xy=True,
         ).transform
     return lambda x, y: _proj.utm_inverse(x, y, zone, north)
+
+
+def _geojson_crs(gj) -> str | None:
+    """The CRS a GeoJSON document declares, normalised to an ``EPSG:``/``OGC:`` token.
+
+    RFC 7946 fixed GeoJSON at WGS84 lon/lat and dropped the ``crs`` member, but
+    QGIS and ogr2ogr still emit the GeoJSON-2008 form and people still hand
+    those files to this package. Ignoring the member means reading eastings and
+    northings as degrees, which does not fail -- it silently produces a road
+    thousands of kilometres long.
+
+    Handles both spellings of the name: the OGC URN
+    (``urn:ogc:def:crs:EPSG::27700``, ``urn:ogc:def:crs:OGC:1.3:CRS84``) and the
+    short form (``EPSG:27700``). Returns None when no member is present, which
+    :func:`_source_to_wgs84` already treats as "WGS84 by convention".
+    """
+    if not isinstance(gj, dict):
+        return None
+    name = ((gj.get("crs") or {}).get("properties") or {}).get("name")
+    if not name:
+        return None
+    text = str(name).strip()
+    m = re.match(r"^urn:ogc:def:crs:([A-Za-z]+):[^:]*:(.+)$", text, re.IGNORECASE)
+    if m:
+        authority, code = m.group(1).upper(), m.group(2).strip()
+        return f"{authority}:{code.upper() if authority == 'OGC' else code}"
+    return text
 
 
 def _round_node(x: float, y: float, ndigits: int = 7):
@@ -309,16 +337,25 @@ class Network:
         with open(path, encoding="utf-8") as fh:
             gj = json.load(fh)
         feats = gj.get("features", []) if isinstance(gj, dict) else []
+        # Same treatment the Shapefile/GPKG loader gives its source CRS, so the
+        # two produce identical structure for equivalent data: WGS84, CRS84,
+        # Web Mercator and UTM are handled in numpy, anything else goes through
+        # the `crs` extra with an error that names it.
+        to_wgs84 = _source_to_wgs84(_geojson_crs(gj))
         records = []
         for feat in feats:
             geom = (feat or {}).get("geometry") or {}
             gtype = geom.get("type")
             props = dict(feat.get("properties") or {})
+            parts = []
             if gtype == "LineString":
-                records.append((shape(geom), props))
+                parts = [shape(geom)]
             elif gtype == "MultiLineString":
-                for part in shape(geom).geoms:
-                    records.append((part, dict(props)))
+                parts = list(shape(geom).geoms)
+            for part in parts:
+                if to_wgs84 is not None:
+                    part = shapely_transform(to_wgs84, part)
+                records.append((part, dict(props)))
         if not records:
             raise ValueError("GeoJSON contained no LineString features.")
         return cls._build(records, metric_epsg, directed, oneway_attr, length_attr)
