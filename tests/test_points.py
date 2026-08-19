@@ -255,3 +255,30 @@ def test_mixed_iso8601_spellings_are_all_parsed(make_points_csv):
     assert len(pts.df) == 4
     assert pts.df["time"].notna().all()
     assert pts.df["time"].is_monotonic_increasing
+
+
+def test_out_of_range_coordinates_are_dropped_with_a_warning(make_points_csv):
+    """|lat| > 90 is not a position; it must not reach the geodesy.
+
+    Regression for F-5.2 (and the loader half of F-3.4): such a point loaded
+    cleanly, and geodesic_distance then returned a confident wrong distance
+    rather than NaN.
+    """
+    rows = [
+        {"lon": 0.0005, "lat": 1e-5, "time": "2026-06-01T08:00:00"},
+        {"lon": 181.0, "lat": 91.0, "time": "2026-06-01T08:00:10"},
+        {"lon": 0.0007, "lat": 1e-5, "time": "2026-06-01T08:00:20"},
+    ]
+    with pytest.warns(UserWarning, match="outside the valid range"):
+        pts = rl.load_points(make_points_csv(rows))
+    assert len(pts.df) == 2
+    assert pts.df["lat"].abs().max() <= 90.0
+    assert pts.df["point_id"].tolist() == [0, 1]
+
+
+def test_in_range_coordinates_are_untouched(make_points_csv):
+    """The boundary values themselves are valid positions."""
+    rows = [{"lon": 180.0, "lat": 90.0, "time": "2026-06-01T08:00:00"},
+            {"lon": -180.0, "lat": -90.0, "time": "2026-06-01T08:00:10"}]
+    pts = rl.load_points(make_points_csv(rows))
+    assert len(pts.df) == 2

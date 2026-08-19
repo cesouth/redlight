@@ -433,8 +433,26 @@ def load_points(
     required = ["lon", "lat", "time"] + (["speed_mps"] if "speed_mps" in out.columns else [])
     n_before = len(out)
     out = out.dropna(subset=required).reset_index(drop=True)
+
+    # |lat| > 90 or |lon| > 180 is not a position. It means swapped lon/lat
+    # columns, a projected file being read as degrees, or a corrupt column --
+    # and none of those fail downstream: _geo.geodesic_distance reflects such a
+    # point back across the pole and returns a confident, plausible, wrong
+    # distance where PROJ returns NaN. Catch it at the boundary, which is the
+    # one place that already has drop-with-a-warning machinery.
+    oob = ((out["lat"].abs() > 90.0) | (out["lon"].abs() > 180.0)).fillna(False)
+    n_oob = int(oob.sum())
+    if n_oob:
+        warnings.warn(
+            f"Dropped {n_oob} row(s) with coordinates outside the valid range "
+            "(|lat| <= 90, |lon| <= 180). Check for swapped lon/lat columns, "
+            "or a file in a projected CRS being read as degrees.",
+            stacklevel=2,
+        )
+        out = out[~oob].reset_index(drop=True)
+
     out["point_id"] = np.arange(len(out), dtype=np.int64)
-    dropped = n_before - len(out)
+    dropped = n_before - len(out) - n_oob   # out-of-range rows warned separately
     if dropped:
         warnings.warn(
             f"Dropped {dropped} row(s) with missing/unparseable "
