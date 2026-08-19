@@ -325,3 +325,27 @@ def test_null_and_nan_trajectory_ids_filter_identically():
                                                         unit="mps")))
             for o in (none_obs, nan_obs)]
     assert kept == [4, 4]
+
+
+def _bimodal(frac_ped, *, n=300, seed=0):
+    """Vehicles N(28, 6) mph and pedestrians N(3, 0.8) mph, ``frac_ped`` walkers."""
+    r = np.random.default_rng(seed)
+    n_ped = int(round(n * frac_ped))
+    return np.clip(np.concatenate([r.normal(28.0, 6.0, n - n_ped),
+                                   r.normal(3.0, 0.8, n_ped)]), 0.1, None)
+
+
+def test_mode_threshold_minority_floor_matches_the_docstring():
+    """Pin the minority fraction the valley guard can actually resolve.
+
+    The docstring quotes this floor, so a test has to hold it honest: it was
+    documented as 10% and measured at 0/8 seeds (F-4.5). Detection is reliable
+    at 20% and absent at or below 10%.
+    """
+    found = {frac: sum(rl.suggest_mode_threshold(_bimodal(frac, seed=s),
+                                                 unit="mph") is not None
+                       for s in range(8))
+             for frac in (0.05, 0.10, 0.20)}
+    assert found[0.05] == 0, found
+    assert found[0.10] == 0, found
+    assert found[0.20] == 8, found

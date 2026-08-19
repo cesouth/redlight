@@ -164,11 +164,14 @@ def suggest_mode_threshold(mover_speeds, *, unit="mph") -> float | None:
 
         Note that ``None`` also covers a walking population that is real but
         too *small* to identify. Guard 3 below asks the walking hump to carry
-        mass, and a minority under roughly a tenth of movers does not clear it
-        -- measured on synthetic mixes, a 10% minority is found and a 5% one is
-        not. That is deliberate, since the same guard is what stops a
-        vehicle-only feed's left-tail ripple from inventing pedestrians out of
-        gridlocked vehicles. If a small walking minority is known to be present,
+        mass, and a modest minority does not clear it -- measured over eight
+        seeds on synthetic mixes (vehicles N(28, 6) mph, walkers N(3, 0.8) mph,
+        n = 300), a 20% minority is found every time, 15% is marginal, and 10%
+        or below is never found. The exact floor depends on how well separated
+        the two populations are, so treat 20% as the reliable figure rather
+        than a guarantee. That is deliberate, since the same guard is what
+        stops a vehicle-only feed's left-tail ripple from inventing pedestrians
+        out of gridlocked vehicles. If a small walking minority is known to be present,
         pass an explicit threshold rather than reading ``None`` as its absence.
 
     Notes
