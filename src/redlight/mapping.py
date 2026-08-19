@@ -234,7 +234,15 @@ def plot_speed_map(
         or GUI) are responsible for closing it (``plt.close(fig)``) if they
         don't want it to accumulate in matplotlib's global figure registry.
     """
-    import matplotlib
+    try:
+        import matplotlib
+    except ImportError as exc:  # pragma: no cover - exercised in a subprocess
+        raise ImportError(
+            "plot_speed_map needs matplotlib, which redlight does not install "
+            "by default. Install the extra:\n"
+            "    pip install 'redlight[mapping]'\n"
+            "or use to_geojson() and render the result in QGIS or a web map."
+        ) from exc
     if path:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
