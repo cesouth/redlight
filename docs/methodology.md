@@ -20,7 +20,7 @@ same mover, never from straight-line hops or per-point differentiation, with
 an explicit analytic error model; and **(3)** robust, independence-aware
 aggregation (medians, MAD outlier screens, interval deduplication) before
 any peak/off-peak claim is made. On a synthetic street grid with known
-ground truth, the pipeline recovers a constant 10 m/s speed with **+0.3 %
+ground truth, the pipeline recovers a constant 10 m/s speed with **+0.1 %
 bias and 15 % relative spread at σ = 5 m GPS noise**, tracks the analytic
 error law √2·σ/(Δt·v) across noise and sampling-rate sweeps, and identifies
 planted congestion windows exactly. The same experiments locate the
@@ -172,17 +172,22 @@ physical road in either direction.
 
 | GPS noise σ | Nearest-edge | HMM/Viterbi |
 |---|---|---|
-| 5 m | 91.2 % | **96.7 %** |
-| 15 m | 75.6 % | **80.6 %** |
-| 30 m | 53.4 % | **55.6 %** |
-| 50 m | 34.5 % | **36.4 %** |
+| 5 m | 91.2 % | **94.8 %** |
+| 15 m | 75.6 % | **84.7 %** |
+| 30 m | 53.4 % | **69.8 %** |
+| 50 m | 34.5 % | **42.8 %** |
 
 ![Matching accuracy](figures/fig3_matching_accuracy.png)
 
 *Figure 3 — road-level matching accuracy vs GPS noise.*
 
-Two honest observations. First, the HMM wins at every noise level, most
-clearly in the σ ≤ 15 m regime where most real GPS data lives [9, 13].
+Two honest observations. First, the HMM wins at every noise level, and its
+margin *grows* with noise up to σ = 30 m (+3.6, +9.1, +16.4, +8.3 points at
+σ = 5, 15, 30, 50) before narrowing again at σ = 50 m, where both matchers
+are failing outright. That shape is the signature of a working transition
+term: at low noise the emission term alone almost always picks the right
+road, so sequence reasoning has little left to add; as noise rises it is the
+only thing left to decide with.
 Second, the margin on this test bed *understates* the HMM's real-world
 advantage, because a uniform grid is the adversarial worst case for
 sequence-based matching: a parallel street one block over forms an equally
@@ -198,8 +203,8 @@ package — per-fix accuracy is the wrong success metric. What counts is what
 matching errors do to speed, and there the difference is large (§4.4,
 Table 3): at σ = 15 m the nearest matcher's independent flip-flopping
 between cross streets fabricates detour distance and biases speeds by
-**+12.7 %**, versus **+4.1 %** for the HMM — a threefold reduction from a
-five-point accuracy gap. Sequence consistency suppresses exactly the error
+**+12.7 %**, versus **+0.9 %** for the HMM — a fourteenfold reduction from a
+nine-point accuracy gap. Sequence consistency suppresses exactly the error
 pattern that inflates distance.
 
 ---
@@ -284,25 +289,25 @@ The same 2,200-fix conditions as Experiment A, pushed through
 
 | σ | theory √2σ/(Δt·v) | measured spread (all) | spread (merged ≥ 3√2σ) | bias (all) | bias (merged) |
 |---|---|---|---|---|---|
-| 5 m | 0.141 | 0.148 | 0.147 | **+0.3 %** | +0.3 % |
-| 15 m | 0.424 | 0.523 | 0.376 | **+4.1 %** | +11.8 % |
-| 30 m | 0.849 | 1.073 | 0.787 | +32.9 % | +56.0 % |
-| 50 m | 1.414 | 1.602 | 1.160 | +105.7 % | +145.1 % |
+| 5 m | 0.141 | 0.148 | 0.146 | **+0.1 %** | +0.1 % |
+| 15 m | 0.424 | 0.447 | 0.309 | **+0.9 %** | +7.2 % |
+| 30 m | 0.849 | 0.866 | 0.599 | +21.8 % | +36.9 % |
+| 50 m | 1.414 | 1.424 | 1.086 | +92.9 % | +128.2 % |
 
 **Table 3 — the Δt sweep at σ = 30 m (all intervals), and matcher choice.**
 
 | Δt | theory | measured spread | measured bias |
 |---|---|---|---|
-| 5 s | 0.849 | 1.039 | +31.8 % |
-| 15 s | 0.283 | 0.409 | +8.3 % |
-| 30 s | 0.141 | 0.236 | **−1.7 %** |
+| 5 s | 0.849 | 0.844 | +20.6 % |
+| 15 s | 0.283 | 0.340 | +2.2 % |
+| 30 s | 0.141 | 0.232 | **−5.7 %** |
 
 | σ | speed bias, HMM matches | speed bias, nearest matches |
 |---|---|---|
-| 5 m | +0.3 % | +1.4 % |
-| 15 m | **+4.1 %** | **+12.7 %** |
-| 30 m | +32.9 % | +59.9 % |
-| 50 m | +105.7 % | +146.8 % |
+| 5 m | +0.1 % | +1.4 % |
+| 15 m | **+0.9 %** | **+12.7 %** |
+| 30 m | +21.8 % | +59.9 % |
+| 50 m | +92.9 % | +146.8 % |
 
 ![Speed error vs noise and sampling](figures/fig5_speed_error.png)
 
@@ -313,16 +318,22 @@ quality-filter selection effect; right: spread vs fix spacing.*
 Four findings, including the unflattering ones:
 
 1. **The error model is right.** At σ = 5 m the measured spread (0.148)
-   matches theory (0.141) and bias is +0.3 % — the estimator is
+   matches theory (0.141) and bias is +0.1 % — the estimator is
    essentially exact when matching is reliable. Across the Δt sweep,
    lengthening the interval collapses both spread and bias exactly as
-   √2σ/Δt predicts (σ = 30 m becomes *unbiased to −1.7 %* at Δt = 30 s).
+   √2σ/Δt predicts (σ = 30 m becomes *unbiased to −5.7 %* at Δt = 30 s).
 2. **Above the matching envelope, error becomes matching-dominated and
-   positively biased.** The measured spread exceeds theory by a growing
-   surplus (0.52 vs 0.42 at σ = 15; 1.07 vs 0.85 at σ = 30) because
-   wrong-road matches force detours the vehicle never drove — distance
-   only ever gets *added*, so the bias is upward (+33 % at σ = 30 m,
-   Δt = 5 s). This is the quantitative form of the package's operating
+   positively biased — in the bias, not the spread.** Measured spread now
+   tracks the analytic law closely at every noise level (0.45 vs 0.42 at
+   σ = 15; 0.87 vs 0.85 at σ = 30; 1.42 vs 1.41 at σ = 50). Earlier versions
+   of this paper reported a large and growing surplus here (0.52 and 1.07 at
+   σ = 15 and 30) and attributed it to matching error. That attribution was
+   right: the surplus was a defect in the transition term's route distance,
+   fixed in v0.6.0, and removing it collapsed the surplus to under 0.03
+   everywhere. What survives is the *bias*, which is what wrong-road matches
+   actually produce — they force detours the vehicle never drove, and
+   distance only ever gets *added*, so the error is one-sided and upward
+   (+22 % at σ = 30 m, +93 % at σ = 50 m, Δt = 5 s). This is the quantitative form of the package's operating
    envelope: on ~110 m blocks, per-interval speeds are trustworthy when
    σ ≲ 15 m *or* the per-interval displacement is made large relative to
    σ (longer Δt, or baseline merging).
@@ -330,13 +341,19 @@ Four findings, including the unflattering ones:
    data.** Keeping only quality-true intervals at Δt = 5 s selects the
    intervals whose *measured* displacement beat the noise floor — i.e.
    preferentially the upward noise fluctuations. That selection bias is
-   severe (+67 % at σ = 15 m; red curve in Fig. 5 centre). The correct
-   order of operations, and what the package documents, is: **merge first
-   (make true displacement clear the floor), then gate** — after which
-   95–100 % of intervals pass and the gate excludes only genuine junk.
-4. **Matcher choice is worth 2–3× in speed bias** (Table 3, bottom) — the
+   severe (+55 % at σ = 15 m, +210 % at σ = 30 m; red curve in Fig. 5
+   centre). The correct order of operations, and what the package documents,
+   is: **merge first (make true displacement clear the floor), then gate** —
+   after which 89–100 % of intervals pass and the gate excludes only genuine
+   junk.
+4. **Matcher choice is worth 1.6–14× in speed bias** (Table 3, bottom),
+   and the multiple runs the opposite way to the accuracy margin: it is
+   12–14× at σ ≤ 15 m, where the HMM is close to unbiased and the nearest
+   matcher is not, and narrows to 2.7× and 1.6× at σ = 30 and 50 m, where
+   both matchers are failing and neither estimate is usable. This is the
    empirical justification for making the HMM the recommended matcher
-   rather than a nicety.
+   rather than a nicety — and for the operating envelope, since the place
+   the choice matters most is the place the package is meant to be used.
 
 ---
 
@@ -410,16 +427,19 @@ windows shaded.*
 *Figure 7 — the study's deliverable: per-segment median speed in the
 detected peak window vs the off-peak window (grey = unobserved).*
 
-The detector returned **peak = {7, 8, 9}** and **off-peak = {2, 3, 4}** —
-the morning rush found exactly, the off-peak window inside the true
+The detector returned **peak = {16, 17, 18}** and **off-peak = {2, 3, 4}** —
+the evening rush found exactly, the off-peak window inside the true
 free-flow block, and the whole hourly ranking correct (Fig. 6). Two honest
-caveats belong in any defense of this result. First, with one window of
-width 3, a day containing *two* equal rush periods yields one of them
-(deterministically the earlier on ties); capturing both takes the ranking
-mode (`peak_analysis`) or explicit hour lists — a documented semantic
-choice, not an accident. Second, measured congested-hour speeds read high
-(≈ 7.4 m/s where truth is 4.0) while free-flow hours read true
-(15.6 vs 15.0): at 4 m/s, Δt = 10 s gives 40 m of true displacement against
+caveats belong in any defense of this result. First, `classify_hours`
+returns a *contiguous* window, so with width 3 a day containing two equal
+rush periods yields one of them — here the evening, which measured
+marginally the slower of the two; on an exact tie the earlier window wins.
+Raising the width does not capture both, because the two are disjoint:
+capturing both takes the ranking mode (`peak_analysis`, which returns all
+six planted hours) or explicit hour lists — a documented semantic choice,
+not an accident. Second, measured congested-hour speeds read high
+(≈ 7.3 m/s where truth is 4.0) while free-flow hours read true
+(15.2 vs 15.0): at 4 m/s, Δt = 10 s gives 40 m of true displacement against
 a 21 m combined noise floor — an SNR of ~1.9, squarely in the regime that
 §3.4 shows inflates estimates. The *ranking* of hours survives (which is why
 window detection is exact), but absolute congested-flow speeds at low SNR
@@ -536,7 +556,7 @@ Stated plainly, because a defense that hides its weaknesses defends nothing:
    Sparser rural networks relax this; denser networks tighten it.
 2. **The quality flag is a reliability label, not a filter.** Filtering on
    it at short Δt without merging selects upward noise fluctuations
-   (+67 % bias demonstrated at σ = 15 m). Merge first, then gate.
+   (+55 % bias demonstrated at σ = 15 m). Merge first, then gate.
 3. **Grid-symmetry worst case.** The evaluation grid *understates* HMM
    advantage on real networks but also shows its ceiling: no matcher can
    distinguish parallel equal-length paths when noise straddles them.
@@ -571,7 +591,7 @@ Stated plainly, because a defense that hides its weaknesses defends nothing:
   noise, because sequence consistency suppresses fabricated detours.
 - **Speeds:** interval means over on-road displacement are the standard
   probe-data construction [6]; the implementation is empirically exact
-  (+0.3 % bias) inside its envelope, its error follows the stated analytic
+  (+0.1 % bias) inside its envelope, its error follows the stated analytic
   law, and it *tells you* when it is outside the envelope instead of
   failing silently.
 - **Statistics:** medians/MAD for skew and outliers [7, 8], real sample
