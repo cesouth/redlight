@@ -195,6 +195,11 @@ def _coerce_datetimes(values, *, utc: bool) -> pd.Series:
         return t
 
 
+# Above this, a "speed" is not road traffic: 120 m/s is 268 mph. Used only to
+# flag a suspect input column, never to drop data.
+_IMPLAUSIBLE_SPEED_MPS = 120.0
+
+
 def _parse_times(values, timestamp_unit: str | None, tz: str | None) -> pd.Series:
     """Parse timestamps to a timezone-naive local-clock datetime Series.
 
@@ -422,12 +427,45 @@ def load_points(
 
     if derive_speed:
         out["speed_mps"] = _derive_speed_mps(out)
+        # A mover with a single fix has nothing to difference against, so its
+        # speed is NaN and the dropna below removes it. That is not an
+        # unparseable row, and saying so sends the user to look at their file
+        # format instead of at their trajectory ids.
+        if has_traj:
+            sizes = out.groupby("traj_id", dropna=False)["traj_id"].transform("size")
+        else:
+            sizes = pd.Series(len(out), index=out.index)
+        n_lone = int(((sizes < 2) & out["speed_mps"].isna()).sum())
+        if n_lone:
+            warnings.warn(
+                f"Dropped {n_lone} row(s) from mover(s) with too few fixes to "
+                "derive a speed: differencing needs at least two fixes per "
+                "mover. Load with derive_speed=False to keep them.",
+                stacklevel=2,
+            )
     elif speed_col is not None:
         # rows may have been dropped above; re-read speeds aligned via index
         raw = pd.to_numeric(df[speed_col], errors="coerce")
         raw_speed = raw.iloc[out["point_id"].values].to_numpy() \
             if len(out) != len(df) else raw.values
         out["speed_mps"] = to_mps(raw_speed, unit)
+        # A speed magnitude cannot be negative and road traffic is not
+        # supersonic. Both usually mean the column is not what it was declared
+        # to be -- most often mph read as m/s, which is silently 2.24x wrong.
+        # Warn rather than drop: this is the caller's own column and the
+        # package's convention for suspect values is advisory.
+        finite = pd.to_numeric(out["speed_mps"], errors="coerce")
+        bad = ((finite < 0.0) | (finite > _IMPLAUSIBLE_SPEED_MPS)) & finite.notna()
+        n_bad = int(bad.sum())
+        if n_bad:
+            warnings.warn(
+                f"{n_bad} of {len(out)} value(s) in speed column "
+                f"{speed_col!r} are implausible as road speeds "
+                f"(observed range {float(finite.min()):.3g} to "
+                f"{float(finite.max()):.3g} m/s after converting from "
+                f"{unit}). Check speed_unit= matches the column.",
+                stacklevel=2,
+            )
     # else: position+time only -- no speed_mps column at all.
 
     required = ["lon", "lat", "time"] + (["speed_mps"] if "speed_mps" in out.columns else [])

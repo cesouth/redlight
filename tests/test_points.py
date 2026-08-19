@@ -282,3 +282,33 @@ def test_in_range_coordinates_are_untouched(make_points_csv):
             {"lon": -180.0, "lat": -90.0, "time": "2026-06-01T08:00:10"}]
     pts = rl.load_points(make_points_csv(rows))
     assert len(pts.df) == 2
+
+
+def test_implausible_speeds_warn(make_points_csv):
+    """Negative and supersonic speeds are wrong input, not data. F-5.3."""
+    def rows(v):
+        return [{"lon": 0.0005, "lat": 1e-5, "time": "2026-06-01T08:00:00", "sp": v},
+                {"lon": 0.0006, "lat": 1e-5, "time": "2026-06-01T08:00:10", "sp": v}]
+
+    with pytest.warns(UserWarning, match="implausible"):
+        rl.load_points(make_points_csv(rows(-5.0)), speed_col="sp", speed_unit="mps")
+    with pytest.warns(UserWarning, match="implausible"):
+        rl.load_points(make_points_csv(rows(400.0)), speed_col="sp", speed_unit="mps")
+
+
+def test_plausible_speeds_do_not_warn(make_points_csv, recwarn):
+    """A normal speed column must stay quiet."""
+    rows = [{"lon": 0.0005, "lat": 1e-5, "time": "2026-06-01T08:00:00", "sp": 13.0},
+            {"lon": 0.0006, "lat": 1e-5, "time": "2026-06-01T08:00:10", "sp": 0.0}]
+    rl.load_points(make_points_csv(rows), speed_col="sp", speed_unit="mps")
+    assert not [w for w in recwarn if "implausible" in str(w.message)]
+
+
+def test_single_fix_mover_is_not_called_unparseable(make_points_csv):
+    """A mover with one fix has nothing to difference against. F-5.4."""
+    rows = [{"lon": 0.0005, "lat": 1e-5, "time": "2026-06-01T08:00:00", "id": "solo"},
+            {"lon": 0.0006, "lat": 1e-5, "time": "2026-06-01T08:00:00", "id": "pair"},
+            {"lon": 0.0007, "lat": 1e-5, "time": "2026-06-01T08:00:10", "id": "pair"}]
+    with pytest.warns(UserWarning, match="too few fixes"):
+        pts = rl.load_points(make_points_csv(rows), id_col="id", derive_speed=True)
+    assert pts.df["traj_id"].tolist() == ["pair", "pair"]
