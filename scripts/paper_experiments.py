@@ -11,7 +11,7 @@ Synthetic ground-truth experiments defending the package's method choices:
      derivation -> contiguous peak/off-peak window detection -> per-segment
      regime speeds.
 
-Everything is seeded; run time is a couple of minutes:
+Everything is seeded; run time is well under a minute:
 
     python scripts/paper_experiments.py
 
