@@ -449,3 +449,14 @@ def test_geojson_crs84_member_is_still_lonlat(tmp_path):
                              "urn:ogc:def:crs:OGC:1.3:CRS84")
     net = rl.Network.from_geojson(path)
     assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1113.2, abs=2.0)
+
+
+def test_one_coordinate_linestring_is_skipped_not_crashed(tmp_path):
+    """A truncated way must be skipped like other degenerate geometry. F-5.6."""
+    path = write_geojson(tmp_path / "short.json", [
+        line_feature([[0, 0]], highway="residential"),
+        line_feature([[0, 0], [0.01, 0]], highway="residential"),
+    ])
+    with pytest.warns(UserWarning, match="fewer than two coordinates"):
+        net = rl.Network.from_geojson(path)
+    assert len(net.edge_ids) == 2  # the one good road, both directions

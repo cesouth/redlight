@@ -343,19 +343,38 @@ class Network:
         # the `crs` extra with an error that names it.
         to_wgs84 = _source_to_wgs84(_geojson_crs(gj))
         records = []
+        n_short = 0        # features with fewer than two coordinates
         for feat in feats:
             geom = (feat or {}).get("geometry") or {}
             gtype = geom.get("type")
             props = dict(feat.get("properties") or {})
             parts = []
+            coords = geom.get("coordinates") or []
             if gtype == "LineString":
+                # shapely raises a raw GEOSException on a 1-point LineString;
+                # real exports do produce them from truncated ways, so treat
+                # them as the degenerate geometry they are.
+                if len(coords) < 2:
+                    n_short += 1
+                    continue
                 parts = [shape(geom)]
             elif gtype == "MultiLineString":
-                parts = list(shape(geom).geoms)
+                good = [c for c in coords if len(c) >= 2]
+                n_short += len(coords) - len(good)
+                if not good:
+                    continue
+                parts = list(shape({"type": "MultiLineString",
+                                    "coordinates": good}).geoms)
             for part in parts:
                 if to_wgs84 is not None:
                     part = shapely_transform(to_wgs84, part)
                 records.append((part, dict(props)))
+        if n_short:
+            warnings.warn(
+                f"Skipped {n_short} LineString feature(s) with fewer than two "
+                "coordinates; a line needs at least two points.",
+                stacklevel=2,
+            )
         if not records:
             raise ValueError("GeoJSON contained no LineString features.")
         return cls._build(records, metric_epsg, directed, oneway_attr, length_attr)
