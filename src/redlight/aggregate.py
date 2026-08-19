@@ -462,6 +462,20 @@ def peak_analysis(
         )
     peak = ordered.head(n_peak)          # slowest = peak congestion
     offpeak = ordered.tail(n_offpeak)    # fastest = free flow
+    # Ranking always yields a "slowest" and a "fastest" block, even when every
+    # bin holds the same speed -- and then which bins those are is an artifact
+    # of sort order, not of traffic. classify_hours already refuses to pass
+    # that off as a result; say the same thing here rather than let a caller
+    # read peak[] and report hours that are in no way peak.
+    if len(peak) and len(offpeak):
+        spread = float(offpeak[col].max()) - float(peak[col].min())
+        if not spread > 0:
+            warnings.warn(
+                "peak_analysis: every bin has the same representative speed, "
+                "so this data has no peak -- the returned peak and off-peak "
+                "blocks are an artifact of sort order, not of congestion.",
+                stacklevel=2,
+            )
     return {
         "speed_column": col,
         "peak": peak.to_dict("records"),

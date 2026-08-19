@@ -502,3 +502,27 @@ def test_congestion_report_summary(tmp_path):
     s = rl.congestion_report(net, df, output_unit="mps")["summary"]
     assert s["n_edges_rated"] == 1
     assert s["median_ratio"] == pytest.approx(0.5)
+
+
+def _flat_hours(speed_mps=10.0, n_each=4):
+    """24 hours of identical speeds -- no peak exists in this data."""
+    rows, k = [], 0
+    for h in range(24):
+        for _ in range(n_each):
+            rows.append({"interval_id": k, "edge_id": 0, "speed_mps": speed_mps,
+                         "time": pd.Timestamp(f"2026-06-01 {h:02d}:{k % 50:02d}:00"),
+                         "traj_id": "t", "quality": True, "speed_var": 1.0})
+            k += 1
+    return pd.DataFrame(rows)
+
+
+def test_peak_analysis_warns_when_there_is_no_peak():
+    """Flat data has no peak; saying so is classify_hours' behaviour already.
+
+    Regression for F-4.7: peak_analysis returned peak=[0,1,2] and
+    off_peak=[21,22,23] at identical speeds with no warning, while
+    classify_hours warns on the same input.
+    """
+    agg = rl.aggregate_speeds(_flat_hours(), output_unit="mps")
+    with pytest.warns(UserWarning, match="no peak"):
+        rl.peak_analysis(agg, n_peak=3, n_offpeak=3)
