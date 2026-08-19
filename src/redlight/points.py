@@ -189,6 +189,24 @@ def _coerce_datetimes(values, *, utc: bool) -> pd.Series:
     lost = pd.isna(t).to_numpy() & pd.notna(pd.Series(values)).to_numpy()
     if not lost.any():
         return t
+    # A column mixing offset-bearing and offset-less stamps cannot be parsed as
+    # one dtype, so pandas coerces one group to NaT and the rows disappear as
+    # "missing/unparseable" -- which they are not. Name the actual conflict;
+    # whether to assume the naive rows share the aware rows' offset, or to
+    # refuse the file, is a judgement the caller has to make.
+    if not utc:
+        text = pd.Series(values).dropna().astype(str)
+        if len(text):
+            aware = text.str.contains(r"(?:[+-]\d{2}:?\d{2}|Z)$", regex=True)
+            if bool(aware.any()) and bool((~aware).any()):
+                warnings.warn(
+                    f"Timestamp column holds a mix of timezone-aware and "
+                    f"timezone-naive values ({int(aware.sum())} aware, "
+                    f"{int((~aware).sum())} naive); the naive ones cannot be "
+                    "placed on a timeline and will be dropped. Give every row "
+                    "an offset, or strip them all and pass tz=.",
+                    stacklevel=4,
+                )
     try:
         return pd.to_datetime(values, errors="coerce", utc=utc, format="mixed")
     except (TypeError, ValueError):

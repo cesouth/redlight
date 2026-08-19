@@ -312,3 +312,11 @@ def test_single_fix_mover_is_not_called_unparseable(make_points_csv):
     with pytest.warns(UserWarning, match="too few fixes"):
         pts = rl.load_points(make_points_csv(rows), id_col="id", derive_speed=True)
     assert pts.df["traj_id"].tolist() == ["pair", "pair"]
+
+
+def test_mixed_naive_and_aware_timestamps_name_the_real_conflict(make_points_csv):
+    """Half the rows vanished behind a 'missing/unparseable' message. F-5.5."""
+    rows = [{"lon": 0.0005, "lat": 1e-5, "time": "2026-06-01T08:00:00"},
+            {"lon": 0.0006, "lat": 1e-5, "time": "2026-06-01T08:00:10+01:00"}]
+    with pytest.warns(UserWarning, match="mix of timezone-aware and timezone-naive"):
+        rl.load_points(make_points_csv(rows))
