@@ -874,7 +874,7 @@ the obvious hot spots may not be the real ones.
 - Produces: `07-performance-baseline.md` with a profile table, and
   `benchmarks/profile_hmm.py` — the reusable harness Task 8 measures against.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are establishing a performance baseline for the map matcher in the Python
@@ -942,10 +942,10 @@ format from .plans/2026-08-17-redlight-ship-review.md, with a profile table.
 Leave Verdict and Outcome blank. Do not commit.
 ```
 
-- [ ] **Step 2: Triage** — fill in every Verdict line. The decision you are
+- [x] **Step 2: Triage** — fill in every Verdict line. The decision you are
 making here is *where Task 8 is allowed to spend effort*.
 
-- [ ] **Step 3: Commit the harness and the baseline**
+- [x] **Step 3: Commit the harness and the baseline**
 
 ```bash
 .venv/bin/ruff check src tests scripts examples benchmarks
