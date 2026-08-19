@@ -141,10 +141,18 @@ def test_hmm_parallel_equals_serial(grid_net, make_points_csv):
     pd.testing.assert_frame_equal(a, b)
 
 
-def test_hmm_n_jobs_minus_one_runs(grid_net, make_points_csv):
+def test_hmm_n_jobs_minus_one_matches_serial_exactly(grid_net, make_points_csv):
+    """The docstring claims equality with serial, so assert equality.
+
+    Regression for F-6.3: this asserted only ``len(out) == len(pts)``, which a
+    parallel path that reordered rows or dropped a trajectory would pass.
+    """
     pts = _hmm_scenario_points(make_points_csv)
-    out = rl.HMMMatcher(grid_net, max_dist=60, n_jobs=-1).match(pts)
-    assert len(out) == len(pts)
+    serial = rl.HMMMatcher(grid_net, max_dist=60, n_jobs=1).match(pts)
+    parallel = rl.HMMMatcher(grid_net, max_dist=60, n_jobs=-1).match(pts)
+
+    assert len(parallel) == len(pts)
+    pd.testing.assert_frame_equal(serial, parallel)
 
 
 def test_hmm_matcher_pickle_drops_cache(grid_net, make_points_csv):
