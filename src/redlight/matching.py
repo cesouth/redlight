@@ -284,11 +284,21 @@ class HMMMatcher:
             j = anchor[i - 1]
             gc_step = float(np.hypot(px[i] - px[j], py[i] - py[j]))
             cutoff = max(self.max_route_dist_factor * gc_step, self.max_dist * 4)
-            # End node per distinct predecessor, resolved once per step; the
-            # bounded Dijkstra behind dcache.lookup is computed at most once
-            # per (source node, cutoff regime) and reused across steps.
-            prev_end = {peid: self.network.edge_endpoints(peid)[1]
-                        for peid in V[i - 1]}
+            # Per-predecessor values, resolved once per step rather than once
+            # per (candidate, predecessor) pair. `remaining_prev` belongs here
+            # too: it is the distance from the previous snap to the end of the
+            # previous edge, which depends only on the predecessor -- computing
+            # it inside the candidate loop repeated the same edge_length lookup
+            # once per candidate (11.3 calls per point, Task 7 F-7.5).
+            # The bounded Dijkstra behind dcache.lookup is still computed at
+            # most once per (source node, cutoff regime) and reused across steps.
+            prev_end = {}
+            prev_remaining = {}
+            prev_snap = snap_s[i - 1]
+            for peid in V[i - 1]:
+                prev_end[peid] = self.network.edge_endpoints(peid)[1]
+                prev_remaining[peid] = (self.network.edge_length(peid)
+                                        - prev_snap[peid])
             for eid, dist, s_cur in cand_list[i]:
                 em = self._emission_logp(dist)
                 u_cur, _ = self.network.edge_endpoints(eid)
@@ -311,9 +321,7 @@ class HMMMatcher:
                         # quantity: remaining length of the previous edge past
                         # its snap, the node-to-node middle, then the current
                         # edge's length up to its own snap.
-                        remaining_prev = (self.network.edge_length(peid)
-                                          - snap_s[i - 1][peid])
-                        rd = remaining_prev + node_dist + leadin_cur
+                        rd = prev_remaining[peid] + node_dist + leadin_cur
                     delta = abs(gc_step - rd)
                     lp = plp + self._transition_logp(delta) + em
                     if lp > best_lp:
