@@ -548,7 +548,14 @@ def classify_hours(
        the *lowest* network-wide representative speed (peak = most congested);
        the off-peak block is the contiguous ``n_offpeak``-hour window with the
        *highest* speed among windows disjoint from the peak block. Windows are
-       scored on the mean of their observed hourly speeds.
+       scored on the mean of their observed hourly speeds. Because a window is
+       contiguous by construction it **may include hours with no observations
+       at all** -- unlike mode 3 below, which leaves those unassigned. Such an
+       hour is scored as absent rather than as slow (it contributes nothing to
+       the mean), but it still lands in the returned list, and from there in
+       :func:`assign_segment_speeds`, so an edge can be labelled peak or
+       off-peak for an hour nothing was ever measured in. Ties between equally
+       scoring windows go to the earliest.
     3. **Data-driven median split** (default) -- each hour-of-day's
        network-wide representative speed (median or mean) is computed, and
        hours at or below the median of those hourly speeds are labelled *peak*
