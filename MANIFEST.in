@@ -13,6 +13,11 @@ include CHANGELOG.md
 # The whole test suite, conftest included.
 recursive-include tests *.py
 
+# ...and the fixtures it reads. tests/test_matching_invariance.py compares
+# against stored expectations; shipping the test without its data would fail
+# in an unpacked sdist, which is the exact failure this file exists to prevent.
+recursive-include tests/data *.json
+
 # tests/test_docs.py executes every Python block in the documentation, so the
 # docs are a test fixture as well as prose. Markdown only -- the methodology
 # figures are large, are not read by any test, and would bloat the sdist.
