@@ -107,7 +107,7 @@ speeds pass through untouched.
   extra. A cheap belt-and-braces addition: warn when input coordinates fall
   outside ±180 / ±90, which is a certain sign of a projected file.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (c4d40ab)
 
 ---
 
@@ -139,7 +139,7 @@ speeds pass through untouched.
   machinery already exists, so it costs nothing on the hot path — this is why
   F-3.4 was routed here rather than into `geodesic_distance`.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (ecbe530) -- also closes the deferred F-3.4
 
 ---
 
@@ -170,7 +170,7 @@ speeds pass through untouched.
   count and the observed maximum. The mis-declared-unit case is only detectable
   this way, and it is the most likely of the three in practice.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (257e819)
 
 ---
 
@@ -197,7 +197,7 @@ speeds pass through untouched.
 - **Suggested fix:** Count the two causes separately and warn separately. The
   drop itself is correct.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (257e819) -- committed with F-5.3; both touch the same block
 
 ---
 
@@ -225,7 +225,8 @@ speeds pass through untouched.
 - **Verdict:** ACCEPT -- the misleading message only. Whether to coerce naive rows into the
   aware rows' offset or refuse the file outright is a real design decision and
   stays open; fixing the diagnosis does not prejudge it.
-- **Outcome:**
+- **Outcome:** fixed (e58b0ca) -- diagnosis only. The rows are still dropped; coerce-vs-refuse
+  remains an open design decision, flagged rather than guessed at.
 
 ---
 
@@ -252,7 +253,7 @@ speeds pass through untouched.
 - **Suggested fix:** Screen `len(coords) < 2` alongside the existing
   zero-length/closed-loop checks.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (7075b9c)
 
 ---
 
@@ -283,7 +284,7 @@ speeds pass through untouched.
   `_require_pyproj`. Worth checking `pyogrio` (the `shapefile` extra) for the
   same gap while in there.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (527621d)
 
 ---
 
@@ -310,7 +311,7 @@ speeds pass through untouched.
 - **Suggested fix:** Validate membership in `network.graph` before use and
   raise naming `nearest_node`.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (806cc3d)
 
 ---
 
@@ -338,7 +339,7 @@ speeds pass through untouched.
 - **Suggested fix:** Wrap both in a message naming the endpoint, the status,
   and the suggestion to retry or narrow the bbox.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (e201f50)
 
 ---
 

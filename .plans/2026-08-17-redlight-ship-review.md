@@ -681,7 +681,7 @@ expect. This pass attacks the boundary.
 - Consumes: `00-baseline.md`.
 - Produces: `05-robustness.md`.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are stress-testing the input boundary of the Python package `redlight` at
@@ -753,12 +753,12 @@ from .plans/2026-08-17-redlight-ship-review.md. Leave Verdict and Outcome
 blank. Do not commit.
 ```
 
-- [ ] **Step 2: Triage** — fill in every Verdict line.
+- [x] **Step 2: Triage** — fill in every Verdict line.
 
-- [ ] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
+- [x] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
 `.plans/reviews/2026-08-17-ship/05-robustness.md`.
 
-- [ ] **Step 4: Commit the findings file**
+- [x] **Step 4: Commit the findings file**
 
 ```bash
 git add .plans/reviews/2026-08-17-ship/05-robustness.md
