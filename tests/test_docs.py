@@ -40,6 +40,7 @@ needs -- making the suite pass or fail on block order.
 """
 from __future__ import annotations
 
+import json
 import re
 import textwrap
 from pathlib import Path
@@ -303,3 +304,56 @@ def test_doc_example_runs(doc, index, line, code, needs, doc_namespace):
             f"comment on the line before the fence:\n"
             f"    <!-- skip-test: reason -->"
         ) from exc
+
+
+# --------------------------------------------------------- published numbers
+# docs/methodology.md quotes experiment results that scripts/paper_experiments.py
+# produces. Those drifted apart silently for two releases (see
+# .plans/reviews/2026-08-17-ship/04-statistical-accuracy.md): 51 of 105 recorded
+# values no longer matched the code, and nothing noticed because nothing checked.
+# Re-running the experiments here would cost ~15 s; comparing the prose against
+# the committed JSON costs nothing and catches the same drift one step earlier.
+
+_RESULTS_JSON = REPO / "docs" / "figures" / "experiment_results.json"
+_METHODOLOGY = REPO / "docs" / "methodology.md"
+
+
+def _md_number(text, pattern, label):
+    """The first capture of ``pattern`` in ``text``, as a float."""
+    m = re.search(pattern, text)
+    assert m is not None, f"{label}: no line in methodology.md matched {pattern!r}"
+    return float(m.group(1).replace("−", "-").replace("+", ""))
+
+
+@pytest.mark.skipif(not _RESULTS_JSON.exists(), reason="no experiment_results.json")
+def test_methodology_tables_match_the_committed_results():
+    """Every experiment number in the prose must match experiment_results.json."""
+    data = json.loads(_RESULTS_JSON.read_text())
+    md = _METHODOLOGY.read_text()
+
+    exp_a = data["experiment_a"]
+    for i, sigma in enumerate(exp_a["sigma_m"]):
+        label = f"Experiment A, sigma={sigma:.0f} m"
+        got = _md_number(md, rf"\| {sigma:.0f} m \| [\d.]+ % \| \*\*([\d.]+) %\*\* \|", label)
+        assert got == pytest.approx(100 * exp_a["hmm_acc"][i], abs=0.06), label
+
+    for row in data["experiment_b"]["sigma_sweep"]:
+        sigma = row["sigma_m"]
+        label = f"Table 2, sigma={sigma:.0f} m"
+        raw = _md_number(md, rf"\| {sigma:.0f} m \| [\d.]+ \| ([\d.]+) \|", label)
+        assert raw == pytest.approx(row["raw_rel_std"], abs=0.001), f"{label} spread"
+        merged = _md_number(
+            md, rf"\| {sigma:.0f} m \| [\d.]+ \| [\d.]+ \| ([\d.]+) \|", label)
+        assert merged == pytest.approx(row["merged_rel_std"], abs=0.001), f"{label} merged"
+
+    for row in data["experiment_b"]["dt_sweep"]:
+        dt = row["dt_s"]
+        label = f"Table 3, dt={dt:.0f} s"
+        bias = _md_number(
+            md, rf"\| {dt:.0f} s \| [\d.]+ \| [\d.]+ \| \*?\*?([+\-−][\d.]+) %", label)
+        assert bias == pytest.approx(100 * row["measured_bias"], abs=0.06), label
+
+    peak = re.search(r"peak = \{([\d, ]+)\}", md)
+    assert peak is not None, "Experiment C: no 'peak = {...}' claim found"
+    assert [int(h) for h in peak.group(1).split(",")] == \
+        data["experiment_c"]["detected_peak_hours"]
