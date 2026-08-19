@@ -80,7 +80,7 @@ Baseline before and after every mutation: **403 passed**, `src/` clean.
   matching `test_geo.py`'s house style of not depending on an oracle at test
   time. Task 3 recorded the exact values.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (db38d34) -- mutation re-run and now caught; spot-check stands at 13/13
 
 ---
 
@@ -107,7 +107,7 @@ Baseline before and after every mutation: **403 passed**, `src/` clean.
 - **Suggested fix:** One test with `pos_accuracy_col` set to two different
   values and an exact assertion on `speed_sigma_mps` and `speed_var`.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (db38d34) -- mutation re-run and now caught
 
 ---
 
@@ -137,7 +137,7 @@ Baseline before and after every mutation: **403 passed**, `src/` clean.
   invariance Task 8 will need, so it is worth writing before that pass rather
   than after.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (98f68ab) -- and the finding itself corrected; see the CORRECTION above
 
 ---
 
@@ -174,7 +174,7 @@ Baseline before and after every mutation: **403 passed**, `src/` clean.
 - **Suggested fix:** Tighten the three tolerances to `abs=1e-3`; replace the
   string literals in `test_modes.py` with the exported constants.
 - **Verdict:** ACCEPT
-- **Outcome:**
+- **Outcome:** fixed (5d7183c)
 
 ---
 

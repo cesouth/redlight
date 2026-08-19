@@ -780,7 +780,7 @@ pass audits the auditor.
 - Consumes: `00-baseline.md` (the skip list), and every prior findings file.
 - Produces: `06-test-quality.md`.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are auditing the TEST SUITE of the Python package `redlight` at
@@ -842,12 +842,12 @@ table (line mutated / mutation / caught? / by which test). Leave Verdict and
 Outcome blank. Do not commit.
 ```
 
-- [ ] **Step 2: Triage** — fill in every Verdict line.
+- [x] **Step 2: Triage** — fill in every Verdict line.
 
-- [ ] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
+- [x] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
 `.plans/reviews/2026-08-17-ship/06-test-quality.md`.
 
-- [ ] **Step 4: Commit the findings file**
+- [x] **Step 4: Commit the findings file**
 
 ```bash
 git add .plans/reviews/2026-08-17-ship/06-test-quality.md
