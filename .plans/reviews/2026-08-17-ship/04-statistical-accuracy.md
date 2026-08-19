@@ -368,13 +368,53 @@ run, and the throwaway worktree at `83880be` was removed with
 
 ## Unverified suspicions
 
-1. **The published → pre-fix drift (48/105) is unattributed.** This pass
-   established *that* it happened and bounded it between `a9d3189` (2026-07-08)
-   and `83880be`, but did not bisect which commit caused it. `02-doc-drift.md`
-   nominates `c9a92bb` and `a03733f` as candidates. A bisect over
-   `experiment_a.hmm_acc` would settle it in a few runs and is worth doing
-   before regenerating the paper, so the regeneration is not silently blessing
-   an unrelated regression.
+1. **RESOLVED (2026-08-19) — the drift was a regression, and F-3.1 already
+   fixed its root cause.** Bisected over `experiment_a.hmm_acc` across the 30
+   commits in the window that touched `src/`. The culprit is a single commit,
+   **`07d52ae` ("Release 0.3.0")**, the direct child of `a9d3189`. Neither
+   `c9a92bb` nor `a03733f` — `02-doc-drift.md`'s nominees — nor the whole
+   pyproj-removal series had any effect; every commit from `07d52ae` onward
+   returns the *identical* wrong value, so it was one step change, not
+   accumulation.
+
+   **Control:** `a9d3189` reproduces its own published numbers exactly under
+   today's numpy 2.5.2 / pandas 3.0.5 / scipy 1.18.0, so this is a genuine
+   source change and not a dependency artifact.
+
+   ```
+   a9d3189  hmm_acc=[0.9673, 0.8064, 0.5559, 0.3636]  -> MATCHES published
+   07d52ae  hmm_acc=[0.8732, 0.7555, 0.6327, 0.3955]  -> DIFFERS
+   664ac47  hmm_acc=[0.8732, 0.7555, 0.6327, 0.3955]  -> DIFFERS
+   aa10a55  hmm_acc=[0.8732, 0.7555, 0.6327, 0.3955]  -> DIFFERS
+   367e683  hmm_acc=[0.8732, 0.7555, 0.6327, 0.3955]  -> DIFFERS
+   ```
+
+   **The mechanism is F-3.1.** `07d52ae` is the commit that *introduced* the
+   three-piece route distance. Before it, the transition used only the
+   node-to-node distance (`rd = dcache.lookup(...)`, `delta = abs(step[i] - rd)`).
+   `07d52ae` added the two partial-edge terms — and computed both from the
+   segment-local `t`, which is exactly the bug F-3.1 names:
+
+   ```python
+   leadin_cur = t_cur * self.network.edge_length(eid)
+   remaining_prev = (1.0 - snap_t[i - 1][peid]) * self.network.edge_length(peid)
+   rd = remaining_prev + node_dist + leadin_cur
+   ```
+
+   So a change intended as an improvement injected scrambled noise into every
+   non-same-edge transition, and it has been there since v0.3.0.
+
+   **Consequence: regeneration is now safe.** The three states are `a9d3189`
+   (no partial-edge terms) 96.7/80.6/55.6/36.4 → `07d52ae` (terms, wrong scale)
+   87.3/75.5/63.3/39.5 → `5d2f1d8` (terms, true arc) 94.8/84.7/69.8/42.8. The
+   current numbers supersede both, and regenerating blesses a fixed bug rather
+   than an unidentified one.
+
+   **This also largely answers suspicion 2 below:** the σ = 5 m gap is not a
+   Task 3 regression — it is the *original* node-to-node-only formula (96.7)
+   still beating the corrected three-piece sum (94.8). Whether the partial-edge
+   terms genuinely help at very low noise is now the open question, and belongs
+   in Task 8.
 2. **Whether the σ = 5 m accuracy regression (96.7 → 94.8, and 87.3 → 94.8 from
    pre-fix) is fully explained by F-3.1.** F-3.1 improved every other cell; σ = 5
    is the one place the current code is worse than the published figure. It is
