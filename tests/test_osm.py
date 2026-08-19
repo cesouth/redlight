@@ -95,3 +95,35 @@ def test_parse_maxspeed_accepts_every_unit_alias_units_knows(alias):
 ])
 def test_parse_maxspeed_unparseable_returns_none(value):
     assert osm.parse_maxspeed(value) is None
+
+
+def test_overpass_http_error_is_explained(monkeypatch):
+    """A 429 from the public endpoint must not surface as a raw HTTPError. F-5.9."""
+    import urllib.error
+    import urllib.request
+
+    def boom(*a, **k):
+        raise urllib.error.HTTPError("u", 429, "Too Many Requests", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    with pytest.raises(RuntimeError, match="HTTP 429"):
+        rl.osm.fetch_network_records((0.0, 0.0, 0.01, 0.01))
+
+
+def test_overpass_non_json_body_is_explained(monkeypatch):
+    """An HTML error page must not surface as a raw JSONDecodeError. F-5.9."""
+    import urllib.request
+
+    class Resp:
+        def read(self):
+            return b"<html>rate limited</html>"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: Resp())
+    with pytest.raises(RuntimeError, match="not JSON"):
+        rl.osm.fetch_network_records((0.0, 0.0, 0.01, 0.01))

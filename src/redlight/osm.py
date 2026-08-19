@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -196,6 +197,26 @@ def fetch_network_records(bbox, *, highway_regex: str | None = None,
         endpoint, data=payload,
         headers={"User-Agent": "redlight (+https://github.com/cesouth/redlight)"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"Overpass returned HTTP {exc.code} ({exc.reason}) from {url}. "
+            "The public endpoint rate-limits and sheds load; wait and retry, "
+            "narrow the bounding box, or point url= at another mirror."
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Could not reach Overpass at {url}: {exc.reason}. Check network "
+            "access, or pass url= for a different endpoint."
+        ) from exc
+    try:
+        data = json.loads(body)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Overpass returned {len(body)} byte(s) that are not JSON "
+            f"(starts with {body[:60]!r}). This is usually an error or "
+            "rate-limit page; wait and retry, or narrow the bounding box."
+        ) from exc
     return ways_to_records(data)
