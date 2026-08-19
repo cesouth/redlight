@@ -219,3 +219,17 @@ def test_posted_limit_fallback_can_be_disabled(tmp_path):
     res = r.route((0, 0), (0.01, 0), mode="time")
     assert res["travel_time_s"] == pytest.approx(res["distance_m"] / 11.176,
                                                  rel=1e-9)
+
+
+def test_route_with_unknown_node_says_so(grid_net):
+    """An id that is not a node must not fail inside a float conversion. F-5.8."""
+    r = rl.Router(grid_net)
+    with pytest.raises(ValueError, match="not a graph node"):
+        r.route(("nowhere", 0), list(grid_net.graph.nodes())[0])
+
+
+def test_route_accepts_a_graph_node_with_snap_default(grid_net):
+    """The docstring promises graph nodes are accepted, not just (lon, lat)."""
+    nodes = list(grid_net.graph.nodes())
+    out = rl.Router(grid_net).route(nodes[0], nodes[-1])
+    assert out["distance_m"] > 0

@@ -265,8 +265,27 @@ class Router:
             )
 
         if snap:
-            src = self.nearest_node(origin[0], origin[1])
-            dst = self.nearest_node(destination[0], destination[1])
+            # The docstring promises "(lon, lat) tuples, or graph nodes", so an
+            # argument that already IS a node is used as-is. Anything else must
+            # be a coordinate pair; without this check a stray id reaches
+            # nearest_node and fails inside a float conversion, which tells the
+            # caller nothing about what went wrong.
+            def _resolve(value, name):
+                if value in graph:
+                    return value
+                try:
+                    lon, lat = float(value[0]), float(value[1])
+                except (TypeError, ValueError, IndexError, KeyError):
+                    raise ValueError(
+                        f"{name} {value!r} is not a graph node and is not a "
+                        "(lon, lat) pair. Pass coordinates, a node from "
+                        "network.graph.nodes(), or use Router.nearest_node("
+                        "lon, lat) to find one."
+                    ) from None
+                return self.nearest_node(lon, lat)
+
+            src = _resolve(origin, "origin")
+            dst = _resolve(destination, "destination")
         else:
             src, dst = origin, destination
             if src not in graph:
