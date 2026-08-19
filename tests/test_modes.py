@@ -140,8 +140,8 @@ def test_classify_labels_pedestrians_and_vehicles():
     obs = obs_frame({"walker": [1.3, 1.5, 1.4, 1.6],
                      "car": [3.0, 18.0, 20.0, 22.0]})
     m = rl.classify_movers(obs, threshold=3.0, unit="mps")
-    assert m.loc["walker", "mode"] == "pedestrian"
-    assert m.loc["car", "mode"] == "vehicle"
+    assert m.loc["walker", "mode"] == rl.MODE_PEDESTRIAN
+    assert m.loc["car", "mode"] == rl.MODE_VEHICLE
 
 
 def test_a_congested_vehicle_is_still_a_vehicle():
@@ -149,19 +149,19 @@ def test_a_congested_vehicle_is_still_a_vehicle():
     the 85th percentile is chosen precisely so that stretch is visible."""
     obs = obs_frame({"stuck": [1.5, 1.6, 1.4, 1.5, 1.6, 1.5, 14.0, 15.0]})
     m = rl.classify_movers(obs, threshold=3.0, unit="mps")
-    assert m.loc["stuck", "mode"] == "vehicle"
+    assert m.loc["stuck", "mode"] == rl.MODE_VEHICLE
 
 
 def test_unknown_comes_from_too_few_intervals():
     m = rl.classify_movers(obs_frame({"brief": [20.0, 21.0]}),
                            threshold=3.0, min_intervals=3, unit="mps")
-    assert m.loc["brief", "mode"] == "unknown"
+    assert m.loc["brief", "mode"] == rl.MODE_UNKNOWN
 
 
 def test_unknown_comes_from_too_little_distance():
     m = rl.classify_movers(obs_frame({"short": [20.0] * 4}, distance_m=10.0),
                            threshold=3.0, min_distance_m=500.0, unit="mps")
-    assert m.loc["short", "mode"] == "unknown"
+    assert m.loc["short", "mode"] == rl.MODE_UNKNOWN
 
 
 def test_threshold_is_read_in_the_requested_unit():
@@ -169,7 +169,7 @@ def test_threshold_is_read_in_the_requested_unit():
     mph = rl.classify_movers(obs, threshold=6.0, unit="mph")
     kph = rl.classify_movers(obs, threshold=6.0 * 1.609344, unit="kph")
     assert list(mph["mode"]) == list(kph["mode"])
-    assert list(mph["mode"]) == ["pedestrian", "vehicle"]
+    assert list(mph["mode"]) == [rl.MODE_PEDESTRIAN, rl.MODE_VEHICLE]
 
 
 def test_auto_threshold_raises_rather_than_guessing():
@@ -187,8 +187,8 @@ def test_auto_threshold_works_when_there_are_walkers():
     specs.update({f"v{i}": [float(v)] * 4
                   for i, v in enumerate(np.clip(rng.normal(12.0, 3.0, 200), 5.0, None))})
     m = rl.classify_movers(obs_frame(specs), threshold="auto", unit="mps")
-    assert set(m["mode"]) == {"pedestrian", "vehicle"}
-    assert (m["mode"] == "pedestrian").sum() == 90
+    assert set(m["mode"]) == {rl.MODE_PEDESTRIAN, rl.MODE_VEHICLE}
+    assert (m["mode"] == rl.MODE_PEDESTRIAN).sum() == 90
 
 
 def test_bad_threshold_string_raises():

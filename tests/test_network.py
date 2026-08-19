@@ -428,7 +428,7 @@ def test_geojson_crs_member_utm_is_projected_natively(tmp_path):
                              [[500000, 5000000], [501000, 5000000]],
                              "urn:ogc:def:crs:EPSG::32631")
     net = rl.Network.from_geojson(path)
-    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1000.0, abs=1.0)
+    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1000.0, abs=1e-3)
     lon, lat = net.edge_coords_lonlat(int(net.edge_ids[0]))[0]
     assert 2.0 < lon < 4.0 and 44.0 < lat < 46.0, (lon, lat)
 
@@ -439,7 +439,7 @@ def test_geojson_crs_member_plain_epsg_spelling(tmp_path):
                              [[500000, 5000000], [501000, 5000000]],
                              "EPSG:32631")
     net = rl.Network.from_geojson(path)
-    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1000.0, abs=1.0)
+    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1000.0, abs=1e-3)
 
 
 def test_geojson_crs84_member_is_still_lonlat(tmp_path):
@@ -448,7 +448,7 @@ def test_geojson_crs84_member_is_still_lonlat(tmp_path):
                              [[0.0, 0.0], [0.01, 0.0]],
                              "urn:ogc:def:crs:OGC:1.3:CRS84")
     net = rl.Network.from_geojson(path)
-    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1113.2, abs=2.0)
+    assert net.edge_length(int(net.edge_ids[0])) == pytest.approx(1114.2819, abs=1e-3)
 
 
 def test_one_coordinate_linestring_is_skipped_not_crashed(tmp_path):
