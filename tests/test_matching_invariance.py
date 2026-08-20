@@ -8,7 +8,16 @@ behaviour case by case rather than end to end.
 This module pins it end to end. Several seeded networks and trajectories are
 decoded and compared against expected values generated from the code as it
 stood *before* any Task 8 change (commit 189a92e). Edge id sequences must be
-identical; snap distances must agree to 1e-12.
+identical -- they are integers and admit no tolerance -- and snap distances
+must agree to 1e-9 *relative*.
+
+The tolerance is deliberately relative rather than absolute. An earlier version
+pinned 1e-12 absolute, which encoded the bit pattern of the machine that
+generated the expectations: CI's Linux runners differ from a macOS Intel box by
+~3e-12 relative on the same arithmetic (different libm, different GEOS build),
+and the test failed there while nothing was wrong. 1e-9 is still three orders of
+magnitude tighter than any real change measured against it -- the mutations
+below move values by percent-scale or change the edge sequence outright.
 
 The generators live in ``tests/_synth.py`` and are shared with
 ``benchmarks/profile_hmm.py``, so the fixtures match the workload the Task 7
@@ -75,7 +84,7 @@ def _compare(label, got, want):
             if a is None or b is None:
                 assert a is b, f"{label}/{matcher}: NaN-ness changed at {i}"
             else:
-                assert a == pytest.approx(b, abs=1e-12), (
+                assert a == pytest.approx(b, rel=1e-9, abs=1e-9), (
                     f"{label}/{matcher}: snap distance moved at {i}: {a} != {b}")
 
 

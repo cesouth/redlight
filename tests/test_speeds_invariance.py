@@ -7,8 +7,14 @@ assembles every interval, which is exactly the kind of change that silently
 drops a row or shifts a dtype.
 
 Expectations were generated from the code as it stood at commit caebd20,
-before any speeds optimization. Every numeric column must agree to 1e-12;
-ids, dtypes and row counts must match exactly.
+before any speeds optimization. Ids, dtypes, columns and row counts must match
+exactly; numeric columns must agree to 1e-9 *relative*.
+
+The tolerance is relative, not absolute, and deliberately so: an earlier version
+pinned 1e-12 absolute and encoded the bit pattern of the machine that generated
+the expectations, so it failed on CI's Linux runners (~3e-12 relative apart on
+the same arithmetic) while nothing was wrong. 1e-9 still catches a 1e-7
+perturbation, which is what this test is for.
 """
 from __future__ import annotations
 
@@ -90,7 +96,8 @@ def test_derive_speeds_output_is_unchanged(case, tmp_path):
             assert len(actual) == len(expect), f"{label}/{key}/{col}: length"
             for i, (a, b) in enumerate(zip(actual, expect)):
                 if isinstance(b, float):
-                    assert a is not None and a == pytest.approx(b, abs=1e-12), \
+                    assert a is not None and \
+                        a == pytest.approx(b, rel=1e-9, abs=1e-9), \
                         f"{label}/{key}/{col}[{i}]: {a} != {b}"
                 else:
                     assert a == b, f"{label}/{key}/{col}[{i}]: {a} != {b}"
