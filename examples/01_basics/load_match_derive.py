@@ -17,6 +17,16 @@ import redlight as rl
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "sample_data")
 
+# This example keeps its own explicit paths rather than importing _common, so
+# the core pipeline reads end to end without indirection. It still owes the
+# reader the same courtesy every other example gives: sample_data/ is
+# gitignored and generated, so say which command makes it rather than dying on
+# a FileNotFoundError three lines later.
+if not os.path.exists(os.path.join(DATA, "network.geojson")):
+    raise SystemExit(
+        "Sample data not found. Generate it first:\n"
+        "    python examples/00_setup/generate_sample_data.py")
+
 
 def main() -> None:
     # ---------------------------------------------------------------- network
