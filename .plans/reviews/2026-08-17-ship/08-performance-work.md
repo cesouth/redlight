@@ -219,7 +219,36 @@ the same scalar interval values across the edges that interval touched. A
 `np.repeat` expansion over per-interval edge counts is the next candidate.
 **Unmeasured**, so no number is claimed for it here.
 
-Post-optimization profile, 20k points:
+**Second optimization: column-wise frames — KEPT, 12.9 % (`653939b`).**
+Both output frames are now accumulated column-wise, and `edge_observations`
+becomes an `np.repeat` expansion of `intervals` over a per-interval edge count.
+
+```
+7-run medians of derive_speeds alone, 40,000 on-network points:
+  row-wise      2.2520 s   (min 2.2130, max 2.2943)   17,762 pts/s
+  column-wise   1.9614 s   (min 1.9175, max 1.9767)   20,393 pts/s
+  column-wise   1.9452 s   (min 1.9152, max 1.9623)   20,563 pts/s   repeat
+  -> 12.9 %, ranges do not overlap
+```
+
+**A methodological note worth keeping.** Measuring the two halves in isolation
+suggested 10.1 % (edges) + 5.9 % (intervals) = 16 %. The end-to-end figure is
+12.9 %, because those probes timed the frame *construction* while excluding the
+per-column *accumulation* that feeds it — the fast path was given data it would
+have had to build. Isolated microbenchmarks of a fast path flatter it; only the
+end-to-end number is trustworthy.
+
+Two output details the change had to preserve, both verified:
+- **dtypes** — building the edge frame by repeating the interval frame's own
+  numpy columns inherits its dtypes instead of re-inferring them.
+- **the empty-run contract** — an empty run has always returned frames with *no
+  columns at all*; column-wise construction would silently have returned
+  `(0, 17)`. Guarded explicitly.
+
+**Cumulative effect on `derive_speeds` across both optimizations:
+13,353 → 20,563 points/s, a 1.54x speedup, with byte-identical output.**
+
+Post-first-optimization profile, 20k points:
 
 ```
   total derive_speeds           1.29 s   (15,547 pts/s)
