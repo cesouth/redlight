@@ -180,11 +180,60 @@ Awaiting your decision at the top of that file.
 - **Verdict:**
 - **Outcome:**
 
+## Addendum — Task 8b, first optimization (2026-08-19)
+
+Taken up immediately after this pass on the strength of F-8.1, under the same
+discipline: `tests/test_speeds_invariance.py` written and committed first
+(`04a7312`), verified to fail on a 1e-7 perturbation of `speed_var`.
+
+**Vectorised the arc-position lookup — KEPT, 25 % (`1d07672`).**
+`_arc_position` built a `shapely.Point` and called `geom.project()` once per
+fix. `shapely.line_locate_point` is the vectorised form of the same GEOS entry
+point, so results are bit-identical.
+
+```
+7-run medians of derive_speeds alone, 40,000 on-network points:
+  per-fix loop   2.9955 s   (min 2.9656, max 3.0926)   13,353 pts/s
+  vectorised     2.2431 s   (min 2.1863, max 2.2933)   17,832 pts/s
+  vectorised     2.2556 s   (min 2.2194, max 2.2997)   17,734 pts/s   repeat
+  -> 25 %, ranges do not overlap
+```
+
+In the profile `_arc_positions` falls from 22–24 % to **1.7 %**; 20,000
+Python-level round trips become 60 batched calls, one per trajectory. No new
+dependency — `shapely>=2.0` is already core.
+
+**A correction to F-7b.1.** That finding attributed the 60 % "everything else"
+to "the `while` loop, the per-row dict construction, and the pandas frame built
+from lists of dicts". The pandas share is now measured and it is small:
+
+```
+pd.DataFrame(list_of_dicts)   0.109 s
+pd.DataFrame(dict_of_cols)    0.079 s     1.4x   -> under 1 % of total
+```
+
+So column-wise frame construction is **not** the win F-7b.1 implied. The
+remaining cost is the loop itself, and within it the `for e in uniq_edges:`
+inner loop that builds 85,652 dicts of 11 keys at 40k points — each repeating
+the same scalar interval values across the edges that interval touched. A
+`np.repeat` expansion over per-interval edge counts is the next candidate.
+**Unmeasured**, so no number is claimed for it here.
+
+Post-optimization profile, 20k points:
+
+```
+  total derive_speeds           1.29 s   (15,547 pts/s)
+  _arc_positions (shapely)      0.02 s     1.7%   60 batched call(s)
+  _hop_distance (total)         0.27 s    21.0%
+    of which _SourceDistCache   0.08 s     6.2%   79,680 queries, 699 real Dijkstras
+  everything else               0.99 s    77.3%
+```
+
 ## Repo state on exit
 
 ```
 $ .venv/bin/pytest -q
-409 passed
+412 passed
 $ .venv/bin/ruff check src tests scripts examples benchmarks
 All checks passed!
 $ git status --porcelain
