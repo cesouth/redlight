@@ -21,10 +21,7 @@ import numpy as np
 import pytest
 
 import redlight as rl
-
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "benchmarks"))
-from profile_hmm import build_grid, simulate_on_network  # noqa: E402
+from _synth import build_grid, simulate_on_network
 
 EXPECTED = Path(__file__).resolve().parent / "data" / "speeds_invariance.json"
 

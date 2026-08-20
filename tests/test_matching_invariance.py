@@ -10,9 +10,9 @@ decoded and compared against expected values generated from the code as it
 stood *before* any Task 8 change (commit 189a92e). Edge id sequences must be
 identical; snap distances must agree to 1e-12.
 
-The generators deliberately reuse ``benchmarks/profile_hmm.py`` so the fixtures
-match the workload the profile was taken on, rather than inventing a third
-synthetic world.
+The generators live in ``tests/_synth.py`` and are shared with
+``benchmarks/profile_hmm.py``, so the fixtures match the workload the Task 7
+profile was taken on rather than inventing a third synthetic world.
 """
 from __future__ import annotations
 
@@ -24,10 +24,7 @@ import numpy as np
 import pytest
 
 import redlight as rl
-
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "benchmarks"))
-from profile_hmm import build_grid, simulate_on_network  # noqa: E402
+from _synth import build_grid, simulate_on_network
 
 EXPECTED = Path(__file__).resolve().parent / "data" / "matching_invariance.json"
 
