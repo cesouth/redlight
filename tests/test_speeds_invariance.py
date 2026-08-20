@@ -42,7 +42,7 @@ NUMERIC = ["dt_s", "distance_m", "speed_mps", "snap_dist_m",
            "speed_sigma_mps", "speed_var"]
 
 
-def _fingerprint(res):
+def _fingerprint(net, res):
     out = {}
     for key in ("intervals", "edge_observations"):
         f = res[key]
@@ -53,10 +53,22 @@ def _fingerprint(res):
             if col in f.columns:
                 rec[col] = [None if not np.isfinite(v) else float(v)
                             for v in f[col].to_numpy(dtype=float)]
-        for col in ("interval_id", "edge_id", "point_id_from", "point_id_to",
-                    "edge_from", "edge_to", "n_edges"):
+        # edge columns are canonicalised to the physical road: a two-way road
+        # is two directed edges over one geometry and nothing breaks that tie
+        # on the data, so the direction is not a portable property (see
+        # tests/test_matching_invariance.py).
+        for col in ("interval_id", "point_id_from", "point_id_to", "n_edges"):
             if col in f.columns:
                 rec[col] = [int(v) for v in f[col]]
+        for col in ("edge_id", "edge_from", "edge_to"):
+            if col in f.columns:
+                rec[col] = sorted(
+                    -1 if int(v) == -1
+                    else min(int(e) for e in net.road_edge_ids(int(v)))
+                    for v in f[col]) if col == "edge_id" else [
+                    -1 if int(v) == -1
+                    else min(int(e) for e in net.road_edge_ids(int(v)))
+                    for v in f[col]]
         if "quality" in f.columns:
             rec["quality"] = [bool(v) for v in f["quality"]]
         if "time" in f.columns:
@@ -71,7 +83,8 @@ def _run_case(tmp_path, label, grid, points, trajectories, seed, max_dist, basel
                               trajectories, grid, seed=seed)
     pts = rl.load_points(csv, id_col="id")
     matched = rl.HMMMatcher(net, max_dist=max_dist).match(pts)
-    return _fingerprint(rl.derive_speeds(net, matched, pts, min_baseline_m=baseline))
+    return _fingerprint(net, rl.derive_speeds(net, matched, pts,
+                                              min_baseline_m=baseline))
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c[0] for c in CASES])

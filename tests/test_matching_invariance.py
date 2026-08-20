@@ -8,7 +8,7 @@ behaviour case by case rather than end to end.
 This module pins it end to end. Several seeded networks and trajectories are
 decoded and compared against expected values generated from the code as it
 stood *before* any Task 8 change (commit 189a92e). Edge id sequences must be
-identical -- they are integers and admit no tolerance -- and snap distances
+identical *as physical roads* -- see below -- and snap distances
 must agree to 1e-9 *relative*.
 
 The tolerance is deliberately relative rather than absolute. An earlier version
@@ -17,7 +17,16 @@ generated the expectations: CI's Linux runners differ from a macOS Intel box by
 ~3e-12 relative on the same arithmetic (different libm, different GEOS build),
 and the test failed there while nothing was wrong. 1e-9 is still three orders of
 magnitude tighter than any real change measured against it -- the mutations
-below move values by percent-scale or change the edge sequence outright.
+below move values by percent-scale or change the road sequence outright.
+
+Edges are compared as **physical roads**, not directed edge ids. A two-way road
+is two directed edges over the same geometry at the same snap distance, and
+nothing in either matcher breaks that tie on a property of the data: Task 3
+established the choice is arbitrary (03-numerical-accuracy.md, behaviour (a)),
+and tests/test_matching_batch.py already accepts either direction for the same
+reason. Pinning the directed id pinned a coin flip, and it landed differently on
+CI's Linux runners than on the machine that generated the expectations. The road
+is the real output; the direction is not.
 
 The generators live in ``tests/_synth.py`` and are shared with
 ``benchmarks/profile_hmm.py``, so the fixtures match the workload the Task 7
@@ -53,9 +62,14 @@ def _scenario(tmp_path, grid, points, trajectories, seed):
     return net, rl.load_points(csv, id_col="id")
 
 
-def _fingerprint(frame):
+def _road_of(net, eid):
+    """Canonical id of the physical road an edge belongs to (direction-free)."""
+    return -1 if int(eid) == -1 else min(int(e) for e in net.road_edge_ids(int(eid)))
+
+
+def _fingerprint(net, frame):
     return {
-        "edge_id": [int(v) for v in frame["edge_id"]],
+        "road_id": [_road_of(net, v) for v in frame["edge_id"]],
         "snap_dist_m": [None if not np.isfinite(v) else float(v)
                         for v in frame["snap_dist_m"].to_numpy(dtype=float)],
         "point_id": [int(v) for v in frame["point_id"]],
@@ -67,15 +81,15 @@ def _run_case(tmp_path, label, grid, points, trajectories, seed, k, max_dist):
     net, pts = _scenario(tmp_path, grid, points, trajectories, seed)
     hmm = rl.HMMMatcher(net, k=k, max_dist=max_dist).match(pts)
     near = rl.NearestMatcher(net, k=k, max_dist=max_dist).match(pts)
-    return {"hmm": _fingerprint(hmm), "nearest": _fingerprint(near)}
+    return {"hmm": _fingerprint(net, hmm), "nearest": _fingerprint(net, near)}
 
 
 def _compare(label, got, want):
     for matcher in ("hmm", "nearest"):
         g, w = got[matcher], want[matcher]
-        assert g["edge_id"] == w["edge_id"], (
-            f"{label}/{matcher}: decoded edge sequence changed at index "
-            f"{next(i for i, (a, b) in enumerate(zip(g['edge_id'], w['edge_id'])) if a != b)}"
+        assert g["road_id"] == w["road_id"], (
+            f"{label}/{matcher}: decoded road sequence changed at index "
+            f"{next(i for i, (a, b) in enumerate(zip(g['road_id'], w['road_id'])) if a != b)}"
         )
         assert g["point_id"] == w["point_id"], f"{label}/{matcher}: point order changed"
         assert g["traj_id"] == w["traj_id"], f"{label}/{matcher}: traj order changed"
