@@ -88,6 +88,16 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("redlight requires networkx.") from exc
 
 
+# Column order of the ``intervals`` frame. Named once so the accumulator and
+# the frame agree, and so the order cannot drift from what callers index by.
+_INTERVAL_COLUMNS = (
+    "interval_id", "traj_id", "point_id_from", "point_id_to", "time",
+    "t_from", "t_to", "dt_s", "distance_m", "speed_mps", "edge_from",
+    "edge_to", "n_edges", "snap_dist_m", "speed_sigma_mps", "speed_var",
+    "quality",
+)
+
+
 # --------------------------------------------------------------------------- util
 def _arc_position(network, edge_id: int, px: float, py: float) -> float:
     """Arc-length (m) of the projection of metric point (px, py) onto ``edge_id``,
@@ -340,8 +350,13 @@ def derive_speeds(
 
     has_snap_col = "snap_dist_m" in matched.columns
     cache = _SourceDistCache(_build_undirected(network.graph), weight="length_m")
-    interval_rows: list[dict] = []
-    edge_rows: list[dict] = []
+    # Accumulated column-wise, not row-wise. The row-wise form built one dict
+    # per interval plus one per (interval, edge) -- 125,552 dicts on a 40k-point
+    # run -- and every edge row merely repeated its interval's scalars. Columns
+    # plus a repeat count express the same thing without the allocations.
+    iv: dict[str, list] = {c: [] for c in _INTERVAL_COLUMNS}
+    edge_ids_flat: list[int] = []
+    edge_counts: list[int] = []
 
     for tid, sub in group_iter:
         # kind="stable" so tied timestamps keep input order: the default
@@ -450,44 +465,54 @@ def derive_speeds(
             # interval midpoint time = when this average speed applies
             mid_time = tstamp[a] + (tstamp[b] - tstamp[a]) / 2
             uniq_edges = list(dict.fromkeys(int(e) for e in acc_edges))
-            interval_id = interval_id_start + len(interval_rows)
+            interval_id = interval_id_start + len(edge_counts)
 
-            interval_rows.append({
-                "interval_id": interval_id,
-                "traj_id": tid,
-                "point_id_from": int(pid[a]),
-                "point_id_to": int(pid[b]),
-                "time": mid_time,
-                "t_from": tstamp[a],
-                "t_to": tstamp[b],
-                "dt_s": float(dt_s),
-                "distance_m": float(distance_m),
-                "speed_mps": float(speed_mps),
-                "edge_from": int(eid[a]),
-                "edge_to": int(eid[b]),
-                "n_edges": len(uniq_edges),
-                "snap_dist_m": snap_pair,
-                "speed_sigma_mps": float(speed_sigma),
-                "speed_var": float(speed_var),
-                "quality": quality,
-            })
-            for e in uniq_edges:
-                edge_rows.append({
-                    "interval_id": interval_id,
-                    "edge_id": e,
-                    "speed_mps": float(speed_mps),
-                    "time": mid_time,
-                    "traj_id": tid,
-                    "dt_s": float(dt_s),
-                    "distance_m": float(distance_m),
-                    "snap_dist_m": snap_pair,
-                    "speed_sigma_mps": float(speed_sigma),
-                    "speed_var": float(speed_var),
-                    "quality": quality,
-                })
+            iv["interval_id"].append(interval_id)
+            iv["traj_id"].append(tid)
+            iv["point_id_from"].append(int(pid[a]))
+            iv["point_id_to"].append(int(pid[b]))
+            iv["time"].append(mid_time)
+            iv["t_from"].append(tstamp[a])
+            iv["t_to"].append(tstamp[b])
+            iv["dt_s"].append(float(dt_s))
+            iv["distance_m"].append(float(distance_m))
+            iv["speed_mps"].append(float(speed_mps))
+            iv["edge_from"].append(int(eid[a]))
+            iv["edge_to"].append(int(eid[b]))
+            iv["n_edges"].append(len(uniq_edges))
+            iv["snap_dist_m"].append(snap_pair)
+            iv["speed_sigma_mps"].append(float(speed_sigma))
+            iv["speed_var"].append(float(speed_var))
+            iv["quality"].append(quality)
+            # every traversed edge inherits this interval's values verbatim,
+            # so record only the edge ids and how many belong to this interval
+            edge_ids_flat.extend(uniq_edges)
+            edge_counts.append(len(uniq_edges))
 
             i = b  # next interval starts where this one ended
 
-    intervals = pd.DataFrame(interval_rows)
-    edge_observations = pd.DataFrame(edge_rows)
+    if not edge_counts:
+        # An empty run has always returned frames with no columns at all;
+        # building column-wise would silently start returning (0, 17) instead.
+        return {"intervals": pd.DataFrame(), "edge_observations": pd.DataFrame()}
+
+    intervals = pd.DataFrame(iv)
+    counts = np.asarray(edge_counts)
+
+    def _rep(column):
+        return np.repeat(intervals[column].to_numpy(), counts)
+
+    edge_observations = pd.DataFrame({
+        "interval_id": _rep("interval_id"),
+        "edge_id": np.asarray(edge_ids_flat, dtype=np.int64),
+        "speed_mps": _rep("speed_mps"),
+        "time": _rep("time"),
+        "traj_id": _rep("traj_id"),
+        "dt_s": _rep("dt_s"),
+        "distance_m": _rep("distance_m"),
+        "snap_dist_m": _rep("snap_dist_m"),
+        "speed_sigma_mps": _rep("speed_sigma_mps"),
+        "speed_var": _rep("speed_var"),
+        "quality": _rep("quality"),
+    })
     return {"intervals": intervals, "edge_observations": edge_observations}
