@@ -79,6 +79,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import shapely
 from shapely.geometry import Point
 
 try:
@@ -91,9 +92,38 @@ except ImportError as exc:  # pragma: no cover
 def _arc_position(network, edge_id: int, px: float, py: float) -> float:
     """Arc-length (m) of the projection of metric point (px, py) onto ``edge_id``,
     measured from that *directed* edge's start node. Uses shapely's exact
-    line-projection rather than the segment-local ``t`` from candidate_edges."""
+    line-projection rather than the segment-local ``t`` from candidate_edges.
+
+    Single-point form, kept for callers with one fix to place.
+    :func:`_arc_positions` is the batched equivalent and is what
+    :func:`derive_speeds` uses; both are the same GEOS call.
+    """
     geom = network.edge_geometry(edge_id)
     return float(geom.project(Point(px, py)))
+
+
+def _arc_positions(network, edge_ids, px, py):
+    """Arc-length (m) of many fixes on their own matched edges, in one call.
+
+    ``shapely.line_locate_point`` is the vectorised form of
+    ``geom.project(Point(...))`` -- the same GEOS entry point, so the answers
+    are bit-identical, not merely close. Doing it per fix cost one Python-level
+    round trip and one temporary ``Point`` each, measured at 22-24 % of
+    ``derive_speeds`` (Task 7b F-7b.3) and 24x slower than the batched call.
+
+    ``edge_ids`` of -1 (unmatched) come back as NaN and are never projected.
+    """
+    edge_ids = np.asarray(edge_ids)
+    px = np.asarray(px, dtype=float)
+    py = np.asarray(py, dtype=float)
+    out = np.full(edge_ids.shape, np.nan, dtype=float)
+    on = edge_ids != -1
+    if not bool(on.any()):
+        return out
+    geoms = np.array([network.edge_geometry(int(e)) for e in edge_ids[on]],
+                     dtype=object)
+    out[on] = shapely.line_locate_point(geoms, shapely.points(px[on], py[on]))
+    return out
 
 
 class _SourceDistCache:
@@ -338,10 +368,7 @@ def derive_speeds(
             sigma = np.full(n, float(default_pos_sigma_m))
 
         # arc-length position of each fix on its matched edge (skip unmatched)
-        s = np.full(n, np.nan)
-        for i in range(n):
-            if eid[i] != -1:
-                s[i] = _arc_position(network, int(eid[i]), float(px[i]), float(py[i]))
+        s = _arc_positions(network, eid, px, py)
 
         # ---- build the list of hops to emit (consecutive, or merged to a baseline)
         i = 0

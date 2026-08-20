@@ -4,7 +4,7 @@ Task 7 measured that ``derive_speeds`` costs more than ``HMMMatcher.match`` on
 the same data -- 60 % of pipeline wall time against the matcher's 39 % -- but
 attributed that cost by reading the code rather than measuring it. This
 profiles it properly: a cProfile run plus direct instrumentation of the two
-suspects, ``_arc_position``'s per-fix shapely projection and
+suspects, ``_arc_positions``' shapely projection and
 ``_hop_distance``'s pure-Python networkx Dijkstra. Run:
 
     python benchmarks/profile_speeds.py --points 40000 --trajectories 100
@@ -38,7 +38,7 @@ def instrument(net, matched, points):
                 "hop_calls": 0, "hop_s": 0.0,
                 "query_calls": 0, "query_s": 0.0, "dijkstra_calls": 0}
 
-    real_arc = _speeds._arc_position
+    real_arc = _speeds._arc_positions
     real_hop = _speeds._hop_distance
     real_query = _speeds._SourceDistCache.query
 
@@ -69,7 +69,7 @@ def instrument(net, matched, points):
         finally:
             counters["query_s"] += time.perf_counter() - t0
 
-    _speeds._arc_position = arc
+    _speeds._arc_positions = arc
     _speeds._hop_distance = hop
     _speeds._SourceDistCache.query = query
     try:
@@ -77,7 +77,7 @@ def instrument(net, matched, points):
         out = rl.derive_speeds(net, matched, points)
         counters["total_s"] = time.perf_counter() - t0
     finally:
-        _speeds._arc_position = real_arc
+        _speeds._arc_positions = real_arc
         _speeds._hop_distance = real_hop
         _speeds._SourceDistCache.query = real_query
 
@@ -127,9 +127,8 @@ def main() -> None:
     tot = c["total_s"]
     other = tot - c["arc_s"] - c["hop_s"]
     print(f"  total derive_speeds        {tot:7.2f} s   ({n / tot:,.0f} pts/s)")
-    print(f"  _arc_position (shapely)    {c['arc_s']:7.2f} s   "
-          f"{100 * c['arc_s'] / tot:5.1f}%   {c['arc_calls']:,} calls "
-          f"({c['arc_calls'] / n:.2f}/point)")
+    print(f"  _arc_positions (shapely)   {c['arc_s']:7.2f} s   "
+          f"{100 * c['arc_s'] / tot:5.1f}%   {c['arc_calls']:,} batched call(s)")
     print(f"  _hop_distance (total)      {c['hop_s']:7.2f} s   "
           f"{100 * c['hop_s'] / tot:5.1f}%   {c['hop_calls']:,} calls")
     print(f"    of which _SourceDistCache {c['query_s']:6.2f} s   "
