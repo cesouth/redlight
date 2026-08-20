@@ -1246,7 +1246,13 @@ def render_png(args, R, live, notes, plt):
     import os
     out_dir = args.out
     if out_dir.lower().endswith((".png", ".pdf", ".pptx")):
+        # --format png writes a directory of figures, not a single file. A
+        # caller who passed a filename gets the stem instead, so say where the
+        # output actually went rather than leaving them looking for the path
+        # they typed.
         out_dir = os.path.splitext(out_dir)[0]
+        print(f"note: --format png writes a directory of figures; using "
+              f"{out_dir}{os.sep} rather than {args.out}", file=sys.stderr)
     os.makedirs(out_dir, exist_ok=True)
     ctx = _section_ctx(args, R)
     lines = [f"# {args.title}", ""]
