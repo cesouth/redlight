@@ -258,6 +258,61 @@ Post-first-optimization profile, 20k points:
   everything else               0.99 s    77.3%
 ```
 
+## Addendum — Task 8b, third attempt: early exit in `_hop_distance` (2026-08-20)
+
+**MEASURED AND REVERTED at 1.7 %.** Recorded so it is not re-proposed.
+
+`_hop_distance` ran four bounded-Dijkstra queries for every hop and *then*
+checked whether both fixes sat on one physical road, where the answer collapses
+to `|arc_b - arc_a|`. That direct case is overwhelmingly common — measured on
+two independent workloads:
+
+```
+synthetic grid, 20k fixes      same road 91.0%   adjacent 9.0%   needs a search 0.0%
+examples/sample_data, 1,682    same road 90.2%   adjacent 9.8%   needs a search 0.0%
+```
+
+The optimization computes the direct distance first and skips all four queries
+when `min(exit) + min(entry)` already exceeds it — an exact lower bound, since a
+graph route costs `xc + spl + yc` with `spl >= 0`. The comparison is strict so
+the graph route still wins exact ties, preserving which edges an interval is
+attributed to.
+
+It works, and it is not worth it:
+
+```
+7-run medians of derive_speeds alone, 40,000 points, three paired samples:
+  without   1.9181 / 1.9153 / 1.9074 s
+  with      1.8823 / 1.9031 / 1.8830 s
+  -> 1.7 %, ranges overlap heavily
+```
+
+**Why the estimate was wrong.** I projected 10–15 % from `_hop_distance`'s
+22.5 % share. That was the wrong denominator: the early exit removes *cache
+hits*, not Dijkstra runs, and the cache runs at 99 %. Skipped work was cheap
+work.
+
+**And there is a counter-effect I did not anticipate.** Skipping a query also
+skips the cache *warming* it would have done, so the remaining hops miss more
+often:
+
+```
+  queries         79,680 -> 42,212   (-47%)
+  real Dijkstras     699 ->  1,013   (+45%)
+```
+
+The optimization partly pays for its own gain. That interaction is the reason a
+47 % reduction in queries bought under 2 % of wall time, and it is not visible
+from a profile — only from instrumenting both counters across the change.
+
+**This closes the `derive_speeds` optimization thread.** After the two changes
+that did land (vectorised arc positions, column-wise frames — 1.54x together),
+what remains is inline interpreted work in the loop body: `derive_speeds`' own
+self time is 0.804 s of a 1.678 s profiled run, and every named callee together
+is ~0.23 s of a 1.12 s real run. Nothing further is available without changing
+the algorithm's shape or leaving pure Python, and neither is justified by the
+measurements.
+
 ## Repo state on exit
 
 ```
