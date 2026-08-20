@@ -1097,7 +1097,7 @@ user meets it.
 - Produces: `09-api-ux.md`. Anything here that would change a public signature
   is recorded for a future major version, not fixed now — the API is frozen.
 
-- [ ] **Step 1: Run the pass**
+- [x] **Step 1: Run the pass**
 
 ```text
 You are reviewing the public API and user experience of the Python package
@@ -1159,12 +1159,12 @@ Write to .plans/reviews/2026-08-17-ship/09-api-ux.md in the exact format from
 Do not commit.
 ```
 
-- [ ] **Step 2: Triage** — fill in every Verdict line.
+- [x] **Step 2: Triage** — fill in every Verdict line.
 
-- [ ] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
+- [x] **Step 3: Run the Fix Cycle** with `<FINDINGS>` =
 `.plans/reviews/2026-08-17-ship/09-api-ux.md`.
 
-- [ ] **Step 4: Commit the findings file**
+- [x] **Step 4: Commit the findings file**
 
 ```bash
 git add .plans/reviews/2026-08-17-ship/09-api-ux.md
