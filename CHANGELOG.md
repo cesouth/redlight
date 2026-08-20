@@ -6,7 +6,101 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (0.x: minor versions may contain breaking changes, noted below).
 
-## [0.6.0] - 2026-08-06
+## [0.6.0] - 2026-08-19
+
+### Breaking — read this first
+
+- **THE PACKAGE IS RENAMED FROM `roadtraffic` TO `redlight`. Every existing
+  `import roadtraffic` breaks.** There is no shim and no deprecation period.
+
+  ```python
+  # before
+  import roadtraffic as rt
+  # after
+  import redlight as rl
+  ```
+
+  The optional extras move with it: `redlight[crs]`, `redlight[shapefile]`,
+  `redlight[mapping]`, `redlight[docs]`. **No API beyond the top-level name
+  has changed** -- every class, function, argument and return value keeps its
+  name and meaning, so renaming the import is the whole migration. A
+  project-wide find-and-replace of `roadtraffic` with `redlight` is sufficient.
+
+  The old name was also already taken on PyPI by an unrelated project, which
+  this resolves.
+
+### Fixed -- correctness
+
+These change numbers the package produces. Anyone with results from 0.5.0 or
+earlier should expect them to move, in most cases toward being right.
+
+- **HMM transition distances were computed from the wrong quantity.** The
+  matcher read `candidate_edges`' `t` -- a fraction of one densified <= 25 m
+  sub-segment -- as if it were a fraction of the whole edge, and scaled it by
+  the edge length. On a 1,114 m edge that mis-stated the route distance by up
+  to 891 m, a 29.7-nat error in the transition log-probability, and it had been
+  present since 0.3.0. Road-level matching accuracy improves at every noise
+  level tested: 87.3/75.5/63.3/39.5 % to 94.8/84.7/69.8/42.8 % at sigma =
+  5/15/30/50 m. Speed bias at sigma = 15 m falls from +4.1 % to +0.9 %.
+- **Duplicate timestamps resolved by input row order.** The same fixes in a
+  different row order aggregated to 72.28 mph or 77.27 mph, with `quality=True`
+  throughout and no warning. Sorting is now stable, the rule is documented, and
+  a trajectory carrying fixes that share a timestamp warns.
+- **A GeoJSON `crs` member was ignored.** A file in a projected CRS was read as
+  lon/lat degrees, so a 1,000 m road measured 16,585,698 m and an end-to-end run
+  reported 4,496,249 mph. GeoJSON now goes through the same source-CRS handling
+  the Shapefile/GeoPackage loader has always used.
+- **Coordinates outside the valid lat/lon range were accepted.** `lat 91` loaded
+  cleanly and `geodesic_distance` then returned a confident, plausible, wrong
+  answer where PROJ returns NaN. Now dropped with a warning naming the likely
+  causes (swapped columns, or a projected file read as degrees).
+- **Speed columns were never sanity-checked.** Negative speeds, supersonic
+  speeds, and a column in mph declared as m/s all passed through untouched. Now
+  warned, with the observed range reported.
+- Non-finite coordinates raised a "near-antipodal coordinate pair" error --
+  a confident and wrong diagnosis -- and one bad element aborted every good
+  element in the same vectorised call. They now return NaN per element.
+- A time column mixing ISO-8601 spellings (`T` and space separators, or whole
+  and fractional seconds) silently lost rows under pandas >= 2.0. All are now
+  parsed.
+- An interval whose `dt` was NaN produced a NaN speed instead of being skipped.
+- `mover_features` dropped `snap_dist_m` on an empty feed, so the column set
+  depended on whether any rows survived.
+
+### Fixed -- errors that named the wrong thing
+
+- A one-coordinate `LineString` escaped as a raw `GEOSException`; it is now
+  skipped like other degenerate geometry, with a counted warning.
+- `plot_speed_map` without matplotlib raised a bare `ImportError` that never
+  named the `mapping` extra.
+- `Router.route` with an unknown node failed inside a float conversion; it now
+  names both accepted argument forms and `nearest_node`.
+- `from_overpass` propagated raw `HTTPError` and `JSONDecodeError`; both are now
+  explained, with the endpoint and the realistic ways out.
+- A mover with a single fix and `derive_speed=True` was reported as
+  "missing/unparseable" rather than as having too few fixes to difference.
+- A time column mixing timezone-aware and timezone-naive values reported the
+  same wrong cause; the conflict is now named.
+- `peak_analysis` reported a peak and an off-peak on perfectly flat data with no
+  warning, where `classify_hours` warns on the same input.
+
+### Performance
+
+- `derive_speeds` is **1.54x faster** (13,353 -> 20,563 points/s on the
+  benchmark workload), with byte-identical output. Arc positions are computed
+  in one vectorised shapely call per trajectory rather than one round trip per
+  fix, and both output frames are built column-wise rather than one dict per
+  row.
+- `HMMMatcher.match` is ~4.5 % faster: the per-predecessor edge lookups are
+  resolved once per step instead of once per (candidate, predecessor) pair.
+
+### Documentation
+
+- `docs/methodology.md` and `docs/figures/` are regenerated against the current
+  code. The published experiment results had drifted from the code since 0.3.0
+  and no longer reproduced; 51 of 105 recorded values were stale. Three
+  qualitative claims changed with them, and a test now asserts the prose matches
+  the committed results so this cannot recur silently.
 
 ### Added
 - `network_stats` now measures the study area itself, so the per-km2 densities
@@ -40,12 +134,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/customer_report.py` relabels its `Edges / km2` tile to
   `Road metres / km2`, which is what the figure has always been, and captions
   it with the area used and where it came from.
-- **The package is renamed from `roadtraffic` to `redlight`.** Update imports:
-  `import roadtraffic as rt` becomes `import redlight as rl`. The optional
-  extras move with it -- `redlight[crs]`, `redlight[shapefile]`,
-  `redlight[mapping]`, `redlight[docs]`. No API beyond the top-level name has
-  changed, so a rename of the import is the whole migration. The old name was
-  also already taken on PyPI by an unrelated project, which this resolves.
 - `pyproj` is no longer a core dependency. WGS84, the 120 WGS84 UTM zones and
   Web Mercator are now projected in numpy, and geodesic distance uses
   Vincenty's inverse formula. Verified against PROJ 9.5.1 over a full UTM zone
