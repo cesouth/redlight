@@ -159,10 +159,12 @@ class HMMMatcher:
         already sustains tens of thousands of points per second, so worker
         start-up (fresh interpreter + network deserialisation per process
         under the 'spawn' start method) and DataFrame transfer costs dominate
-        until jobs run for minutes -- on the development machine serial
-        matching stayed faster up to at least two million points. Workers
-        also each start with a cold shortest-path cache that the serial run
-        shares. As with any Python
+        on small and medium jobs. Where the crossover falls depends on core
+        count, trajectory length and how many of your fixes are near a road at
+        all, so measure on your own data rather than trusting a figure from
+        someone else's: on a 2-core laptop serial was 1.9-6.1x faster below
+        200k points and lost above ~1M. Workers also each start with a cold
+        shortest-path cache that the serial run shares. As with any Python
         multiprocessing, call ``match`` from inside an
         ``if __name__ == "__main__":`` guard in scripts.
     dist_cache_size : int
