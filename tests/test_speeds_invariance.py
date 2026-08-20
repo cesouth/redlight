@@ -8,7 +8,9 @@ drops a row or shifts a dtype.
 
 Expectations were generated from the code as it stood at commit caebd20,
 before any speeds optimization. Ids, dtypes, columns and row counts must match
-exactly; numeric columns must agree to 1e-9 *relative*.
+exactly; numeric columns must agree to 1e-9 *relative*. Dtypes are compared by
+*kind* (float stays float, bool stays bool) rather than by exact string, since
+the supported pandas range spans ``datetime64[ns]`` and ``datetime64[us]``.
 
 The tolerance is relative, not absolute, and deliberately so: an earlier version
 pinned 1e-12 absolute and encoded the bit pattern of the machine that generated
@@ -48,7 +50,12 @@ def _fingerprint(net, res):
         f = res[key]
         rec = {"n_rows": int(len(f)),
                "columns": list(f.columns),
-               "dtypes": [str(d) for d in f.dtypes]}
+               # dtype *kind*, not the exact string: the supported pandas
+               # range spans datetime64[ns] and datetime64[us], and int width
+               # varies by platform. The invariant worth holding is that a
+               # float column stays float and a bool column stays bool -- the
+               # ways a column-wise rewrite actually goes wrong.
+               "dtype_kinds": [getattr(d, "kind", str(d)) for d in f.dtypes]}
         for col in NUMERIC:
             if col in f.columns:
                 rec[col] = [None if not np.isfinite(v) else float(v)
@@ -101,9 +108,9 @@ def test_derive_speeds_output_is_unchanged(case, tmp_path):
         g, w = got[key], want[key]
         assert g["n_rows"] == w["n_rows"], f"{label}/{key}: row count"
         assert g["columns"] == w["columns"], f"{label}/{key}: columns"
-        assert g["dtypes"] == w["dtypes"], f"{label}/{key}: dtypes"
+        assert g["dtype_kinds"] == w["dtype_kinds"], f"{label}/{key}: dtype kinds"
         for col, expect in w.items():
-            if col in ("n_rows", "columns", "dtypes"):
+            if col in ("n_rows", "columns", "dtype_kinds"):
                 continue
             actual = g[col]
             assert len(actual) == len(expect), f"{label}/{key}/{col}: length"
